@@ -10,7 +10,7 @@ export type BookingStackParamList = {
 
 export type QueueStackParamList = {
   QueueHome: undefined;
-  QueueTrack: { branchId: string; ticket: string };
+  QueueTrack: { branchId: string; ticket: string; bookingId?: string };
 };
 
 export type MainTabParamList = {
@@ -23,6 +23,7 @@ export type MainTabParamList = {
 export type RootStackParamList = {
   MainTabs: NavigatorScreenParams<MainTabParamList> | undefined;
   MapBranches: undefined;
+  BranchDetail: { branch: BranchDto };
 };
 
 export const navigationRef = createNavigationContainerRef<RootStackParamList>();

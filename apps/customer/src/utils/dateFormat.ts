@@ -130,3 +130,10 @@ export function formatBookingSlotDateTime(slotStart: string, slotEnd: string): s
   const opts: Intl.DateTimeFormatOptions = { dateStyle: "medium", timeStyle: "short" };
   return `${a.toLocaleString([], opts)} – ${b.toLocaleString([], opts)}`;
 }
+
+/** e.g. May 5, 2026 — from slot start instant */
+export function formatBookingDateMedium(slotStart: string): string {
+  const a = parseApiDateTime(slotStart);
+  if (!a) return "";
+  return a.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+}

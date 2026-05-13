@@ -58,6 +58,14 @@ public static class QmsDataSeeder
         var serviceTypes = new List<ServiceType>();
         var counters = new List<Counter>();
 
+        var heroImages = new[]
+        {
+            "https://images.unsplash.com/photo-1560472354-b33ff0c44a43?w=600&q=80",
+            "https://images.unsplash.com/photo-1486406146926-c627a92ad1ab?w=600&q=80",
+            "https://images.unsplash.com/photo-1497366216548-37526070297c?w=600&q=80",
+            "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=600&q=80",
+        };
+        var imgIdx = 0;
         foreach (var (code, name, lat, lng, addr, state) in definitions)
         {
             var branch = new Branch
@@ -73,14 +81,17 @@ public static class QmsDataSeeder
                 SlotDurationMinutes = 30,
                 GeofenceMeters = 80,
                 ServiceZoneOffsetMinutes = 8 * 60,
+                OperatingHours = "Mon–Fri 9:00–17:00; Sat 9:30–13:00",
+                ImageUrl = heroImages[Math.Min(imgIdx, heroImages.Length - 1)],
             };
+            imgIdx++;
             branches.Add(branch);
 
             var svcs = new[]
             {
-                new ServiceType { Id = Guid.NewGuid(), BranchId = branch.Id, Code = "ACC", Name = "General banking", DefaultAvgServiceMinutes = 12 },
+                new ServiceType { Id = Guid.NewGuid(), BranchId = branch.Id, Code = "ACC", Name = "General Banking", DefaultAvgServiceMinutes = 12 },
                 new ServiceType { Id = Guid.NewGuid(), BranchId = branch.Id, Code = "LOAN", Name = "Loan consultation", DefaultAvgServiceMinutes = 20 },
-                new ServiceType { Id = Guid.NewGuid(), BranchId = branch.Id, Code = "CASH", Name = "Deposit / withdrawal", DefaultAvgServiceMinutes = 8 },
+                new ServiceType { Id = Guid.NewGuid(), BranchId = branch.Id, Code = "CASH", Name = "Deposit/Withdrawal", DefaultAvgServiceMinutes = 8 },
             };
             serviceTypes.AddRange(svcs);
 

@@ -42,6 +42,7 @@ public sealed class QmsDbContext : DbContext
             e.Property(x => x.Address).HasMaxLength(400);
             e.Property(x => x.State).HasMaxLength(80);
             e.Property(x => x.OperatingHours).HasMaxLength(200);
+            e.Property(x => x.ImageUrl).HasMaxLength(800);
         });
 
         modelBuilder.Entity<ServiceType>(e =>

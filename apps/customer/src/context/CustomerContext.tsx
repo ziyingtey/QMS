@@ -5,11 +5,14 @@ import {
   apiBranches,
   apiCancelBooking,
   apiCheckIn,
+  apiCustomerMe,
   apiLogin,
   apiMyBookings,
+  apiPutPreferredBranch,
   apiRegister,
   type BookingSummary,
   type BranchDto,
+  type CustomerProfile,
 } from "../api";
 import { clearToken, clearUserEmail, readToken, readUserEmail, saveToken, saveUserEmail } from "../authStorage";
 import { navigationRef } from "../navigation/navigationRef";
@@ -21,6 +24,8 @@ type CustomerContextValue = {
   busy: boolean;
   branches: BranchDto[];
   bookings: BookingSummary[];
+  /** Server profile (name, phone, preferred branch) — loaded after login. */
+  profile: CustomerProfile | null;
   userCoords: { latitude: number; longitude: number } | null;
   /** Resolved street/city from GPS via Expo reverse geocode when possible. */
   userLocationLabel: string | null;
@@ -34,12 +39,14 @@ type CustomerContextValue = {
   setRegisterName: (s: string) => void;
   loadBranches: () => Promise<void>;
   refreshBookings: () => Promise<void>;
+  refreshProfile: () => Promise<void>;
+  savePreferredBranch: (branchId: string | null) => Promise<void>;
   requestLocation: () => Promise<void>;
   onLogin: () => Promise<void>;
   onLogout: () => Promise<void>;
   checkIn: (bookingId: string) => Promise<void>;
   cancelBooking: (id: string) => Promise<void>;
-  navigateToQueueTrack: (branchId: string, ticket: string) => void;
+  navigateToQueueTrack: (branchId: string, ticket: string, bookingId?: string) => void;
 };
 
 const CustomerContext = createContext<CustomerContextValue | null>(null);
@@ -50,13 +57,13 @@ export function useCustomer() {
   return c;
 }
 
-function navigateToQueueTrack(branchId: string, ticket: string) {
+function navigateToQueueTrack(branchId: string, ticket: string, bookingId?: string) {
   if (!navigationRef.isReady()) return;
   navigationRef.navigate("MainTabs", {
     screen: "Queue",
     params: {
       screen: "QueueTrack",
-      params: { branchId, ticket },
+      params: { branchId, ticket, bookingId },
     },
   });
 }
@@ -67,6 +74,7 @@ export function CustomerProvider({ children }: { children: React.ReactNode }) {
   const [busy, setBusy] = useState(false);
   const [branches, setBranches] = useState<BranchDto[]>([]);
   const [bookings, setBookings] = useState<BookingSummary[]>([]);
+  const [profile, setProfile] = useState<CustomerProfile | null>(null);
   const [userCoords, setUserCoords] = useState<{ latitude: number; longitude: number } | null>(null);
   const [userLocationLabel, setUserLocationLabel] = useState<string | null>(null);
 
@@ -105,12 +113,39 @@ export function CustomerProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  const refreshProfile = useCallback(async () => {
+    const t = await readToken();
+    if (!t) {
+      setProfile(null);
+      return;
+    }
+    try {
+      setProfile(await apiCustomerMe(t));
+    } catch {
+      setProfile(null);
+    }
+  }, []);
+
+  const savePreferredBranch = useCallback(async (branchId: string | null) => {
+    const t = await readToken();
+    if (!t) return;
+    setBusy(true);
+    try {
+      setProfile(await apiPutPreferredBranch(t, branchId));
+    } catch (e) {
+      Alert.alert("Preferred branch", e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
   useEffect(() => {
     if (token) {
       void loadBranches();
       void refreshBookings();
+      void refreshProfile();
     }
-  }, [token, loadBranches, refreshBookings]);
+  }, [token, loadBranches, refreshBookings, refreshProfile]);
 
   const watchedBranchIds = useMemo(() => (token && branches.length > 0 ? branches.map((b) => b.id) : []), [token, branches]);
 
@@ -174,6 +209,7 @@ export function CustomerProvider({ children }: { children: React.ReactNode }) {
     setToken(null);
     setUserEmail(null);
     setBookings([]);
+    setProfile(null);
     setUserCoords(null);
     setUserLocationLabel(null);
   }, []);
@@ -227,6 +263,7 @@ export function CustomerProvider({ children }: { children: React.ReactNode }) {
         busy,
         branches,
         bookings,
+        profile,
         userCoords,
         userLocationLabel,
         authMode,
@@ -239,6 +276,8 @@ export function CustomerProvider({ children }: { children: React.ReactNode }) {
         setRegisterName,
         loadBranches,
         refreshBookings,
+        refreshProfile,
+        savePreferredBranch,
         requestLocation,
         onLogin,
         onLogout,
@@ -252,6 +291,7 @@ export function CustomerProvider({ children }: { children: React.ReactNode }) {
       busy,
       branches,
       bookings,
+      profile,
       userCoords,
       userLocationLabel,
       authMode,
@@ -260,6 +300,8 @@ export function CustomerProvider({ children }: { children: React.ReactNode }) {
       registerName,
       loadBranches,
       refreshBookings,
+      refreshProfile,
+      savePreferredBranch,
       requestLocation,
       onLogin,
       onLogout,

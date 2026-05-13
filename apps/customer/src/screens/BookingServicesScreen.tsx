@@ -53,38 +53,52 @@ export function BookingServicesScreen({ navigation, route }: Props) {
   };
 
   return (
-    <View style={[styles.screen, { paddingTop: topPad }]}>
+    <View style={styles.screen}>
       <StatusBar style="light" />
-      <Pressable style={styles.back} onPress={() => navigation.navigate("BookingBranches")}>
-        <Ionicons name="arrow-back" size={22} color={theme.accent} />
-        <Text style={styles.backText}>All branches</Text>
-      </Pressable>
-      <Text style={styles.title}>{branch.name}</Text>
-      <Text style={styles.sub}>Pick a service · book a slot or join walk-in queue</Text>
+      <View style={[styles.header, { paddingTop: topPad }]}>
+        <Pressable style={styles.back} onPress={() => navigation.navigate("BookingBranches")}>
+          <Ionicons name="arrow-back" size={22} color={theme.accent} />
+          <Text style={styles.backText}>All branches</Text>
+        </Pressable>
+        <Text style={styles.title}>{branch.name}</Text>
+        <Text style={styles.sub}>Choose a service type to continue</Text>
+      </View>
 
       <FlatList
         data={branch.services}
         keyExtractor={(s) => s.id}
-        contentContainerStyle={{ paddingBottom: 120 }}
+        contentContainerStyle={{ paddingHorizontal: 18, paddingTop: 14, paddingBottom: 120 }}
         renderItem={({ item }) => {
           const lane = laneByService[item.id];
+          const crowdLabel =
+            lane == null ? "…" : lane.crowdLevel === "Low" ? "Low Crowd" : lane.crowdLevel === "Medium" ? "Medium Crowd" : "Busy";
+          const crowdColor =
+            lane == null
+              ? theme.textMutedOnLight
+              : lane.crowdLevel === "Low"
+                ? theme.success
+                : lane.crowdLevel === "Medium"
+                  ? theme.warning
+                  : theme.danger;
           return (
             <View style={styles.card}>
               <View style={styles.rowTop}>
-                <View style={styles.iconCircle}>
-                  <Ionicons name="layers-outline" size={20} color={theme.primary} />
+                <View style={styles.docCircle}>
+                  <Ionicons name="document-text" size={22} color="#b91c1c" />
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.svcName}>{item.name}</Text>
-                  <Text style={styles.avg}>Avg time · ~{item.defaultAvgServiceMinutes} min</Text>
+                  <Text style={styles.avg}>Avg time: {item.defaultAvgServiceMinutes} mins</Text>
+                  <View style={styles.metrics}>
+                    <Text style={[styles.crowdTag, { color: crowdColor }]}>{crowdLabel}</Text>
+                    <Text style={styles.waitHint}>
+                      Wait: {lane?.estimatedWaitMinutes == null ? "~—" : `~${lane.estimatedWaitMinutes} mins`}
+                    </Text>
+                  </View>
                 </View>
               </View>
               {lane ? (
-                <View style={styles.stats}>
-                  <Text style={styles.statChip}>Crowd {lane.crowdLevel}</Text>
-                  <Text style={styles.statChip}>Wait {lane.waitingCount}</Text>
-                  <Text style={styles.statChip}>ETA {lane.estimatedWaitMinutes ?? "—"}m</Text>
-                </View>
+                <Text style={styles.queueMeta}>{lane.waitingCount} customer(s) in this lane</Text>
               ) : (
                 <Text style={styles.muted}>Loading lane stats…</Text>
               )}
@@ -112,40 +126,48 @@ export function BookingServicesScreen({ navigation, route }: Props) {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: theme.bg, paddingHorizontal: 18 },
+  screen: { flex: 1, backgroundColor: theme.screenBg },
+  header: {
+    backgroundColor: theme.headerNavy,
+    paddingHorizontal: 18,
+    paddingBottom: 16,
+    borderBottomLeftRadius: 20,
+    borderBottomRightRadius: 20,
+  },
   back: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 },
   backText: { color: theme.accent, fontWeight: "700", fontSize: 16 },
-  title: { fontSize: 24, fontWeight: "800", color: theme.text },
-  sub: { color: theme.textMuted, marginBottom: 12 },
+  title: { fontSize: 24, fontWeight: "800", color: "#fff" },
+  sub: { color: "rgba(255,255,255,0.85)", marginTop: 6 },
   card: {
-    backgroundColor: theme.bgCard,
+    backgroundColor: "#fff",
     borderRadius: 18,
     padding: 16,
     marginBottom: 14,
     borderWidth: 1,
-    borderColor: theme.border,
+    borderColor: theme.borderLight,
+    shadowColor: "#000",
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
   },
-  rowTop: { flexDirection: "row", gap: 12, alignItems: "center" },
-  iconCircle: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
-    backgroundColor: theme.bgElevated,
+  rowTop: { flexDirection: "row", gap: 12, alignItems: "flex-start" },
+  docCircle: {
+    width: 48,
+    height: 48,
+    borderRadius: 14,
+    backgroundColor: "#fee2e2",
     alignItems: "center",
     justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "#fecaca",
   },
-  svcName: { fontSize: 17, fontWeight: "700", color: theme.text },
-  avg: { fontSize: 13, color: theme.textMuted, marginTop: 4 },
-  stats: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 12 },
-  statChip: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: theme.accent,
-    backgroundColor: theme.chip,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
-  },
-  muted: { color: theme.textMuted, marginTop: 10 },
+  svcName: { fontSize: 17, fontWeight: "700", color: theme.textOnLight },
+  avg: { fontSize: 13, color: theme.textMutedOnLight, marginTop: 4 },
+  metrics: { flexDirection: "row", flexWrap: "wrap", gap: 12, marginTop: 8, alignItems: "center" },
+  crowdTag: { fontSize: 13, fontWeight: "800" },
+  waitHint: { fontSize: 13, fontWeight: "700", color: theme.primaryDark },
+  queueMeta: { fontSize: 12, color: theme.textMutedOnLight, marginTop: 8 },
+  muted: { color: theme.textMutedOnLight, marginTop: 10 },
   dualBtns: { flexDirection: "row", gap: 10, marginTop: 14, flexWrap: "wrap" },
 });

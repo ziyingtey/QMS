@@ -28,6 +28,8 @@ public class Branch
     public BranchOpeningStatus OpeningStatus { get; set; } = BranchOpeningStatus.Open;
     /// <summary>Lecturer ERD operating_hours (free-text label).</summary>
     public string? OperatingHours { get; set; }
+    /// <summary>Optional hero/thumbnail URL for customer apps (HTTPS).</summary>
+    public string? ImageUrl { get; set; }
     /// <summary>Lecturer ERD max_capacity (optional headline).</summary>
     public int? MaxCapacity { get; set; }
     /// <summary>When true, future slot windows use live open counters (clamped); the active calendar window keeps stored TIME_SLOTS quotas.</summary>

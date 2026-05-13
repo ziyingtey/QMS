@@ -77,7 +77,7 @@ export function QueueHomeScreen({ navigation }: Props) {
                   Alert.alert("No ticket", "Booking may still be processing.");
                   return;
                 }
-                navigation.navigate("QueueTrack", { branchId: item.branchId, ticket: item.ticketNumber });
+                navigation.navigate("QueueTrack", { branchId: item.branchId, ticket: item.ticketNumber, bookingId: item.id });
               }}
             />
             <View style={styles.row}>

@@ -1,19 +1,26 @@
-/** IH-QMS customer — mockup-aligned deep blue + accents */
+/** IH-QMS customer — mockup-aligned deep blue + light content surfaces */
 export const theme = {
   bg: "#0f172a",
+  /** Home / list content area behind white cards */
+  screenBg: "#e8edf2",
   bgCard: "#1e293b",
   bgElevated: "#243047",
-  primary: "#2563eb",
-  primaryDark: "#1d4ed8",
-  navBar: "#0c1929",
+  primary: "#1e4a8c",
+  primaryDark: "#04336b",
+  headerNavy: "#04336b",
+  navBar: "#04336b",
+  tabBarBg: "#04336b",
   border: "rgba(255,255,255,0.08)",
+  borderLight: "rgba(15,23,42,0.08)",
   text: "#f8fafc",
+  textOnLight: "#0f172a",
   textMuted: "#94a3b8",
+  textMutedOnLight: "#64748b",
   accent: "#38bdf8",
   accentDim: "#0284c7",
   success: "#22c55e",
   warning: "#eab308",
   danger: "#ef4444",
   chip: "rgba(37,99,235,0.2)",
-  promoBanner: "rgba(124,58,237,0.35)",
+  promoBanner: "rgba(124,58,237,0.45)",
 };

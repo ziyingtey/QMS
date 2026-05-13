@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using QMS.Api.Services;
+using QMS.Domain.Enums;
 using QMS.Infrastructure.Persistence;
 
 namespace QMS.Api.Controllers;
@@ -30,6 +31,9 @@ public sealed class BranchesController(QmsDbContext db, QmsQueueService queue) :
                 b.ServiceDayStartMinutes,
                 b.ServiceDayEndMinutes,
                 b.ServiceZoneOffsetMinutes,
+                b.OperatingHours,
+                b.OpeningStatus == BranchOpeningStatus.Open ? "Open" : "Closed",
+                b.ImageUrl,
                 b.Services.Select(s => new ServiceDto(s.Id, s.Code, s.Name, s.DefaultAvgServiceMinutes)).ToList()))
             .ToListAsync(cancellationToken);
 
@@ -64,6 +68,9 @@ public sealed class BranchesController(QmsDbContext db, QmsQueueService queue) :
                 x.ServiceDayStartMinutes,
                 x.ServiceDayEndMinutes,
                 x.ServiceZoneOffsetMinutes,
+                x.OperatingHours,
+                x.OpeningStatus == BranchOpeningStatus.Open ? "Open" : "Closed",
+                x.ImageUrl,
                 x.Services.Select(s => new ServiceDto(s.Id, s.Code, s.Name, s.DefaultAvgServiceMinutes)).ToList()))
             .FirstOrDefaultAsync(cancellationToken);
 
@@ -119,6 +126,9 @@ public sealed record BranchDto(
     int ServiceDayStartMinutes,
     int ServiceDayEndMinutes,
     int ServiceZoneOffsetMinutes,
+    string? OperatingHours,
+    string OpeningStatus,
+    string? ImageUrl,
     IReadOnlyList<ServiceDto> Services);
 
 public sealed record WalkInLinkDto(

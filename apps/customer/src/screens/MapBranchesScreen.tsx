@@ -43,6 +43,7 @@ export function MapBranchesScreen({ navigation }: Props) {
   const { branches, userCoords, requestLocation, loadBranches } = useCustomer();
   const [search, setSearch] = useState("");
   const [stateFilter, setStateFilter] = useState<string>("All");
+  const [layoutMode, setLayoutMode] = useState<"map" | "list">("map");
 
   useEffect(() => {
     void requestLocation();
@@ -133,7 +134,7 @@ export function MapBranchesScreen({ navigation }: Props) {
           <Ionicons name="search-outline" size={20} color={theme.textMuted} />
           <TextInput
             style={styles.searchInput}
-            placeholder="Map search — name or address"
+            placeholder="Search for an Office…"
             placeholderTextColor={theme.textMuted}
             value={search}
             onChangeText={setSearch}
@@ -176,7 +177,7 @@ export function MapBranchesScreen({ navigation }: Props) {
         </Pressable>
       </View>
 
-      {MapView && Marker ? (
+      {MapView && Marker && layoutMode === "map" ? (
         <MapView
           ref={mapRef as never}
           style={styles.map}
@@ -198,6 +199,7 @@ export function MapBranchesScreen({ navigation }: Props) {
         <FlatList
           data={sortedForList}
           keyExtractor={(x) => x.b.id}
+          style={{ flex: 1 }}
           contentContainerStyle={{ paddingBottom: 100 }}
           renderItem={({ item: { b, dist } }) => (
             <View style={styles.listCard}>
@@ -218,7 +220,7 @@ export function MapBranchesScreen({ navigation }: Props) {
         />
       )}
 
-      {MapView ? (
+      {MapView && layoutMode === "map" ? (
         <Pressable
           accessibilityLabel="Locate me"
           style={[styles.fab, { bottom: Math.max(insets.bottom, 16) + 8 }]}
@@ -229,6 +231,16 @@ export function MapBranchesScreen({ navigation }: Props) {
       ) : null}
 
       {MapView ? (
+        <Pressable
+          accessibilityLabel={layoutMode === "map" ? "List view" : "Map view"}
+          style={[styles.fabToggle, { bottom: Math.max(insets.bottom, 16) + (MapView && layoutMode === "map" ? 72 : 8) }]}
+          onPress={() => setLayoutMode((m) => (m === "map" ? "list" : "map"))}
+        >
+          <Ionicons name={layoutMode === "map" ? "list-outline" : "map-outline"} size={24} color="#fff" />
+        </Pressable>
+      ) : null}
+
+      {MapView && layoutMode === "map" ? (
         <View style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, 12) }]}>
           <Text style={styles.sheetTitle}>Nearby</Text>
           <FlatList
@@ -337,6 +349,21 @@ const styles = StyleSheet.create({
     height: 52,
     borderRadius: 26,
     backgroundColor: theme.primary,
+    alignItems: "center",
+    justifyContent: "center",
+    elevation: 4,
+    shadowColor: "#000",
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+  },
+  fabToggle: {
+    position: "absolute",
+    right: 16,
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: theme.primaryDark,
     alignItems: "center",
     justifyContent: "center",
     elevation: 4,

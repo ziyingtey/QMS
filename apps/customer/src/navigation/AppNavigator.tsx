@@ -7,6 +7,7 @@ import { BookingBranchesScreen } from "../screens/BookingBranchesScreen";
 import { BookingServicesScreen } from "../screens/BookingServicesScreen";
 import { BookingSlotsScreen } from "../screens/BookingSlotsScreen";
 import { BookingTicketScreen } from "../screens/BookingTicketScreen";
+import { BranchDetailScreen } from "../screens/BranchDetailScreen";
 import { HomeScreen } from "../screens/HomeScreen";
 import { MapBranchesScreen } from "../screens/MapBranchesScreen";
 import { ProfileScreen } from "../screens/ProfileScreen";
@@ -47,10 +48,10 @@ function MainTabs() {
       screenOptions={({ route }) => ({
         headerShown: false,
         tabBarActiveTintColor: "#ffffff",
-        tabBarInactiveTintColor: "#64748b",
+        tabBarInactiveTintColor: "rgba(255,255,255,0.55)",
         tabBarStyle: {
-          backgroundColor: "#ffffff",
-          borderTopColor: "#e2e8f0",
+          backgroundColor: theme.tabBarBg,
+          borderTopColor: "rgba(255,255,255,0.12)",
           paddingTop: 6,
           height: 64,
         },
@@ -68,25 +69,26 @@ function MainTabs() {
                 alignItems: "center",
                 justifyContent: "center",
                 paddingVertical: 8,
-                marginHorizontal: 4,
+                marginHorizontal: 2,
                 marginVertical: 6,
-                borderRadius: 14,
-                backgroundColor: selected ? theme.primary : "transparent",
-                opacity: pressed ? 0.9 : 1,
+                borderRadius: 12,
+                backgroundColor: "transparent",
+                opacity: pressed ? 0.85 : 1,
               })}
             >
               {children}
             </Pressable>
           );
         },
-        tabBarIcon: ({ color, size }) => {
-          const map: Record<keyof MainTabParamList, keyof typeof Ionicons.glyphMap> = {
-            Home: "home-outline",
-            Booking: "calendar-outline",
-            Queue: "ticket-outline",
-            Profile: "person-outline",
+        tabBarIcon: ({ color, size, focused }) => {
+          const map: Record<keyof MainTabParamList, [keyof typeof Ionicons.glyphMap, keyof typeof Ionicons.glyphMap]> = {
+            Home: ["home", "home-outline"],
+            Booking: ["albums", "albums-outline"],
+            Queue: ["tv", "tv-outline"],
+            Profile: ["person", "person-outline"],
           };
-          return <Ionicons name={map[route.name]} size={size} color={color} />;
+          const [on, off] = map[route.name];
+          return <Ionicons name={focused ? on : off} size={size} color={color} />;
         },
       })}
     >
@@ -104,6 +106,7 @@ export function AppNavigator() {
       <RootStack.Navigator screenOptions={{ headerShown: false }}>
         <RootStack.Screen name="MainTabs" component={MainTabs} />
         <RootStack.Screen name="MapBranches" component={MapBranchesScreen} options={{ presentation: "modal" }} />
+        <RootStack.Screen name="BranchDetail" component={BranchDetailScreen} options={{ presentation: "card" }} />
       </RootStack.Navigator>
     </NavigationContainer>
   );

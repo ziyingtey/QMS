@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { StatusBar } from "expo-status-bar";
-import { FlatList, Platform, Pressable, StatusBar as RNStatusBar, StyleSheet, Text, View } from "react-native";
+import { FlatList, Image, Platform, StatusBar as RNStatusBar, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { BookingStackParamList } from "../navigation/navigationRef";
 import { PrimaryButton } from "../components/PrimaryButton";
@@ -14,7 +14,7 @@ type Props = NativeStackScreenProps<BookingStackParamList, "BookingBranches">;
 export function BookingBranchesScreen({ navigation }: Props) {
   const insets = useSafeAreaInsets();
   const topPad = Platform.OS === "android" ? (RNStatusBar.currentHeight ?? 0) + 8 : Math.max(insets.top, 12);
-  const { branches, busy, loadBranches, userCoords } = useCustomer();
+  const { branches, busy, loadBranches, userCoords, profile } = useCustomer();
 
   const sorted = [...branches]
     .map((b) => ({
@@ -23,6 +23,10 @@ export function BookingBranchesScreen({ navigation }: Props) {
         userCoords != null ? distanceMeters(userCoords.latitude, userCoords.longitude, b.latitude, b.longitude) : null,
     }))
     .sort((a, x) => {
+      const pa = profile?.preferredBranchId === a.b.id;
+      const pb = profile?.preferredBranchId === x.b.id;
+      if (pa && !pb) return -1;
+      if (!pa && pb) return 1;
       if (a.dist == null && x.dist == null) return a.b.name.localeCompare(x.b.name);
       if (a.dist == null) return 1;
       if (x.dist == null) return -1;
@@ -30,22 +34,35 @@ export function BookingBranchesScreen({ navigation }: Props) {
     });
 
   return (
-    <View style={[styles.screen, { paddingTop: topPad }]}>
+    <View style={styles.screen}>
       <StatusBar style="light" />
-      <Text style={styles.title}>Branches</Text>
-      <Text style={styles.sub}>Choose a branch · book a slot or walk-in ticket</Text>
-      <PrimaryButton label="Refresh branches" variant="ghost" icon="refresh-outline" onPress={() => void loadBranches()} />
+      <View style={[styles.header, { paddingTop: topPad }]}>
+        <Text style={styles.title}>Branches</Text>
+        <Text style={styles.sub}>Choose a branch · book a slot or walk-in ticket</Text>
+        <PrimaryButton label="Refresh branches" variant="ghost" icon="refresh-outline" onPress={() => void loadBranches()} />
+      </View>
       <FlatList
         data={sorted}
         keyExtractor={(x) => x.b.id}
-        contentContainerStyle={{ paddingBottom: 120 }}
+        contentContainerStyle={{ paddingHorizontal: 18, paddingTop: 12, paddingBottom: 120 }}
         renderItem={({ item: { b, dist } }) => (
           <View style={styles.card}>
-            <View style={styles.thumb}>
-              <Ionicons name="storefront-outline" size={26} color={theme.primary} />
-            </View>
+            {b.imageUrl ? (
+              <Image source={{ uri: b.imageUrl }} style={styles.thumbImg} />
+            ) : (
+              <View style={styles.thumb}>
+                <Ionicons name="storefront-outline" size={26} color={theme.primary} />
+              </View>
+            )}
             <View style={{ flex: 1 }}>
-              <Text style={styles.cardTitle}>{b.name}</Text>
+              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+                <Text style={styles.cardTitle}>{b.name}</Text>
+                {profile?.preferredBranchId === b.id ? (
+                  <View style={styles.pref}>
+                    <Text style={styles.prefText}>Preferred</Text>
+                  </View>
+                ) : null}
+              </View>
               {b.state ? <Text style={styles.stateTag}>{b.state}</Text> : null}
               {b.address ? (
                 <Text style={styles.addr} numberOfLines={2}>
@@ -75,33 +92,53 @@ export function BookingBranchesScreen({ navigation }: Props) {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: theme.bg, paddingHorizontal: 18 },
-  title: { fontSize: 26, fontWeight: "800", color: theme.text },
-  sub: { color: theme.textMuted, marginBottom: 12 },
+  screen: { flex: 1, backgroundColor: theme.screenBg },
+  header: {
+    backgroundColor: theme.headerNavy,
+    paddingHorizontal: 18,
+    paddingBottom: 14,
+    borderBottomLeftRadius: 20,
+    borderBottomRightRadius: 20,
+  },
+  title: { fontSize: 28, fontWeight: "900", color: "#fff" },
+  sub: { color: "rgba(255,255,255,0.85)", marginBottom: 10, marginTop: 6 },
   card: {
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
-    backgroundColor: theme.bgCard,
+    backgroundColor: "#fff",
     borderRadius: 18,
     padding: 14,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: theme.border,
+    borderColor: theme.borderLight,
     flexWrap: "wrap",
+    shadowColor: "#000",
+    shadowOpacity: 0.06,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
   },
   thumb: {
     width: 56,
     height: 56,
     borderRadius: 14,
-    backgroundColor: theme.bgElevated,
+    backgroundColor: "#e8eef9",
     alignItems: "center",
     justifyContent: "center",
   },
-  cardTitle: { fontSize: 17, fontWeight: "700", color: theme.text },
-  stateTag: { fontSize: 11, fontWeight: "700", color: theme.accent, marginTop: 4 },
-  meta: { fontSize: 12, color: theme.textMuted, marginTop: 4 },
-  addr: { fontSize: 12, color: theme.textMuted, marginTop: 4, lineHeight: 16 },
+  thumbImg: { width: 56, height: 56, borderRadius: 14, backgroundColor: "#e8eef9" },
+  cardTitle: { fontSize: 17, fontWeight: "700", color: theme.textOnLight },
+  stateTag: { fontSize: 11, fontWeight: "700", color: theme.primary, marginTop: 4 },
+  meta: { fontSize: 12, color: theme.textMutedOnLight, marginTop: 4 },
+  addr: { fontSize: 12, color: theme.textMutedOnLight, marginTop: 4, lineHeight: 16 },
   openNow: { fontSize: 12, fontWeight: "700", color: theme.success, marginTop: 6 },
-  near: { fontSize: 12, color: theme.accent, marginTop: 4, fontWeight: "600" },
+  near: { fontSize: 12, color: theme.primaryDark, marginTop: 4, fontWeight: "600" },
+  pref: {
+    backgroundColor: "rgba(34,197,94,0.15)",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+  },
+  prefText: { fontSize: 10, fontWeight: "900", color: theme.success },
 });

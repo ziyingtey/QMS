@@ -35,6 +35,9 @@ export type BranchDto = {
   serviceDayEndMinutes: number;
   /** Minutes east of UTC for branch calendar / slot dates (e.g. 480 = UTC+8). */
   serviceZoneOffsetMinutes: number;
+  operatingHours?: string | null;
+  openingStatus?: string | null;
+  imageUrl?: string | null;
   services: ServiceDto[];
 };
 
@@ -146,7 +149,84 @@ export async function apiLogin(email: string, password: string): Promise<LoginRe
 export async function apiBranches(): Promise<BranchDto[]> {
   const res = await fetch(`${API_BASE}/api/branches`);
   if (!res.ok) throw new Error(await parseError(res));
-  return res.json() as Promise<BranchDto[]>;
+  const raw = (await res.json()) as unknown[];
+  if (!Array.isArray(raw)) throw new Error("Unexpected branches response.");
+  return raw.map((row) => {
+    const o = row as Record<string, unknown>;
+    const servicesRaw = o.services ?? o.Services;
+    const services = Array.isArray(servicesRaw)
+      ? (servicesRaw as Record<string, unknown>[]).map((s) => ({
+          id: String(s.id ?? s.Id ?? ""),
+          code: String(s.code ?? s.Code ?? ""),
+          name: String(s.name ?? s.Name ?? ""),
+          defaultAvgServiceMinutes: Number(s.defaultAvgServiceMinutes ?? s.DefaultAvgServiceMinutes ?? 0),
+        }))
+      : [];
+    return {
+      id: String(o.id ?? o.Id ?? ""),
+      branchCode: Number(o.branchCode ?? o.BranchCode ?? 0),
+      name: String(o.name ?? o.Name ?? ""),
+      address: o.address != null ? String(o.address) : o.Address != null ? String(o.Address) : undefined,
+      state: o.state != null ? String(o.state) : o.State != null ? String(o.State) : undefined,
+      latitude: Number(o.latitude ?? o.Latitude ?? 0),
+      longitude: Number(o.longitude ?? o.Longitude ?? 0),
+      onlineQuotaPercent: Number(o.onlineQuotaPercent ?? o.OnlineQuotaPercent ?? 0),
+      slotDurationMinutes: Number(o.slotDurationMinutes ?? o.SlotDurationMinutes ?? 30),
+      geofenceMeters: Number(o.geofenceMeters ?? o.GeofenceMeters ?? 0),
+      serviceDayStartMinutes: Number(o.serviceDayStartMinutes ?? o.ServiceDayStartMinutes ?? 540),
+      serviceDayEndMinutes: Number(o.serviceDayEndMinutes ?? o.ServiceDayEndMinutes ?? 1020),
+      serviceZoneOffsetMinutes: Number(o.serviceZoneOffsetMinutes ?? o.ServiceZoneOffsetMinutes ?? 480),
+      operatingHours: o.operatingHours != null ? String(o.operatingHours) : o.OperatingHours != null ? String(o.OperatingHours) : undefined,
+      openingStatus: o.openingStatus != null ? String(o.openingStatus) : o.OpeningStatus != null ? String(o.OpeningStatus) : "Open",
+      imageUrl: o.imageUrl != null ? String(o.imageUrl) : o.ImageUrl != null ? String(o.ImageUrl) : undefined,
+      services,
+    } satisfies BranchDto;
+  });
+}
+
+export type CustomerProfile = {
+  email: string;
+  name: string;
+  phone: string | null;
+  preferredBranchId: string | null;
+};
+
+export async function apiCustomerMe(token: string): Promise<CustomerProfile> {
+  const res = await fetch(`${API_BASE}/api/customers/me`, { headers: bearerHeaders(token) });
+  if (!res.ok) throw new Error(await parseError(res));
+  const o = (await res.json()) as Record<string, unknown>;
+  return {
+    email: String(o.email ?? o.Email ?? ""),
+    name: String(o.name ?? o.Name ?? ""),
+    phone: o.phone != null ? String(o.phone) : o.Phone != null ? String(o.Phone) : null,
+    preferredBranchId:
+      o.preferredBranchId != null
+        ? String(o.preferredBranchId)
+        : o.PreferredBranchId != null
+          ? String(o.PreferredBranchId)
+          : null,
+  };
+}
+
+export async function apiPutPreferredBranch(token: string, preferredBranchId: string | null): Promise<CustomerProfile> {
+  const res = await fetch(`${API_BASE}/api/customers/me/preferred-branch`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...bearerHeaders(token) },
+    body: JSON.stringify({ preferredBranchId }),
+  });
+  if (!res.ok) throw new Error(await parseError(res));
+  const o = (await res.json()) as Record<string, unknown>;
+  return {
+    email: String(o.email ?? o.Email ?? ""),
+    name: String(o.name ?? o.Name ?? ""),
+    phone: o.phone != null ? String(o.phone) : o.Phone != null ? String(o.Phone) : null,
+    preferredBranchId:
+      o.preferredBranchId != null
+        ? String(o.preferredBranchId)
+        : o.PreferredBranchId != null
+          ? String(o.PreferredBranchId)
+          : null,
+  };
 }
 
 /** `dayYmd` = branch-local calendar date, e.g. 2026-05-05 (not UTC midnight ISO). */

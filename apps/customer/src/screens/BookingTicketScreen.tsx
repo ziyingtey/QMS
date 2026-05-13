@@ -30,7 +30,7 @@ export function BookingTicketScreen({ navigation, route }: Props) {
         label="Live queue status"
         variant="ghost"
         icon="pulse-outline"
-        onPress={() => navigateToQueueTrack(branchId, created.ticketNumber)}
+        onPress={() => navigateToQueueTrack(branchId, created.ticketNumber, created.bookingId)}
       />
       <PrimaryButton label="Done" variant="ghost" onPress={() => navigation.navigate("BookingBranches")} />
     </View>

@@ -1,9 +1,10 @@
 import { Ionicons } from "@expo/vector-icons";
 import { StatusBar } from "expo-status-bar";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Image,
   Platform,
   Pressable,
   ScrollView,
@@ -14,23 +15,37 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { apiBranches, apiQueueStatus, apiServiceLaneSummary, type ServiceLaneSummary } from "../api";
+import { apiQueueStatus, apiServiceLaneSummary, type ServiceLaneSummary } from "../api";
 import { PrimaryButton } from "../components/PrimaryButton";
 import { useCustomer } from "../context/CustomerContext";
+import { navigationRef } from "../navigation/navigationRef";
 import { theme } from "../theme";
 import { formatBookingSlotDateTime } from "../utils/dateFormat";
-import { navigationRef } from "../navigation/navigationRef";
 import { distanceMeters, formatDistance } from "../utils/geo";
+
+type SortMode = "distance" | "wait" | "name";
 
 function openBranchMap() {
   if (navigationRef.isReady()) navigationRef.navigate("MapBranches");
 }
 
-export function HomeScreen({ navigation }: { navigation: { navigate: (...args: unknown[]) => void; getParent: () => { navigate: (n: string) => void } | undefined } }) {
+function openBranchDetail(branch: import("../api").BranchDto) {
+  if (navigationRef.isReady()) navigationRef.navigate("BranchDetail", { branch });
+}
+
+export function HomeScreen({
+  navigation,
+}: {
+  navigation: {
+    navigate: (...args: unknown[]) => void;
+    getParent: () => { navigate: (n: string, p?: object) => void } | undefined;
+  };
+}) {
   const insets = useSafeAreaInsets();
   const topPad = Platform.OS === "android" ? (RNStatusBar.currentHeight ?? 0) + 8 : Math.max(insets.top, 12);
   const {
     userEmail,
+    profile,
     branches,
     bookings,
     userCoords,
@@ -42,7 +57,10 @@ export function HomeScreen({ navigation }: { navigation: { navigate: (...args: u
     navigateToQueueTrack,
   } = useCustomer();
   const [search, setSearch] = useState("");
+  const [sortMode, setSortMode] = useState<SortMode>("distance");
+  const [serviceFilter, setServiceFilter] = useState<string>("__all__");
   const [activeStatus, setActiveStatus] = useState<Awaited<ReturnType<typeof apiQueueStatus>> | null>(null);
+  const [waitByBranchId, setWaitByBranchId] = useState<Record<string, number | null>>({});
 
   useEffect(() => {
     void requestLocation();
@@ -78,81 +96,128 @@ export function HomeScreen({ navigation }: { navigation: { navigate: (...args: u
     };
   }, [primaryBooking?.branchId, primaryBooking?.ticketNumber]);
 
-  const filtered = branches
-    .filter((b) => (search.trim() ? b.name.toLowerCase().includes(search.trim().toLowerCase()) : true))
-    .map((b) => ({
-      branch: b,
-      dist:
-        userCoords != null ? distanceMeters(userCoords.latitude, userCoords.longitude, b.latitude, b.longitude) : null,
-    }))
-    .sort((a, b) => {
-      if (a.dist == null && b.dist == null) return a.branch.name.localeCompare(b.branch.name);
-      if (a.dist == null) return 1;
-      if (b.dist == null) return -1;
-      return a.dist - b.dist;
-    });
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const next: Record<string, number | null> = {};
+      await Promise.all(
+        branches.map(async (b) => {
+          let minWait: number | null = null;
+          for (const s of b.services) {
+            try {
+              const lane = await apiServiceLaneSummary(b.id, s.id);
+              const w = lane.estimatedWaitMinutes;
+              if (w != null) minWait = minWait == null ? w : Math.min(minWait, w);
+            } catch {
+              /* skip */
+            }
+          }
+          next[b.id] = minWait;
+        }),
+      );
+      if (!cancelled) setWaitByBranchId(next);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [branches]);
 
-  const rawHello = userEmail?.split("@")[0] ?? "there";
+  const serviceFilterOptions = useMemo(() => {
+    const names = new Set<string>();
+    branches.forEach((b) => b.services.forEach((s) => names.add(s.name)));
+    return Array.from(names).sort((a, b) => a.localeCompare(b));
+  }, [branches]);
+
+  const baseFiltered = branches.filter((b) => {
+    const q = search.trim().toLowerCase();
+    if (q && !b.name.toLowerCase().includes(q) && !(b.address ?? "").toLowerCase().includes(q)) return false;
+    if (serviceFilter !== "__all__" && !b.services.some((s) => s.name === serviceFilter)) return false;
+    return true;
+  });
+
+  const scored = baseFiltered.map((b) => ({
+    branch: b,
+    dist:
+      userCoords != null ? distanceMeters(userCoords.latitude, userCoords.longitude, b.latitude, b.longitude) : null,
+    wait: waitByBranchId[b.id] ?? null,
+  }));
+
+  const sorted = [...scored].sort((a, b) => {
+    const pa = profile?.preferredBranchId === a.branch.id;
+    const pb = profile?.preferredBranchId === b.branch.id;
+    if (pa && !pb) return -1;
+    if (!pa && pb) return 1;
+    if (sortMode === "name") return a.branch.name.localeCompare(b.branch.name);
+    if (sortMode === "wait") {
+      const wa = a.wait;
+      const wb = b.wait;
+      if (wa == null && wb == null) return (a.dist ?? 1e12) - (b.dist ?? 1e12);
+      if (wa == null) return 1;
+      if (wb == null) return -1;
+      if (wa !== wb) return wa - wb;
+    }
+    if (a.dist == null && b.dist == null) return a.branch.name.localeCompare(b.branch.name);
+    if (a.dist == null) return 1;
+    if (b.dist == null) return -1;
+    return a.dist - b.dist;
+  });
+
+  const rawHello = profile?.name?.trim() || userEmail?.split("@")[0] || "there";
   const helloName = rawHello.length > 0 ? rawHello.charAt(0).toUpperCase() + rawHello.slice(1) : "there";
-  const recommend = filtered[0]?.branch;
+  const recommend = sorted[0]?.branch;
 
   return (
     <View style={[styles.screen, { paddingTop: topPad }]}>
       <StatusBar style="light" />
-      <ScrollView contentContainerStyle={{ paddingBottom: 100 }} showsVerticalScrollIndicator={false}>
-        <View style={styles.headerRow}>
-          <View style={styles.avatarCircle}>
-            <Text style={styles.avatarLetter}>{helloName.charAt(0)}</Text>
+      <ScrollView contentContainerStyle={{ paddingBottom: 110, paddingHorizontal: 18 }} showsVerticalScrollIndicator={false}>
+        <View style={[styles.headerBlock, { marginHorizontal: -18, paddingHorizontal: 18 }]}>
+          <View style={styles.headerRow}>
+            <View style={styles.avatarCircle}>
+              <Text style={styles.avatarLetter}>{helloName.charAt(0)}</Text>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.hello}>Hello {helloName}!</Text>
+              <Text style={styles.addressLine} numberOfLines={2}>
+                {userLocationLabel ?? "Fetching your location…"}
+              </Text>
+              <Text style={styles.phoneLine}>{profile?.phone?.trim() || "Customer account"}</Text>
+            </View>
+            <View style={styles.headerIcons}>
+              <Pressable
+                accessibilityLabel="Notifications"
+                onPress={() => Alert.alert("Notifications", "Ticket reminders can be wired to push in a later iteration.")}
+                style={styles.iconBtn}
+                hitSlop={8}
+              >
+                <Ionicons name="notifications-outline" size={22} color="#fff" />
+              </Pressable>
+            </View>
           </View>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.hello}>Hello {helloName}!</Text>
-            <Text style={styles.addressLine} numberOfLines={2}>
-              {userLocationLabel ?? "Fetching your location…"}
-            </Text>
-            <Text style={styles.phoneLine}>Customer account · add phone in a future profile update</Text>
-          </View>
-          <View style={styles.headerIcons}>
-            <Pressable
-              accessibilityLabel="Notifications"
-              onPress={() => Alert.alert("Notifications", "Alerts when your ticket is almost due can be added later.")}
-              style={styles.iconBtn}
-              hitSlop={8}
-            >
-              <Ionicons name="notifications-outline" size={22} color={theme.text} />
-            </Pressable>
-            <Pressable accessibilityLabel="Open map" onPress={openBranchMap} style={styles.iconBtn} hitSlop={8}>
-              <Ionicons name="map-outline" size={22} color={theme.text} />
-            </Pressable>
-          </View>
-        </View>
 
-        <View style={styles.searchWrap}>
-          <Ionicons name="search-outline" size={20} color="#64748b" />
-          <TextInput
-            style={styles.searchInput}
-            placeholder="Search for a branch…"
-            placeholderTextColor={theme.textMuted}
-            value={search}
-            onChangeText={setSearch}
-          />
-          <Pressable
-            accessibilityLabel="Voice search"
-            onPress={() => Alert.alert("Voice search", "Not enabled in this build.")}
-            hitSlop={8}
-          >
-            <Ionicons name="mic-outline" size={22} color="#64748b" />
-          </Pressable>
-          <Pressable accessibilityLabel="Locate on map" onPress={openBranchMap} hitSlop={8}>
-            <Ionicons name="location-outline" size={22} color={theme.primary} />
-          </Pressable>
+          <View style={styles.searchWrap}>
+            <Ionicons name="search-outline" size={20} color="#64748b" />
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Search for a branch…"
+              placeholderTextColor={theme.textMutedOnLight}
+              value={search}
+              onChangeText={setSearch}
+            />
+            <Pressable accessibilityLabel="Voice search" onPress={() => Alert.alert("Voice search", "Not enabled in this build.")} hitSlop={8}>
+              <Ionicons name="mic-outline" size={22} color="#64748b" />
+            </Pressable>
+            <Pressable accessibilityLabel="Locate on map" onPress={openBranchMap} hitSlop={8}>
+              <Ionicons name="location-outline" size={22} color={theme.primaryDark} />
+            </Pressable>
+          </View>
         </View>
 
         {primaryBooking?.ticketNumber ? (
           <Pressable
             style={styles.activeCard}
-            onPress={() => navigateToQueueTrack(primaryBooking.branchId, primaryBooking.ticketNumber!)}
+            onPress={() => navigateToQueueTrack(primaryBooking.branchId, primaryBooking.ticketNumber!, primaryBooking.id)}
           >
-            <Text style={styles.activeCardLabel}>Your queue ticket</Text>
+            <Text style={styles.activeCardLabel}>Your current ticket</Text>
             <Text style={styles.activeTicket}>{primaryBooking.ticketNumber}</Text>
             <Text style={styles.activeSlot}>{formatBookingSlotDateTime(primaryBooking.slotStart, primaryBooking.slotEnd)}</Text>
             <View style={styles.activeRow}>
@@ -166,10 +231,10 @@ export function HomeScreen({ navigation }: { navigation: { navigate: (...args: u
                 </Text>
               </Text>
             </View>
-            <Text style={styles.activeTap}>Tap for live queue status →</Text>
+            <Text style={styles.activeTap}>More details →</Text>
           </Pressable>
         ) : (
-          <View style={[styles.activeCard, { opacity: 0.85 }]}>
+          <View style={[styles.activeCard, { opacity: 0.9 }]}>
             <Text style={styles.activeCardLabel}>No active ticket</Text>
             <Text style={styles.activeMeta}>Book a slot or take a walk-in from the Booking tab.</Text>
           </View>
@@ -178,10 +243,49 @@ export function HomeScreen({ navigation }: { navigation: { navigate: (...args: u
         <View style={styles.promoBanner}>
           <Ionicons name="sparkles-outline" size={18} color="#e9d5ff" />
           <Text style={styles.promoText}>
-            Branch recommendation: {recommend?.name ?? "—"}
+            Branch recommendations: {recommend?.name ?? "—"}
             {userCoords ? "" : " · enable GPS for distance-based picks"}
           </Text>
         </View>
+
+        <View style={styles.sortRow}>
+          <Text style={styles.sortLabel}>Sort</Text>
+          {(
+            [
+              ["distance", "Distance"],
+              ["wait", "Wait"],
+              ["name", "A–Z"],
+            ] as const
+          ).map(([key, label]) => {
+            const on = sortMode === key;
+            return (
+              <Pressable key={key} onPress={() => setSortMode(key)} style={[styles.sortChip, on && styles.sortChipOn]}>
+                <Text style={[styles.sortChipText, on && styles.sortChipTextOn]}>{label}</Text>
+              </Pressable>
+            );
+          })}
+        </View>
+
+        {serviceFilterOptions.length > 0 ? (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterScroll}>
+            <Pressable
+              onPress={() => setServiceFilter("__all__")}
+              style={[styles.filterChip, serviceFilter === "__all__" && styles.filterChipOn]}
+            >
+              <Text style={[styles.filterChipText, serviceFilter === "__all__" && styles.filterChipTextOn]}>All services</Text>
+            </Pressable>
+            {serviceFilterOptions.map((n) => {
+              const on = serviceFilter === n;
+              return (
+                <Pressable key={n} onPress={() => setServiceFilter(n)} style={[styles.filterChip, on && styles.filterChipOn]}>
+                  <Text style={[styles.filterChipText, on && styles.filterChipTextOn]} numberOfLines={1}>
+                    {n}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        ) : null}
 
         <View style={styles.sectionHead}>
           <Text style={styles.sectionTitle}>Nearby branches</Text>
@@ -195,15 +299,15 @@ export function HomeScreen({ navigation }: { navigation: { navigate: (...args: u
           </View>
         </View>
 
-        {busy && branches.length === 0 ? <ActivityIndicator color={theme.accent} style={{ marginVertical: 24 }} /> : null}
+        {busy && branches.length === 0 ? <ActivityIndicator color={theme.primary} style={{ marginVertical: 24 }} /> : null}
 
-        {filtered.map(({ branch: b, dist }) => (
+        {sorted.map(({ branch: b, dist }) => (
           <NearbyBranchCard
             key={b.id}
-            name={b.name}
-            address={b.address}
+            branch={b}
             distanceLabel={dist != null ? formatDistance(dist) : userCoords ? "—" : "Enable location"}
-            branchId={b.id}
+            isPreferred={profile?.preferredBranchId === b.id}
+            onOpenDetail={() => openBranchDetail(b)}
             onBook={() =>
               navigation.navigate(
                 "Booking" as never,
@@ -213,7 +317,6 @@ export function HomeScreen({ navigation }: { navigation: { navigate: (...args: u
                 } as never,
               )
             }
-            onOpenMap={openBranchMap}
           />
         ))}
       </ScrollView>
@@ -222,30 +325,26 @@ export function HomeScreen({ navigation }: { navigation: { navigate: (...args: u
 }
 
 function NearbyBranchCard({
-  name,
-  address,
+  branch,
   distanceLabel,
-  branchId,
+  isPreferred,
   onBook,
-  onOpenMap,
+  onOpenDetail,
 }: {
-  name: string;
-  address?: string;
+  branch: import("../api").BranchDto;
   distanceLabel: string;
-  branchId: string;
+  isPreferred: boolean;
   onBook: () => void;
-  onOpenMap: () => void;
+  onOpenDetail: () => void;
 }) {
   const [lane, setLane] = useState<ServiceLaneSummary | null>(null);
   useEffect(() => {
     let cancelled = false;
     void (async () => {
+      const first = branch.services[0];
+      if (!first) return;
       try {
-        const list = await apiBranches();
-        const b = list.find((x) => x.id === branchId);
-        const first = b?.services[0];
-        if (!first) return;
-        const s = await apiServiceLaneSummary(branchId, first.id);
+        const s = await apiServiceLaneSummary(branch.id, first.id);
         if (!cancelled) setLane(s);
       } catch {
         if (!cancelled) setLane(null);
@@ -254,65 +353,82 @@ function NearbyBranchCard({
     return () => {
       cancelled = true;
     };
-  }, [branchId]);
+  }, [branch.id, branch.services]);
 
   const crowd =
     lane == null ? "…" : lane.crowdLevel === "Low" ? "Low Crowd" : lane.crowdLevel === "Medium" ? "Medium Crowd" : "Busy";
   const crowdColor =
-    lane == null ? theme.textMuted : lane.crowdLevel === "Low" ? theme.success : lane.crowdLevel === "Medium" ? theme.warning : theme.danger;
+    lane == null ? theme.textMutedOnLight : lane.crowdLevel === "Low" ? theme.success : lane.crowdLevel === "Medium" ? theme.warning : theme.danger;
 
   return (
-    <View style={styles.branchCard}>
-      <View style={styles.branchThumb}>
-        <Ionicons name="business" size={28} color={theme.primary} />
-      </View>
+    <Pressable style={styles.branchCard} onPress={onOpenDetail}>
+      {branch.imageUrl ? (
+        <Image source={{ uri: branch.imageUrl }} style={styles.branchThumbImg} />
+      ) : (
+        <View style={styles.branchThumb}>
+          <Ionicons name="business" size={28} color={theme.primary} />
+        </View>
+      )}
       <View style={{ flex: 1 }}>
-        <Text style={styles.branchName}>{name}</Text>
-        {address ? (
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <Text style={styles.branchName}>{branch.name}</Text>
+          {isPreferred ? (
+            <View style={styles.prefPill}>
+              <Text style={styles.prefPillText}>Preferred</Text>
+            </View>
+          ) : null}
+        </View>
+        {branch.address ? (
           <Text style={styles.branchAddr} numberOfLines={2}>
-            {address}
+            {branch.address}
           </Text>
         ) : null}
-        <Text style={styles.branchNear}>Near You: {distanceLabel}</Text>
+        <Text style={styles.branchNear}>Near you: {distanceLabel}</Text>
         <Text style={[styles.crowdPill, { color: crowdColor }]}>{crowd}</Text>
       </View>
-      <View style={styles.branchActions}>
-        <Pressable onPress={onOpenMap} style={styles.mapMini}>
-          <Ionicons name="map-outline" size={18} color={theme.accent} />
+      <View style={styles.branchRight}>
+        <Pressable onPress={onOpenDetail} hitSlop={8} style={styles.chevronBtn}>
+          <Ionicons name="chevron-forward" size={22} color={theme.textMutedOnLight} />
         </Pressable>
         <PrimaryButton label="Book a turn" compact onPress={onBook} />
       </View>
-    </View>
+    </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: theme.bg, paddingHorizontal: 18 },
-  headerRow: { flexDirection: "row", alignItems: "flex-start", marginBottom: 18, gap: 12 },
+  screen: { flex: 1, backgroundColor: theme.screenBg },
+  headerBlock: {
+    backgroundColor: theme.headerNavy,
+    paddingBottom: 16,
+    borderBottomLeftRadius: 22,
+    borderBottomRightRadius: 22,
+  },
+  headerRow: { flexDirection: "row", alignItems: "flex-start", marginBottom: 16, gap: 12 },
   avatarCircle: {
     width: 52,
     height: 52,
     borderRadius: 26,
-    backgroundColor: theme.bgCard,
+    backgroundColor: "rgba(255,255,255,0.15)",
     borderWidth: 2,
-    borderColor: theme.primary,
+    borderColor: "rgba(255,255,255,0.5)",
     alignItems: "center",
     justifyContent: "center",
   },
-  avatarLetter: { fontSize: 22, fontWeight: "800", color: theme.text },
-  hello: { fontSize: 22, fontWeight: "800", color: theme.text },
-  addressLine: { fontSize: 13, color: theme.textMuted, marginTop: 6, lineHeight: 18 },
-  phoneLine: { fontSize: 12, color: theme.textMuted, opacity: 0.75, marginTop: 4 },
+  avatarLetter: { fontSize: 22, fontWeight: "800", color: "#fff" },
+  hello: { fontSize: 22, fontWeight: "800", color: "#fff" },
+  addressLine: { fontSize: 13, color: "rgba(255,255,255,0.85)", marginTop: 6, lineHeight: 18 },
+  phoneLine: { fontSize: 12, color: "rgba(255,255,255,0.7)", marginTop: 4 },
   headerIcons: { alignItems: "flex-end", gap: 8 },
   iconBtn: {
     width: 44,
     height: 44,
     borderRadius: 14,
-    backgroundColor: theme.bgCard,
+    backgroundColor: "rgba(255,255,255,0.12)",
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
-    borderColor: theme.border,
+    borderColor: "rgba(255,255,255,0.2)",
   },
   searchWrap: {
     flexDirection: "row",
@@ -322,18 +438,18 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     paddingHorizontal: 14,
     paddingVertical: 12,
-    marginBottom: 16,
     shadowColor: "#000",
     shadowOpacity: 0.12,
     shadowRadius: 10,
     shadowOffset: { width: 0, height: 4 },
     elevation: 3,
   },
-  searchInput: { flex: 1, color: "#0f172a", fontSize: 16 },
+  searchInput: { flex: 1, color: theme.textOnLight, fontSize: 16 },
   activeCard: {
     backgroundColor: theme.primaryDark,
     borderRadius: 18,
     padding: 18,
+    marginTop: 16,
     marginBottom: 14,
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.12)",
@@ -351,13 +467,39 @@ const styles = StyleSheet.create({
     backgroundColor: theme.promoBanner,
     padding: 12,
     borderRadius: 14,
-    marginBottom: 18,
+    marginBottom: 14,
   },
   promoText: { flex: 1, color: "#f5f3ff", fontSize: 13 },
+  sortRow: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" },
+  sortLabel: { fontSize: 13, fontWeight: "800", color: theme.textMutedOnLight, marginRight: 4 },
+  sortChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 12,
+    backgroundColor: "#fff",
+    borderWidth: 1,
+    borderColor: theme.borderLight,
+  },
+  sortChipOn: { backgroundColor: theme.primaryDark, borderColor: theme.primaryDark },
+  sortChipText: { fontSize: 12, fontWeight: "700", color: theme.textMutedOnLight },
+  sortChipTextOn: { color: "#fff" },
+  filterScroll: { gap: 8, paddingBottom: 12, flexDirection: "row" },
+  filterChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: "#fff",
+    borderWidth: 1,
+    borderColor: theme.borderLight,
+    maxWidth: 200,
+  },
+  filterChipOn: { borderColor: theme.primary, backgroundColor: "#e8eef9" },
+  filterChipText: { fontSize: 12, fontWeight: "600", color: theme.textMutedOnLight },
+  filterChipTextOn: { color: theme.primaryDark, fontWeight: "800" },
   sectionHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 10 },
-  sectionTitle: { fontSize: 18, fontWeight: "800", color: theme.text },
-  viewAll: { color: theme.primary, fontWeight: "700", fontSize: 14 },
-  refreshLink: { color: theme.accent, fontWeight: "600" },
+  sectionTitle: { fontSize: 18, fontWeight: "800", color: theme.textOnLight },
+  viewAll: { color: theme.primaryDark, fontWeight: "700", fontSize: 14 },
+  refreshLink: { color: theme.primary, fontWeight: "600" },
   branchCard: {
     flexDirection: "row",
     alignItems: "center",
@@ -380,10 +522,18 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  branchName: { fontSize: 16, fontWeight: "700", color: "#0f172a" },
-  branchAddr: { fontSize: 12, color: "#64748b", marginTop: 4, lineHeight: 16 },
-  branchNear: { fontSize: 12, color: "#64748b", marginTop: 4, fontWeight: "600" },
+  branchThumbImg: { width: 52, height: 52, borderRadius: 12, backgroundColor: "#e8eef9" },
+  branchName: { fontSize: 16, fontWeight: "700", color: theme.textOnLight },
+  branchAddr: { fontSize: 12, color: theme.textMutedOnLight, marginTop: 4, lineHeight: 16 },
+  branchNear: { fontSize: 12, color: theme.textMutedOnLight, marginTop: 4, fontWeight: "600" },
   crowdPill: { fontSize: 12, fontWeight: "700", marginTop: 6 },
-  branchActions: { alignItems: "flex-end", gap: 8 },
-  mapMini: { padding: 6 },
+  branchRight: { alignItems: "flex-end", gap: 6 },
+  chevronBtn: { padding: 4 },
+  prefPill: {
+    backgroundColor: "rgba(34,197,94,0.15)",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+  },
+  prefPillText: { fontSize: 10, fontWeight: "800", color: theme.success },
 });

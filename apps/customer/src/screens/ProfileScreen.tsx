@@ -10,7 +10,10 @@ import { theme } from "../theme";
 export function ProfileScreen() {
   const insets = useSafeAreaInsets();
   const topPad = Platform.OS === "android" ? (RNStatusBar.currentHeight ?? 0) + 8 : Math.max(insets.top, 12);
-  const { userEmail, onLogout, requestLocation } = useCustomer();
+  const { userEmail, onLogout, requestLocation, profile, branches } = useCustomer();
+  const prefName = profile?.preferredBranchId
+    ? branches.find((b) => b.id === profile.preferredBranchId)?.name
+    : null;
 
   return (
     <View style={[styles.screen, { paddingTop: topPad }]}>
@@ -20,6 +23,13 @@ export function ProfileScreen() {
       </View>
       <Text style={styles.title}>Profile</Text>
       <Text style={styles.email}>{userEmail ?? "—"}</Text>
+      {profile?.name ? <Text style={styles.name}>{profile.name}</Text> : null}
+      {prefName ? (
+        <View style={styles.prefCard}>
+          <Text style={styles.prefLabel}>Preferred branch</Text>
+          <Text style={styles.prefVal}>{prefName}</Text>
+        </View>
+      ) : null}
       <View style={styles.card}>
         <Text style={styles.cardLabel}>API</Text>
         <Text style={styles.cardVal}>{API_BASE}</Text>
@@ -51,6 +61,17 @@ const styles = StyleSheet.create({
   },
   title: { fontSize: 24, fontWeight: "800", color: theme.text, textAlign: "center" },
   email: { color: theme.textMuted, textAlign: "center", fontSize: 15 },
+  name: { color: theme.text, textAlign: "center", fontSize: 17, fontWeight: "800", marginTop: 6 },
+  prefCard: {
+    backgroundColor: theme.bgCard,
+    borderRadius: 14,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: theme.border,
+    marginTop: 8,
+  },
+  prefLabel: { fontSize: 12, color: theme.textMuted, fontWeight: "600" },
+  prefVal: { color: theme.accent, fontSize: 15, fontWeight: "800", marginTop: 6 },
   card: {
     backgroundColor: theme.bgCard,
     borderRadius: 16,
