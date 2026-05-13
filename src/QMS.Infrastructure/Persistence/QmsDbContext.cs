@@ -74,7 +74,7 @@ public sealed class QmsDbContext : DbContext
             e.HasOne(x => x.ServiceType)
                 .WithMany(s => s.CounterCapabilities)
                 .HasForeignKey(x => x.ServiceTypeId)
-                .OnDelete(DeleteBehavior.Cascade);
+                .OnDelete(DeleteBehavior.NoAction);
         });
 
         modelBuilder.Entity<Staff>(e =>
@@ -91,7 +91,7 @@ public sealed class QmsDbContext : DbContext
             e.ToTable("TIME_SLOTS");
             e.HasIndex(x => new { x.BranchId, x.ServiceTypeId, x.StartTime, x.EndTime });
             e.HasOne(x => x.Branch).WithMany(b => b.TimeSlots).HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.Cascade);
-            e.HasOne(x => x.ServiceType).WithMany(s => s.TimeSlots).HasForeignKey(x => x.ServiceTypeId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.ServiceType).WithMany(s => s.TimeSlots).HasForeignKey(x => x.ServiceTypeId).OnDelete(DeleteBehavior.NoAction);
         });
 
         modelBuilder.Entity<Booking>(e =>
