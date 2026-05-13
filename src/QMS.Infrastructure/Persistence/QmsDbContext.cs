@@ -60,7 +60,7 @@ public sealed class QmsDbContext : DbContext
             e.HasIndex(x => new { x.BranchId, x.Number }).IsUnique();
             e.HasOne(x => x.Branch).WithMany(b => b.Counters).HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.Cascade);
             e.HasOne(x => x.AssignedStaff).WithMany().HasForeignKey(x => x.StaffId).OnDelete(DeleteBehavior.SetNull);
-            e.HasOne(x => x.CurrentServiceType).WithMany().HasForeignKey(x => x.CurrentServiceTypeId).OnDelete(DeleteBehavior.SetNull);
+            e.HasOne(x => x.CurrentServiceType).WithMany().HasForeignKey(x => x.CurrentServiceTypeId).OnDelete(DeleteBehavior.NoAction);
         });
 
         modelBuilder.Entity<CounterAllowedService>(e =>
