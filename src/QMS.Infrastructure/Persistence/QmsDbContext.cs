@@ -30,7 +30,7 @@ public sealed class QmsDbContext : DbContext
             e.HasIndex(x => x.Email).IsUnique();
             e.Property(x => x.Email).HasMaxLength(256);
             e.Property(x => x.Name).HasMaxLength(200);
-            e.Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIMEOFFSET()");
+            e.Property(x => x.CreatedAt).HasDefaultValueSql("TODATETIMEOFFSET(SYSUTCDATETIME(), '+00:00')");
             e.HasOne(x => x.PreferredBranch).WithMany().HasForeignKey(x => x.PreferredBranchId).OnDelete(DeleteBehavior.SetNull);
         });
 
