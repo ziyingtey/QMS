@@ -141,7 +141,7 @@ public sealed class QmsDbContext : DbContext
         {
             e.ToTable("ML_TRAINING_DATA");
             e.HasOne(x => x.Branch).WithMany(b => b.MlTrainingObservations).HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.Cascade);
-            e.HasOne(x => x.ServiceType).WithMany(s => s.MlTrainingObservations).HasForeignKey(x => x.ServiceTypeId).OnDelete(DeleteBehavior.SetNull);
+            e.HasOne(x => x.ServiceType).WithMany(s => s.MlTrainingObservations).HasForeignKey(x => x.ServiceTypeId).OnDelete(DeleteBehavior.NoAction);
         });
     }
 }
