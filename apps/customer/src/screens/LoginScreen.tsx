@@ -1,8 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { StatusBar } from "expo-status-bar";
-import { useState } from "react";
 import {
-  Alert,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -13,10 +11,8 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { apiConnectivityCheck } from "../api";
 import { PrimaryButton } from "../components/PrimaryButton";
 import { useCustomer } from "../context/CustomerContext";
-import { API_BASE } from "../config";
 import { theme } from "../theme";
 
 export function LoginScreen() {
@@ -33,7 +29,6 @@ export function LoginScreen() {
     onLogin,
     busy,
   } = useCustomer();
-  const [pingBusy, setPingBusy] = useState(false);
 
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
@@ -99,27 +94,6 @@ export function LoginScreen() {
           disabled={busy}
           onPress={() => void onLogin()}
         />
-
-        <Text style={styles.apiHint} selectable>
-          API: {API_BASE}
-        </Text>
-        <Pressable
-          style={({ pressed }) => [styles.pingBtn, pressed && styles.pingBtnPressed]}
-          disabled={pingBusy}
-          onPress={() => {
-            setPingBusy(true);
-            void (async () => {
-              try {
-                const r = await apiConnectivityCheck();
-                Alert.alert(r.ok ? "API reachable" : "API check failed", r.summary);
-              } finally {
-                setPingBusy(false);
-              }
-            })();
-          }}
-        >
-          <Text style={styles.pingLabel}>{pingBusy ? "Checking…" : "Test API connection"}</Text>
-        </Pressable>
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -165,22 +139,4 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: theme.border,
   },
-  apiHint: {
-    marginTop: 16,
-    fontSize: 12,
-    color: theme.textMuted,
-    textAlign: "center",
-  },
-  pingBtn: {
-    marginTop: 10,
-    alignSelf: "center",
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: theme.border,
-    backgroundColor: theme.bgCard,
-  },
-  pingBtnPressed: { opacity: 0.85 },
-  pingLabel: { color: theme.primary, fontWeight: "700", fontSize: 14 },
 });

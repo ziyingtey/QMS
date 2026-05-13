@@ -119,42 +119,11 @@ async function parseError(res: Response): Promise<string> {
 
 /** Text for Alert dialogs when `fetch` or API helpers throw. */
 export function userFacingApiError(e: unknown): string {
-  const envRaw = process.env.EXPO_PUBLIC_API_URL;
-  const envLine =
-    envRaw != null && String(envRaw).trim()
-      ? `EXPO_PUBLIC_API_URL=${String(envRaw).trim()}`
-      : "EXPO_PUBLIC_API_URL is not set (using built-in default for this platform).";
-
   if (e instanceof TypeError) {
-    return `${e.message}\n\n${envLine}\nResolved API_BASE=${API_BASE}\n\nTip: another PC/phone cannot use 127.0.0.1. Put the API PC’s Wi‑Fi IP in apps/customer/.env, e.g. EXPO_PUBLIC_API_URL=http://192.168.0.10:5154, then npx expo start -c. Android emulator on same PC: use http://10.0.2.2:5154.`;
+    return `${e.message}\n\nTip: a phone or emulator often cannot use 127.0.0.1 for the API. Use your computer’s LAN IP in EXPO_PUBLIC_API_URL, or http://10.0.2.2:5154 on Android emulator.`;
   }
-  if (e instanceof Error && e.message.trim()) return `${e.message}\n\n${envLine}\nResolved API_BASE=${API_BASE}`;
-  return `Unknown error.\n\n${envLine}\nResolved API_BASE=${API_BASE}`;
-}
-
-/** GET public branches — use to verify the device can reach the API (same URL as the app). */
-export async function apiConnectivityCheck(): Promise<{ ok: boolean; summary: string }> {
-  const url = `${API_BASE}/api/branches`;
-  try {
-    const res = await fetch(url);
-    if (res.ok) {
-      const text = await res.text();
-      return {
-        ok: true,
-        summary: `Success: GET ${url}\nHTTP ${res.status}\nFirst bytes: ${text.slice(0, 120)}${text.length > 120 ? "…" : ""}`,
-      };
-    }
-    const body = await res.text();
-    return {
-      ok: false,
-      summary: `HTTP ${res.status} from GET ${url}\n${body.slice(0, 500)}${body.length > 500 ? "…" : ""}`,
-    };
-  } catch (e) {
-    return {
-      ok: false,
-      summary: `${userFacingApiError(e)}\n\nTried: GET ${url}`,
-    };
-  }
+  if (e instanceof Error && e.message.trim()) return e.message;
+  return "Unknown error. Confirm the QMS API is running and EXPO_PUBLIC_API_URL matches it.";
 }
 
 export async function apiRegister(email: string, password: string, name?: string): Promise<LoginResponse> {

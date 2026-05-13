@@ -10,7 +10,6 @@ import {
   apiMyBookings,
   apiPutPreferredBranch,
   apiRegister,
-  userFacingApiError,
   type BookingSummary,
   type BranchDto,
   type CustomerProfile,
@@ -198,10 +197,7 @@ export function CustomerProvider({ children }: { children: React.ReactNode }) {
       setToken(res.token);
       setUserEmail(email.trim());
     } catch (e) {
-      Alert.alert(
-        authMode === "register" ? "Register failed" : "Login failed",
-        userFacingApiError(e),
-      );
+      Alert.alert(authMode === "register" ? "Register failed" : "Login failed", e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
