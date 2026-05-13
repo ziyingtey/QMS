@@ -126,7 +126,7 @@ public sealed class QmsDbContext : DbContext
             e.ToTable("NOTIFICATIONS");
             e.Property(x => x.Message).HasMaxLength(2000);
             e.HasOne(x => x.Customer).WithMany(u => u.Notifications).HasForeignKey(x => x.CustomerId).OnDelete(DeleteBehavior.Cascade);
-            e.HasOne(x => x.Booking).WithMany(b => b.Notifications).HasForeignKey(x => x.BookingId).OnDelete(DeleteBehavior.SetNull);
+            e.HasOne(x => x.Booking).WithMany(b => b.Notifications).HasForeignKey(x => x.BookingId).OnDelete(DeleteBehavior.NoAction);
         });
 
         modelBuilder.Entity<AnalyticsSummary>(e =>
