@@ -99,6 +99,14 @@ export function MapBranchesScreen({ navigation }: Props) {
     });
   }, [userCoords?.latitude, userCoords?.longitude, MapView]);
 
+  /** Google Maps “directions” from current location → destination (no API key; opens app or browser). */
+  const openDirectionsToBranch = (lat: number, lng: number) => {
+    const dest = encodeURIComponent(`${lat},${lng}`);
+    const url = `https://www.google.com/maps/dir/?api=1&destination=${dest}&travelmode=driving`;
+    void Linking.openURL(url);
+  };
+
+  /** Open pin / place in native maps or search (list view “view on map”). */
   const openMapsApp = (lat: number, lng: number, label: string) => {
     const q = encodeURIComponent(`${label}`);
     if (Platform.OS === "web") {
@@ -190,7 +198,7 @@ export function MapBranchesScreen({ navigation }: Props) {
               key={b.id}
               coordinate={{ latitude: b.latitude, longitude: b.longitude }}
               title={b.name}
-              description={[b.state, "Open now · tap card below to book"].filter(Boolean).join(" · ")}
+              description={[b.state, "Tap card below for driving directions · callout to book"].filter(Boolean).join(" · ")}
               onCalloutPress={() => goBookBranch(b.id)}
             />
           ))}
@@ -211,7 +219,13 @@ export function MapBranchesScreen({ navigation }: Props) {
                 {b.latitude.toFixed(4)}, {b.longitude.toFixed(4)}
               </Text>
               <View style={styles.listActions}>
-                <PrimaryButton label="Open in Maps" compact variant="ghost" onPress={() => openMapsApp(b.latitude, b.longitude, b.name)} />
+                <PrimaryButton
+                  label="Directions"
+                  compact
+                  variant="ghost"
+                  onPress={() => openDirectionsToBranch(b.latitude, b.longitude)}
+                />
+                <PrimaryButton label="View pin" compact variant="ghost" onPress={() => openMapsApp(b.latitude, b.longitude, b.name)} />
                 <PrimaryButton label="Book" compact onPress={() => goBookBranch(b.id)} />
               </View>
             </View>
@@ -250,20 +264,34 @@ export function MapBranchesScreen({ navigation }: Props) {
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={{ gap: 10 }}
             renderItem={({ item: { b, dist } }) => (
-              <Pressable style={styles.miniCard} onPress={() => goBookBranch(b.id)}>
-                <Text style={styles.miniTitle} numberOfLines={2}>
-                  {b.name}
-                </Text>
-                {b.state ? <Text style={styles.miniState}>{b.state}</Text> : null}
-                {b.address ? (
-                  <Text style={styles.miniAddr} numberOfLines={2}>
-                    {b.address}
+              <View style={styles.miniCard}>
+                <Pressable
+                  style={styles.miniCardMain}
+                  onPress={() => openDirectionsToBranch(b.latitude, b.longitude)}
+                  accessibilityLabel={`Driving directions to ${b.name}`}
+                >
+                  <Text style={styles.miniTitle} numberOfLines={2}>
+                    {b.name}
                   </Text>
-                ) : null}
-                <Text style={styles.openChip}>Open Now</Text>
-                <Text style={styles.miniMeta}>{dist != null ? formatDistance(dist) : "—"}</Text>
-                <Text style={styles.miniLink}>Book · Maps</Text>
-              </Pressable>
+                  {b.state ? <Text style={styles.miniState}>{b.state}</Text> : null}
+                  {b.address ? (
+                    <Text style={styles.miniAddr} numberOfLines={2}>
+                      {b.address}
+                    </Text>
+                  ) : null}
+                  <Text style={styles.openChip}>Open Now</Text>
+                  <Text style={styles.miniMeta}>{dist != null ? formatDistance(dist) : "—"}</Text>
+                  <Text style={styles.miniLink}>Tap for directions (Google Maps)</Text>
+                </Pressable>
+                <Pressable
+                  style={styles.miniBookRow}
+                  onPress={() => goBookBranch(b.id)}
+                  accessibilityLabel={`Book a turn at ${b.name}`}
+                >
+                  <Ionicons name="calendar-outline" size={16} color={theme.primary} />
+                  <Text style={styles.miniBookText}>Book a turn</Text>
+                </Pressable>
+              </View>
             )}
           />
         </View>
@@ -390,10 +418,25 @@ const styles = StyleSheet.create({
     width: 168,
     backgroundColor: theme.bgCard,
     borderRadius: 14,
-    padding: 12,
     borderWidth: 1,
     borderColor: theme.border,
+    overflow: "hidden",
   },
+  miniCardMain: {
+    padding: 12,
+    paddingBottom: 8,
+  },
+  miniBookRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 10,
+    borderTopWidth: 1,
+    borderTopColor: theme.border,
+    backgroundColor: theme.bg,
+  },
+  miniBookText: { color: theme.primary, fontSize: 12, fontWeight: "800" },
   miniTitle: { color: theme.text, fontWeight: "700", fontSize: 14 },
   miniState: { color: theme.accent, fontSize: 11, fontWeight: "600", marginTop: 4 },
   miniAddr: { color: theme.textMuted, fontSize: 10, marginTop: 4, lineHeight: 14 },
