@@ -1,6 +1,6 @@
 import * as Location from "expo-location";
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
-import { Alert } from "react-native";
+import { Alert, Platform } from "react-native";
 import {
   apiBranches,
   apiCancelBooking,
@@ -8,8 +8,9 @@ import {
   apiCustomerMe,
   apiLogin,
   apiMyBookings,
-  apiPutPreferredBranch,
   apiRegister,
+  apiToggleFavoriteBranch,
+  userFacingApiError,
   type BookingSummary,
   type BranchDto,
   type CustomerProfile,
@@ -24,7 +25,7 @@ type CustomerContextValue = {
   busy: boolean;
   branches: BranchDto[];
   bookings: BookingSummary[];
-  /** Server profile (name, phone, preferred branch) — loaded after login. */
+  /** Server profile (name, phone, favorite branches) — loaded after login. */
   profile: CustomerProfile | null;
   userCoords: { latitude: number; longitude: number } | null;
   /** Resolved street/city from GPS via Expo reverse geocode when possible. */
@@ -40,8 +41,13 @@ type CustomerContextValue = {
   loadBranches: () => Promise<void>;
   refreshBookings: () => Promise<void>;
   refreshProfile: () => Promise<void>;
-  savePreferredBranch: (branchId: string | null) => Promise<void>;
+  /** Add or remove this branch from favorites (server toggle). */
+  toggleFavoriteBranch: (branchId: string) => Promise<void>;
+  /** Branch id currently waiting on toggle, or null. */
+  togglingFavoriteBranchId: string | null;
   requestLocation: () => Promise<void>;
+  /** True while acquiring a GPS fix. */
+  locationBusy: boolean;
   onLogin: () => Promise<void>;
   onLogout: () => Promise<void>;
   checkIn: (bookingId: string) => Promise<void>;
@@ -77,6 +83,8 @@ export function CustomerProvider({ children }: { children: React.ReactNode }) {
   const [profile, setProfile] = useState<CustomerProfile | null>(null);
   const [userCoords, setUserCoords] = useState<{ latitude: number; longitude: number } | null>(null);
   const [userLocationLabel, setUserLocationLabel] = useState<string | null>(null);
+  const [locationBusy, setLocationBusy] = useState(false);
+  const [togglingFavoriteBranchId, setTogglingFavoriteBranchId] = useState<string | null>(null);
 
   const [authMode, setAuthMode] = useState<"login" | "register">("login");
   const [email, setEmail] = useState("customer@qms.demo");
@@ -126,16 +134,16 @@ export function CustomerProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  const savePreferredBranch = useCallback(async (branchId: string | null) => {
+  const toggleFavoriteBranch = useCallback(async (branchId: string) => {
     const t = await readToken();
     if (!t) return;
-    setBusy(true);
+    setTogglingFavoriteBranchId(branchId);
     try {
-      setProfile(await apiPutPreferredBranch(t, branchId));
+      setProfile(await apiToggleFavoriteBranch(t, branchId));
     } catch (e) {
-      Alert.alert("Preferred branch", e instanceof Error ? e.message : String(e));
+      Alert.alert("Favorite branches", e instanceof Error ? e.message : String(e));
     } finally {
-      setBusy(false);
+      setTogglingFavoriteBranchId(null);
     }
   }, []);
 
@@ -159,29 +167,56 @@ export function CustomerProvider({ children }: { children: React.ReactNode }) {
   });
 
   const requestLocation = useCallback(async () => {
-    const { status } = await Location.requestForegroundPermissionsAsync();
-    if (status !== "granted") {
-      setUserLocationLabel("Turn on location for nearby sorting & your address");
-      return;
-    }
-    const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Highest });
-    const coords = { latitude: loc.coords.latitude, longitude: loc.coords.longitude };
-    setUserCoords(coords);
+    setLocationBusy(true);
     try {
-      const places = await Location.reverseGeocodeAsync(coords);
-      const p = places[0];
-      if (p) {
-        const street =
-          p.streetNumber && p.street ? `${p.streetNumber} ${p.street}` : p.street ?? p.name ?? "";
-        const city = p.city ?? p.district ?? p.subregion ?? "";
-        const region = p.region ?? "";
-        const parts = [street, city, region].filter((x) => x && x.length > 0);
-        setUserLocationLabel(parts.length > 0 ? parts.join(", ") : `${coords.latitude.toFixed(4)}, ${coords.longitude.toFixed(4)}`);
-      } else {
-        setUserLocationLabel(`${coords.latitude.toFixed(4)}, ${coords.longitude.toFixed(4)}`);
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== "granted") {
+        setUserCoords(null);
+        setUserLocationLabel("Turn on location for nearby sorting & your address");
+        return;
       }
-    } catch {
-      setUserLocationLabel(`${coords.latitude.toFixed(4)}, ${coords.longitude.toFixed(4)}`);
+      if (Platform.OS === "android") {
+        try {
+          await Location.enableNetworkProviderAsync();
+        } catch {
+          /* optional on some builds */
+        }
+      }
+      const loc = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Highest,
+      });
+      const coords = { latitude: loc.coords.latitude, longitude: loc.coords.longitude };
+      setUserCoords(coords);
+      const coordSuffix = ` (${coords.latitude.toFixed(5)}, ${coords.longitude.toFixed(5)})`;
+      try {
+        const places = await Location.reverseGeocodeAsync(coords);
+        const p = places[0];
+        if (p) {
+          const street =
+            p.streetNumber && p.street ? `${p.streetNumber} ${p.street}` : p.street ?? p.name ?? "";
+          const city = p.city ?? p.district ?? p.subregion ?? "";
+          const region = p.region ?? "";
+          const parts = [street, city, region].filter((x) => x && x.length > 0);
+          setUserLocationLabel(
+            parts.length > 0 ? `${parts.join(", ")}${coordSuffix}` : `GPS fix${coordSuffix}`,
+          );
+        } else {
+          setUserLocationLabel(`GPS fix${coordSuffix}`);
+        }
+      } catch {
+        setUserLocationLabel(`GPS fix${coordSuffix}`);
+      }
+    } catch (e) {
+      setUserCoords(null);
+      const hint =
+        Platform.OS === "android"
+          ? " On Android Emulator: open ⋯ → Location and set latitude/longitude to match where you are testing."
+          : "";
+      setUserLocationLabel(
+        e instanceof Error ? `Could not read GPS: ${e.message}.${hint}` : `Could not read GPS.${hint}`,
+      );
+    } finally {
+      setLocationBusy(false);
     }
   }, []);
 
@@ -197,7 +232,7 @@ export function CustomerProvider({ children }: { children: React.ReactNode }) {
       setToken(res.token);
       setUserEmail(email.trim());
     } catch (e) {
-      Alert.alert(authMode === "register" ? "Register failed" : "Login failed", e instanceof Error ? e.message : String(e));
+      Alert.alert(authMode === "register" ? "Register failed" : "Login failed", userFacingApiError(e));
     } finally {
       setBusy(false);
     }
@@ -277,8 +312,10 @@ export function CustomerProvider({ children }: { children: React.ReactNode }) {
         loadBranches,
         refreshBookings,
         refreshProfile,
-        savePreferredBranch,
+        toggleFavoriteBranch,
+        togglingFavoriteBranchId,
         requestLocation,
+        locationBusy,
         onLogin,
         onLogout,
         checkIn,
@@ -301,8 +338,10 @@ export function CustomerProvider({ children }: { children: React.ReactNode }) {
       loadBranches,
       refreshBookings,
       refreshProfile,
-      savePreferredBranch,
+      toggleFavoriteBranch,
+      togglingFavoriteBranchId,
       requestLocation,
+      locationBusy,
       onLogin,
       onLogout,
       checkIn,

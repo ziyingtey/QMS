@@ -188,45 +188,40 @@ export type CustomerProfile = {
   email: string;
   name: string;
   phone: string | null;
-  preferredBranchId: string | null;
+  /** Branch ids the customer saved as favorites (any number). */
+  favoriteBranchIds: string[];
 };
+
+function parseGuidIdList(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((x) => String(x)).filter((s) => s.length > 0);
+}
+
+function parseCustomerProfile(o: Record<string, unknown>): CustomerProfile {
+  return {
+    email: String(o.email ?? o.Email ?? ""),
+    name: String(o.name ?? o.Name ?? ""),
+    phone: o.phone != null ? String(o.phone) : o.Phone != null ? String(o.Phone) : null,
+    favoriteBranchIds: parseGuidIdList(o.favoriteBranchIds ?? o.FavoriteBranchIds),
+  };
+}
 
 export async function apiCustomerMe(token: string): Promise<CustomerProfile> {
   const res = await fetch(`${API_BASE}/api/customers/me`, { headers: bearerHeaders(token) });
   if (!res.ok) throw new Error(await parseError(res));
   const o = (await res.json()) as Record<string, unknown>;
-  return {
-    email: String(o.email ?? o.Email ?? ""),
-    name: String(o.name ?? o.Name ?? ""),
-    phone: o.phone != null ? String(o.phone) : o.Phone != null ? String(o.Phone) : null,
-    preferredBranchId:
-      o.preferredBranchId != null
-        ? String(o.preferredBranchId)
-        : o.PreferredBranchId != null
-          ? String(o.PreferredBranchId)
-          : null,
-  };
+  return parseCustomerProfile(o);
 }
 
-export async function apiPutPreferredBranch(token: string, preferredBranchId: string | null): Promise<CustomerProfile> {
-  const res = await fetch(`${API_BASE}/api/customers/me/preferred-branch`, {
-    method: "PUT",
+export async function apiToggleFavoriteBranch(token: string, branchId: string): Promise<CustomerProfile> {
+  const res = await fetch(`${API_BASE}/api/customers/me/favorite-branches/toggle`, {
+    method: "POST",
     headers: { "Content-Type": "application/json", ...bearerHeaders(token) },
-    body: JSON.stringify({ preferredBranchId }),
+    body: JSON.stringify({ branchId }),
   });
   if (!res.ok) throw new Error(await parseError(res));
   const o = (await res.json()) as Record<string, unknown>;
-  return {
-    email: String(o.email ?? o.Email ?? ""),
-    name: String(o.name ?? o.Name ?? ""),
-    phone: o.phone != null ? String(o.phone) : o.Phone != null ? String(o.Phone) : null,
-    preferredBranchId:
-      o.preferredBranchId != null
-        ? String(o.preferredBranchId)
-        : o.PreferredBranchId != null
-          ? String(o.PreferredBranchId)
-          : null,
-  };
+  return parseCustomerProfile(o);
 }
 
 /** `dayYmd` = branch-local calendar date, e.g. 2026-05-05 (not UTC midnight ISO). */

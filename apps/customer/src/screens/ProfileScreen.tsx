@@ -11,9 +11,7 @@ export function ProfileScreen() {
   const insets = useSafeAreaInsets();
   const topPad = Platform.OS === "android" ? (RNStatusBar.currentHeight ?? 0) + 8 : Math.max(insets.top, 12);
   const { userEmail, onLogout, requestLocation, profile, branches } = useCustomer();
-  const prefName = profile?.preferredBranchId
-    ? branches.find((b) => b.id === profile.preferredBranchId)?.name
-    : null;
+  const favoriteIds = profile?.favoriteBranchIds ?? [];
 
   return (
     <View style={[styles.screen, { paddingTop: topPad }]}>
@@ -24,10 +22,17 @@ export function ProfileScreen() {
       <Text style={styles.title}>Profile</Text>
       <Text style={styles.email}>{userEmail ?? "—"}</Text>
       {profile?.name ? <Text style={styles.name}>{profile.name}</Text> : null}
-      {prefName ? (
+      {favoriteIds.length > 0 ? (
         <View style={styles.prefCard}>
-          <Text style={styles.prefLabel}>Preferred branch</Text>
-          <Text style={styles.prefVal}>{prefName}</Text>
+          <Text style={styles.prefLabel}>Favorite branches</Text>
+          {favoriteIds.map((id) => {
+            const n = branches.find((b) => b.id === id)?.name;
+            return n ? (
+              <Text key={id} style={styles.prefVal}>
+                {n}
+              </Text>
+            ) : null;
+          })}
         </View>
       ) : null}
       <View style={styles.card}>
@@ -69,6 +74,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: theme.border,
     marginTop: 8,
+    gap: 6,
   },
   prefLabel: { fontSize: 12, color: theme.textMuted, fontWeight: "600" },
   prefVal: { color: theme.accent, fontSize: 15, fontWeight: "800", marginTop: 6 },

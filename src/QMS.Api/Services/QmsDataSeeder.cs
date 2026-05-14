@@ -115,21 +115,22 @@ public static class QmsDataSeeder
             Id = Guid.NewGuid(),
             Email = "customer@qms.demo",
             Name = "Demo Customer",
-            PreferredBranchId = primary.Id,
-            PasswordHash = hasher.HashPassword("customer@qms.demo", "Demo123!")
+            PasswordHash = hasher.HashPassword("customer@qms.demo", "Demo123!"),
         };
+        customer.FavoriteBranches.Add(new CustomerFavoriteBranch { BranchId = primary.Id });
 
         var extraCustomers = Enumerable.Range(1, 15).Select(i =>
         {
             var email = $"cust{i:00}@qms.demo";
-            return new Customer
+            var c = new Customer
             {
                 Id = Guid.NewGuid(),
                 Email = email,
                 Name = $"Demo Customer {i:00}",
-                PreferredBranchId = primary.Id,
-                PasswordHash = hasher.HashPassword(email, "Demo123!")
+                PasswordHash = hasher.HashPassword(email, "Demo123!"),
             };
+            c.FavoriteBranches.Add(new CustomerFavoriteBranch { BranchId = primary.Id });
+            return c;
         }).ToList();
 
         var tellerStaff = new Staff

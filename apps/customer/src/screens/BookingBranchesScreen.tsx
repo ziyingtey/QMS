@@ -15,6 +15,7 @@ export function BookingBranchesScreen({ navigation }: Props) {
   const insets = useSafeAreaInsets();
   const topPad = Platform.OS === "android" ? (RNStatusBar.currentHeight ?? 0) + 8 : Math.max(insets.top, 12);
   const { branches, busy, loadBranches, userCoords, profile } = useCustomer();
+  const favIds = profile?.favoriteBranchIds ?? [];
 
   const sorted = [...branches]
     .map((b) => ({
@@ -23,8 +24,8 @@ export function BookingBranchesScreen({ navigation }: Props) {
         userCoords != null ? distanceMeters(userCoords.latitude, userCoords.longitude, b.latitude, b.longitude) : null,
     }))
     .sort((a, x) => {
-      const pa = profile?.preferredBranchId === a.b.id;
-      const pb = profile?.preferredBranchId === x.b.id;
+      const pa = favIds.includes(a.b.id);
+      const pb = favIds.includes(x.b.id);
       if (pa && !pb) return -1;
       if (!pa && pb) return 1;
       if (a.dist == null && x.dist == null) return a.b.name.localeCompare(x.b.name);
@@ -57,9 +58,9 @@ export function BookingBranchesScreen({ navigation }: Props) {
             <View style={{ flex: 1 }}>
               <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
                 <Text style={styles.cardTitle}>{b.name}</Text>
-                {profile?.preferredBranchId === b.id ? (
+                {favIds.includes(b.id) ? (
                   <View style={styles.pref}>
-                    <Text style={styles.prefText}>Preferred</Text>
+                    <Text style={styles.prefText}>Favorite</Text>
                   </View>
                 ) : null}
               </View>

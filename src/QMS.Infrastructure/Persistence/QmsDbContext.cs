@@ -9,6 +9,7 @@ public sealed class QmsDbContext : DbContext
     public QmsDbContext(DbContextOptions<QmsDbContext> options) : base(options) { }
 
     public DbSet<Customer> Customers => Set<Customer>();
+    public DbSet<CustomerFavoriteBranch> CustomerFavoriteBranches => Set<CustomerFavoriteBranch>();
     public DbSet<Branch> Branches => Set<Branch>();
     public DbSet<ServiceType> ServiceTypes => Set<ServiceType>();
     public DbSet<Counter> Counters => Set<Counter>();
@@ -31,7 +32,20 @@ public sealed class QmsDbContext : DbContext
             e.Property(x => x.Email).HasMaxLength(256);
             e.Property(x => x.Name).HasMaxLength(200);
             e.Property(x => x.CreatedAt).HasDefaultValueSql("TODATETIMEOFFSET(SYSUTCDATETIME(), '+00:00')");
-            e.HasOne(x => x.PreferredBranch).WithMany().HasForeignKey(x => x.PreferredBranchId).OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<CustomerFavoriteBranch>(e =>
+        {
+            e.ToTable("CUSTOMER_FAVORITE_BRANCHES");
+            e.HasKey(x => new { x.CustomerId, x.BranchId });
+            e.HasOne(x => x.Customer)
+                .WithMany(c => c.FavoriteBranches)
+                .HasForeignKey(x => x.CustomerId)
+                .OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.Branch)
+                .WithMany()
+                .HasForeignKey(x => x.BranchId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<Branch>(e =>

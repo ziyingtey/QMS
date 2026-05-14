@@ -7,6 +7,7 @@ import { PrimaryButton } from "../components/PrimaryButton";
 import { useCustomer } from "../context/CustomerContext";
 import type { RootStackParamList } from "../navigation/navigationRef";
 import { theme } from "../theme";
+import { distanceMeters, formatDistance } from "../utils/geo";
 
 type Props = NativeStackScreenProps<RootStackParamList, "BranchDetail">;
 
@@ -14,8 +15,11 @@ export function BranchDetailScreen({ navigation, route }: Props) {
   const { branch } = route.params;
   const insets = useSafeAreaInsets();
   const topPad = Platform.OS === "android" ? (RNStatusBar.currentHeight ?? 0) + 8 : Math.max(insets.top, 12);
-  const { profile, savePreferredBranch, busy } = useCustomer();
-  const isPreferred = profile?.preferredBranchId === branch.id;
+  const { profile, toggleFavoriteBranch, userCoords, togglingFavoriteBranchId } = useCustomer();
+  const isFavorite = (profile?.favoriteBranchIds ?? []).includes(branch.id);
+  const favoriteBusy = togglingFavoriteBranchId === branch.id;
+  const distM =
+    userCoords != null ? distanceMeters(userCoords.latitude, userCoords.longitude, branch.latitude, branch.longitude) : null;
 
   return (
     <View style={styles.root}>
@@ -24,6 +28,15 @@ export function BranchDetailScreen({ navigation, route }: Props) {
         <View style={[styles.hero, { paddingTop: topPad }]}>
           <Pressable style={[styles.backFab, { top: topPad }]} onPress={() => navigation.goBack()} hitSlop={12}>
             <Ionicons name="arrow-back" size={22} color="#fff" />
+          </Pressable>
+          <Pressable
+            accessibilityLabel={isFavorite ? "Remove branch from favorites" : "Add branch to favorites"}
+            style={[styles.heartFab, { top: topPad }]}
+            onPress={() => void toggleFavoriteBranch(branch.id)}
+            disabled={favoriteBusy}
+            hitSlop={12}
+          >
+            <Ionicons name={isFavorite ? "heart" : "heart-outline"} size={24} color={isFavorite ? "#fda4af" : "#fff"} />
           </Pressable>
           {branch.imageUrl ? (
             <Image source={{ uri: branch.imageUrl }} style={styles.heroImg} resizeMode="cover" />
@@ -38,6 +51,16 @@ export function BranchDetailScreen({ navigation, route }: Props) {
 
         <View style={styles.sheet}>
           {branch.state ? <Text style={styles.stateLine}>{branch.state}</Text> : null}
+          {distM != null ? (
+            <View style={styles.distBanner}>
+              <Ionicons name="navigate-circle-outline" size={18} color={theme.primaryDark} />
+              <Text style={styles.distText}>
+                About <Text style={styles.distStrong}>{formatDistance(distM)}</Text> from your current GPS fix
+              </Text>
+            </View>
+          ) : (
+            <Text style={styles.distHint}>Enable location on Home (Refresh GPS) to see distance to this branch.</Text>
+          )}
           {branch.openingStatus === "Open" ? (
             <Text style={styles.openNow}>Open now</Text>
           ) : (
@@ -66,11 +89,11 @@ export function BranchDetailScreen({ navigation, route }: Props) {
           </View>
 
           <PrimaryButton
-            label={isPreferred ? "Clear preferred branch" : "Save as preferred branch"}
-            variant={isPreferred ? "ghost" : "primary"}
-            icon={isPreferred ? "close-circle-outline" : "star-outline"}
-            disabled={busy}
-            onPress={() => void savePreferredBranch(isPreferred ? null : branch.id)}
+            label={isFavorite ? "Remove from favorites" : "Add to favorites"}
+            variant={isFavorite ? "ghost" : "primary"}
+            icon={isFavorite ? "close-circle-outline" : "heart-outline"}
+            disabled={favoriteBusy}
+            onPress={() => void toggleFavoriteBranch(branch.id)}
           />
           <PrimaryButton
             label="Book a turn here"
@@ -95,6 +118,17 @@ const styles = StyleSheet.create({
   backFab: {
     position: "absolute",
     left: 16,
+    zIndex: 4,
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    backgroundColor: "rgba(0,0,0,0.35)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  heartFab: {
+    position: "absolute",
+    right: 16,
     zIndex: 4,
     width: 44,
     height: 44,
@@ -135,6 +169,18 @@ const styles = StyleSheet.create({
     borderColor: theme.borderLight,
   },
   stateLine: { fontSize: 13, fontWeight: "700", color: theme.accent, marginBottom: 6 },
+  distBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: "#e8eef9",
+    padding: 12,
+    borderRadius: 12,
+    marginBottom: 10,
+  },
+  distText: { flex: 1, fontSize: 13, color: theme.textOnLight, lineHeight: 18 },
+  distStrong: { fontWeight: "900", color: theme.primaryDark },
+  distHint: { fontSize: 12, color: theme.textMutedOnLight, marginBottom: 10, lineHeight: 17 },
   openNow: { color: theme.success, fontWeight: "800", marginBottom: 10 },
   closed: { color: theme.danger, fontWeight: "800", marginBottom: 10 },
   row: { flexDirection: "row", gap: 10, alignItems: "flex-start", marginBottom: 10 },

@@ -23,7 +23,7 @@ import { theme } from "../theme";
 import { formatBookingSlotDateTime } from "../utils/dateFormat";
 import { distanceMeters, formatDistance } from "../utils/geo";
 
-type SortMode = "distance" | "wait" | "name";
+type SortMode = "distance" | "wait" | "name" | "services";
 
 function openBranchMap() {
   if (navigationRef.isReady()) navigationRef.navigate("MapBranches");
@@ -53,6 +53,9 @@ export function HomeScreen({
     busy,
     loadBranches,
     requestLocation,
+    locationBusy,
+    toggleFavoriteBranch,
+    togglingFavoriteBranchId,
     refreshBookings,
     navigateToQueueTrack,
   } = useCustomer();
@@ -142,12 +145,14 @@ export function HomeScreen({
     wait: waitByBranchId[b.id] ?? null,
   }));
 
+  const favIds = profile?.favoriteBranchIds ?? [];
   const sorted = [...scored].sort((a, b) => {
-    const pa = profile?.preferredBranchId === a.branch.id;
-    const pb = profile?.preferredBranchId === b.branch.id;
+    const pa = favIds.includes(a.branch.id);
+    const pb = favIds.includes(b.branch.id);
     if (pa && !pb) return -1;
     if (!pa && pb) return 1;
     if (sortMode === "name") return a.branch.name.localeCompare(b.branch.name);
+    if (sortMode === "services") return b.branch.services.length - a.branch.services.length;
     if (sortMode === "wait") {
       const wa = a.wait;
       const wb = b.wait;
@@ -177,9 +182,34 @@ export function HomeScreen({
             </View>
             <View style={{ flex: 1 }}>
               <Text style={styles.hello}>Hello {helloName}!</Text>
-              <Text style={styles.addressLine} numberOfLines={2}>
-                {userLocationLabel ?? "Fetching your location…"}
-              </Text>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <Text style={[styles.addressLine, { flex: 1 }]} numberOfLines={3}>
+                  {locationBusy ? "Getting GPS…" : userLocationLabel ?? "Fetching your location…"}
+                </Text>
+                <Pressable
+                  onPress={() => void requestLocation()}
+                  disabled={locationBusy}
+                  style={({ pressed }) => [styles.gpsChip, pressed && { opacity: 0.85 }]}
+                  hitSlop={6}
+                >
+                  <Ionicons name="navigate" size={16} color="#0f172a" />
+                  <Text style={styles.gpsChipText}>{locationBusy ? "…" : "Refresh GPS"}</Text>
+                </Pressable>
+                <Pressable
+                  onPress={() =>
+                    Alert.alert(
+                      "How distance works",
+                      "Distances use your phone’s latest GPS fix (Expo Location) vs each branch’s coordinates.\n\n" +
+                        "• Real phone: turn on Location and tap Refresh GPS.\n" +
+                        "• Android Emulator: the emulator is NOT at your desk — open ⋯ (Extended controls) → Location, set Lat/Long to where you want to simulate, then Refresh GPS.",
+                    )
+                  }
+                  hitSlop={6}
+                  style={({ pressed }) => [styles.gpsChip, { backgroundColor: "rgba(255,255,255,0.22)" }, pressed && { opacity: 0.85 }]}
+                >
+                  <Ionicons name="help-circle-outline" size={16} color="#fff" />
+                </Pressable>
+              </View>
               <Text style={styles.phoneLine}>{profile?.phone?.trim() || "Customer account"}</Text>
             </View>
             <View style={styles.headerIcons}>
@@ -254,6 +284,7 @@ export function HomeScreen({
             [
               ["distance", "Distance"],
               ["wait", "Wait"],
+              ["services", "Services"],
               ["name", "A–Z"],
             ] as const
           ).map(([key, label]) => {
@@ -306,7 +337,9 @@ export function HomeScreen({
             key={b.id}
             branch={b}
             distanceLabel={dist != null ? formatDistance(dist) : userCoords ? "—" : "Enable location"}
-            isPreferred={profile?.preferredBranchId === b.id}
+            isFavorite={favIds.includes(b.id)}
+            favoriteBusy={togglingFavoriteBranchId === b.id}
+            onToggleFavorite={() => void toggleFavoriteBranch(b.id)}
             onOpenDetail={() => openBranchDetail(b)}
             onBook={() =>
               navigation.navigate(
@@ -327,13 +360,17 @@ export function HomeScreen({
 function NearbyBranchCard({
   branch,
   distanceLabel,
-  isPreferred,
+  isFavorite,
+  favoriteBusy,
+  onToggleFavorite,
   onBook,
   onOpenDetail,
 }: {
   branch: import("../api").BranchDto;
   distanceLabel: string;
-  isPreferred: boolean;
+  isFavorite: boolean;
+  favoriteBusy: boolean;
+  onToggleFavorite: () => void;
   onBook: () => void;
   onOpenDetail: () => void;
 }) {
@@ -361,38 +398,55 @@ function NearbyBranchCard({
     lane == null ? theme.textMutedOnLight : lane.crowdLevel === "Low" ? theme.success : lane.crowdLevel === "Medium" ? theme.warning : theme.danger;
 
   return (
-    <Pressable style={styles.branchCard} onPress={onOpenDetail}>
-      {branch.imageUrl ? (
-        <Image source={{ uri: branch.imageUrl }} style={styles.branchThumbImg} />
-      ) : (
-        <View style={styles.branchThumb}>
-          <Ionicons name="business" size={28} color={theme.primary} />
-        </View>
-      )}
-      <View style={{ flex: 1 }}>
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-          <Text style={styles.branchName}>{branch.name}</Text>
-          {isPreferred ? (
-            <View style={styles.prefPill}>
-              <Text style={styles.prefPillText}>Preferred</Text>
-            </View>
+    <View style={styles.branchCard}>
+      <Pressable style={styles.branchMainPress} onPress={onOpenDetail}>
+        {branch.imageUrl ? (
+          <Image source={{ uri: branch.imageUrl }} style={styles.branchThumbImg} />
+        ) : (
+          <View style={styles.branchThumb}>
+            <Ionicons name="business" size={28} color={theme.primary} />
+          </View>
+        )}
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <Text style={styles.branchName}>{branch.name}</Text>
+            {isFavorite ? (
+              <View style={styles.prefPill}>
+                <Text style={styles.prefPillText}>Favorite</Text>
+              </View>
+            ) : null}
+          </View>
+          {branch.address ? (
+            <Text style={styles.branchAddr} numberOfLines={2}>
+              {branch.address}
+            </Text>
           ) : null}
+          <Text style={styles.branchNear}>Near you: {distanceLabel}</Text>
+          <Text style={[styles.crowdPill, { color: crowdColor }]}>{crowd}</Text>
         </View>
-        {branch.address ? (
-          <Text style={styles.branchAddr} numberOfLines={2}>
-            {branch.address}
-          </Text>
-        ) : null}
-        <Text style={styles.branchNear}>Near you: {distanceLabel}</Text>
-        <Text style={[styles.crowdPill, { color: crowdColor }]}>{crowd}</Text>
-      </View>
+      </Pressable>
       <View style={styles.branchRight}>
-        <Pressable onPress={onOpenDetail} hitSlop={8} style={styles.chevronBtn}>
-          <Ionicons name="chevron-forward" size={22} color={theme.textMutedOnLight} />
+        <Pressable
+          accessibilityLabel={isFavorite ? "Remove branch from favorites" : "Add branch to favorites"}
+          onPress={onToggleFavorite}
+          disabled={favoriteBusy}
+          style={({ pressed }) => [styles.heartBtn, pressed && { opacity: 0.75 }]}
+          hitSlop={8}
+        >
+          <Ionicons name={isFavorite ? "heart" : "heart-outline"} size={26} color={isFavorite ? "#e11d48" : theme.textMutedOnLight} />
         </Pressable>
-        <PrimaryButton label="Book a turn" compact onPress={onBook} />
+        <Pressable
+          accessibilityLabel="Branch details"
+          onPress={onOpenDetail}
+          style={({ pressed }) => [styles.infoBtn, pressed && { opacity: 0.85 }]}
+          hitSlop={6}
+        >
+          <Ionicons name="information-circle-outline" size={24} color={theme.primaryDark} />
+          <Text style={styles.infoBtnText}>Details</Text>
+        </Pressable>
+        <PrimaryButton label="Book" compact onPress={onBook} />
       </View>
-    </Pressable>
+    </View>
   );
 }
 
@@ -419,6 +473,16 @@ const styles = StyleSheet.create({
   hello: { fontSize: 22, fontWeight: "800", color: "#fff" },
   addressLine: { fontSize: 13, color: "rgba(255,255,255,0.85)", marginTop: 6, lineHeight: 18 },
   phoneLine: { fontSize: 12, color: "rgba(255,255,255,0.7)", marginTop: 4 },
+  gpsChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "#e2e8f0",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 12,
+  },
+  gpsChipText: { fontSize: 12, fontWeight: "800", color: "#0f172a" },
   headerIcons: { alignItems: "flex-end", gap: 8 },
   iconBtn: {
     width: 44,
@@ -502,7 +566,7 @@ const styles = StyleSheet.create({
   refreshLink: { color: theme.primary, fontWeight: "600" },
   branchCard: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "stretch",
     backgroundColor: "#fff",
     borderRadius: 16,
     padding: 14,
@@ -512,8 +576,9 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     shadowOffset: { width: 0, height: 2 },
     elevation: 2,
-    gap: 12,
+    gap: 10,
   },
+  branchMainPress: { flex: 1, flexDirection: "row", alignItems: "center", gap: 12, minWidth: 0 },
   branchThumb: {
     width: 52,
     height: 52,
@@ -527,8 +592,10 @@ const styles = StyleSheet.create({
   branchAddr: { fontSize: 12, color: theme.textMutedOnLight, marginTop: 4, lineHeight: 16 },
   branchNear: { fontSize: 12, color: theme.textMutedOnLight, marginTop: 4, fontWeight: "600" },
   crowdPill: { fontSize: 12, fontWeight: "700", marginTop: 6 },
-  branchRight: { alignItems: "flex-end", gap: 6 },
-  chevronBtn: { padding: 4 },
+  branchRight: { alignItems: "center", justifyContent: "center", gap: 8, paddingLeft: 4 },
+  heartBtn: { padding: 4 },
+  infoBtn: { alignItems: "center", paddingVertical: 4 },
+  infoBtnText: { fontSize: 10, fontWeight: "800", color: theme.primaryDark, marginTop: 2 },
   prefPill: {
     backgroundColor: "rgba(34,197,94,0.15)",
     paddingHorizontal: 8,
