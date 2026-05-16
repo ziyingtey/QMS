@@ -1,10 +1,11 @@
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { StatusBar } from "expo-status-bar";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import {
   Alert,
   FlatList,
   Platform,
+  RefreshControl,
   StatusBar as RNStatusBar,
   StyleSheet,
   Text,
@@ -24,10 +25,20 @@ export function QueueHomeScreen({ navigation }: Props) {
   const insets = useSafeAreaInsets();
   const topPad = Platform.OS === "android" ? (RNStatusBar.currentHeight ?? 0) + 8 : Math.max(insets.top, 12);
   const { bookings, refreshBookings, checkIn, cancelBooking, branches } = useCustomer();
+  const [listRefreshing, setListRefreshing] = useState(false);
 
   useEffect(() => {
     void refreshBookings();
   }, [refreshBookings]);
+
+  const onListRefresh = async () => {
+    setListRefreshing(true);
+    try {
+      await refreshBookings();
+    } finally {
+      setListRefreshing(false);
+    }
+  };
 
   const openReschedule = async (bookingId: string, branchId: string, serviceTypeId: string) => {
     try {
@@ -60,6 +71,15 @@ export function QueueHomeScreen({ navigation }: Props) {
         data={bookings}
         keyExtractor={(b) => b.id}
         contentContainerStyle={{ paddingBottom: 120 }}
+        refreshControl={
+          <RefreshControl
+            refreshing={listRefreshing}
+            onRefresh={() => void onListRefresh()}
+            tintColor={theme.accent}
+            colors={[theme.accent]}
+            progressBackgroundColor="#1e293b"
+          />
+        }
         ListEmptyComponent={<Text style={styles.muted}>No bookings yet — use the Booking tab.</Text>}
         renderItem={({ item }) => {
           const branchOff =

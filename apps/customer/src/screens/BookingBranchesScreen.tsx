@@ -1,7 +1,8 @@
 import { Ionicons } from "@expo/vector-icons";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { StatusBar } from "expo-status-bar";
-import { FlatList, Image, Platform, StatusBar as RNStatusBar, StyleSheet, Text, View } from "react-native";
+import { useState } from "react";
+import { FlatList, Image, Platform, RefreshControl, StatusBar as RNStatusBar, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { BookingStackParamList } from "../navigation/navigationRef";
 import { PrimaryButton } from "../components/PrimaryButton";
@@ -15,7 +16,17 @@ export function BookingBranchesScreen({ navigation }: Props) {
   const insets = useSafeAreaInsets();
   const topPad = Platform.OS === "android" ? (RNStatusBar.currentHeight ?? 0) + 8 : Math.max(insets.top, 12);
   const { branches, busy, loadBranches, userCoords, profile } = useCustomer();
+  const [listRefreshing, setListRefreshing] = useState(false);
   const favIds = profile?.favoriteBranchIds ?? [];
+
+  const onListRefresh = async () => {
+    setListRefreshing(true);
+    try {
+      await loadBranches();
+    } finally {
+      setListRefreshing(false);
+    }
+  };
 
   const sorted = [...branches]
     .map((b) => ({
@@ -46,6 +57,15 @@ export function BookingBranchesScreen({ navigation }: Props) {
         data={sorted}
         keyExtractor={(x) => x.b.id}
         contentContainerStyle={{ paddingHorizontal: 18, paddingTop: 12, paddingBottom: 120 }}
+        refreshControl={
+          <RefreshControl
+            refreshing={listRefreshing}
+            onRefresh={() => void onListRefresh()}
+            tintColor={theme.primary}
+            colors={[theme.primary]}
+            progressBackgroundColor="#ffffff"
+          />
+        }
         renderItem={({ item: { b, dist } }) => (
           <View style={styles.card}>
             {b.imageUrl ? (

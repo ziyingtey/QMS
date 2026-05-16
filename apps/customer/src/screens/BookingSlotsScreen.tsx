@@ -5,6 +5,7 @@ import {
   Alert,
   Platform,
   Pressable,
+  RefreshControl,
   ScrollView,
   StatusBar as RNStatusBar,
   StyleSheet,
@@ -52,6 +53,7 @@ export function BookingSlotsScreen({ navigation, route }: Props) {
 
   const [slots, setSlots] = useState<SlotDto[]>([]);
   const [busy, setBusy] = useState(false);
+  const [slotPullRefreshing, setSlotPullRefreshing] = useState(false);
   const [loadedDay, setLoadedDay] = useState<string | null>(null);
   const [selectedSlot, setSelectedSlot] = useState<SlotDto | null>(null);
 
@@ -101,6 +103,15 @@ export function BookingSlotsScreen({ navigation, route }: Props) {
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  const onSlotPullRefresh = async () => {
+    setSlotPullRefreshing(true);
+    try {
+      await reload();
+    } finally {
+      setSlotPullRefreshing(false);
+    }
+  };
 
   const shiftViewMonth = (delta: number) => {
     const d = new Date(viewYmd.y, viewYmd.m0 + delta, 1);
@@ -163,7 +174,19 @@ export function BookingSlotsScreen({ navigation, route }: Props) {
         <Text style={styles.heroSvc}>{service.name}</Text>
       </View>
 
-      <ScrollView style={styles.scroll} contentContainerStyle={{ paddingBottom: 140, paddingHorizontal: 18 }}>
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={{ paddingBottom: 140, paddingHorizontal: 18 }}
+        refreshControl={
+          <RefreshControl
+            refreshing={slotPullRefreshing}
+            onRefresh={() => void onSlotPullRefresh()}
+            tintColor={theme.accent}
+            colors={[theme.accent]}
+            progressBackgroundColor="#1e293b"
+          />
+        }
+      >
         <View style={styles.calHeader}>
           <Pressable onPress={() => shiftViewMonth(-1)} style={styles.calNav} hitSlop={12}>
             <Text style={styles.calNavText}>‹</Text>

@@ -7,6 +7,7 @@ import {
   Linking,
   Platform,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -44,6 +45,7 @@ export function MapBranchesScreen({ navigation }: Props) {
   const [search, setSearch] = useState("");
   const [stateFilter, setStateFilter] = useState<string>("All");
   const [layoutMode, setLayoutMode] = useState<"map" | "list">("map");
+  const [listRefreshing, setListRefreshing] = useState(false);
 
   useEffect(() => {
     void requestLocation();
@@ -119,6 +121,15 @@ export function MapBranchesScreen({ navigation }: Props) {
       screen: "Booking",
       params: { screen: "BookingServices", params: { branch: b } },
     });
+  };
+
+  const onMapListRefresh = async () => {
+    setListRefreshing(true);
+    try {
+      await loadBranches();
+    } finally {
+      setListRefreshing(false);
+    }
   };
 
   const topPad = Math.max(insets.top, 12);
@@ -201,6 +212,15 @@ export function MapBranchesScreen({ navigation }: Props) {
           keyExtractor={(x) => x.b.id}
           style={{ flex: 1 }}
           contentContainerStyle={{ paddingBottom: 100 }}
+          refreshControl={
+            <RefreshControl
+              refreshing={listRefreshing}
+              onRefresh={() => void onMapListRefresh()}
+              tintColor={theme.accent}
+              colors={[theme.accent]}
+              progressBackgroundColor="#1e293b"
+            />
+          }
           renderItem={({ item: { b, dist } }) => (
             <View style={styles.listCard}>
               <Text style={styles.listTitle}>{b.name}</Text>

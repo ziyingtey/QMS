@@ -1,6 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { StatusBar } from "expo-status-bar";
-import { Platform, StatusBar as RNStatusBar, StyleSheet, Text, View } from "react-native";
+import { useCallback, useState } from "react";
+import { Platform, RefreshControl, ScrollView, StatusBar as RNStatusBar, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { API_BASE } from "../config";
 import { PrimaryButton } from "../components/PrimaryButton";
@@ -10,12 +11,36 @@ import { theme } from "../theme";
 export function ProfileScreen() {
   const insets = useSafeAreaInsets();
   const topPad = Platform.OS === "android" ? (RNStatusBar.currentHeight ?? 0) + 8 : Math.max(insets.top, 12);
-  const { userEmail, onLogout, requestLocation, profile, branches } = useCustomer();
+  const { userEmail, onLogout, requestLocation, profile, branches, loadBranches, refreshProfile } = useCustomer();
   const favoriteIds = profile?.favoriteBranchIds ?? [];
+  const [refreshing, setRefreshing] = useState(false);
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await Promise.all([loadBranches(), refreshProfile()]);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [loadBranches, refreshProfile]);
 
   return (
     <View style={[styles.screen, { paddingTop: topPad }]}>
       <StatusBar style="light" />
+      <ScrollView
+        style={{ flex: 1 }}
+        contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 40, gap: 12 }}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => void onRefresh()}
+            tintColor={theme.accent}
+            colors={[theme.accent]}
+            progressBackgroundColor="#1e293b"
+          />
+        }
+      >
       <View style={styles.avatar}>
         <Ionicons name="person" size={40} color={theme.primary} />
       </View>
@@ -46,12 +71,13 @@ export function ProfileScreen() {
       </View>
       <PrimaryButton label="Update device location" variant="ghost" icon="location-outline" onPress={() => void requestLocation()} />
       <PrimaryButton label="Sign out" variant="danger" icon="log-out-outline" onPress={() => void onLogout()} />
+      </ScrollView>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: theme.bg, paddingHorizontal: 20, gap: 12 },
+  screen: { flex: 1, backgroundColor: theme.bg },
   avatar: {
     width: 88,
     height: 88,

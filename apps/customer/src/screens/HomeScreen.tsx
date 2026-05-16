@@ -1,12 +1,13 @@
 import { Ionicons } from "@expo/vector-icons";
 import { StatusBar } from "expo-status-bar";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
   Image,
   Platform,
   Pressable,
+  RefreshControl,
   ScrollView,
   StatusBar as RNStatusBar,
   StyleSheet,
@@ -57,8 +58,10 @@ export function HomeScreen({
     toggleFavoriteBranch,
     togglingFavoriteBranchId,
     refreshBookings,
+    refreshProfile,
     navigateToQueueTrack,
   } = useCustomer();
+  const [homeRefreshing, setHomeRefreshing] = useState(false);
   const [search, setSearch] = useState("");
   const [sortMode, setSortMode] = useState<SortMode>("distance");
   const [serviceFilter, setServiceFilter] = useState<string>("__all__");
@@ -72,6 +75,15 @@ export function HomeScreen({
   useEffect(() => {
     void refreshBookings();
   }, [refreshBookings]);
+
+  const onHomeRefresh = useCallback(async () => {
+    setHomeRefreshing(true);
+    try {
+      await Promise.all([loadBranches(), refreshBookings(), refreshProfile(), requestLocation()]);
+    } finally {
+      setHomeRefreshing(false);
+    }
+  }, [loadBranches, refreshBookings, refreshProfile, requestLocation]);
 
   const primaryBooking = bookings.find(
     (b) => b.ticketNumber && b.status !== "Cancelled" && b.status !== "Completed" && b.status !== "NoShow",
@@ -179,7 +191,19 @@ export function HomeScreen({
   return (
     <View style={[styles.screen, { paddingTop: topPad }]}>
       <StatusBar style="light" />
-      <ScrollView contentContainerStyle={{ paddingBottom: 110, paddingHorizontal: 18 }} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        contentContainerStyle={{ paddingBottom: 110, paddingHorizontal: 18 }}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={homeRefreshing}
+            onRefresh={() => void onHomeRefresh()}
+            tintColor={theme.accent}
+            colors={[theme.accent]}
+            progressBackgroundColor="#1e293b"
+          />
+        }
+      >
         <View style={[styles.headerBlock, { marginHorizontal: -18, paddingHorizontal: 18 }]}>
           <View style={styles.headerRow}>
             <View style={styles.avatarCircle}>
@@ -192,21 +216,13 @@ export function HomeScreen({
                   {locationBusy ? "Getting GPS…" : userLocationLabel ?? "Fetching your location…"}
                 </Text>
                 <Pressable
-                  onPress={() => void requestLocation()}
-                  disabled={locationBusy}
-                  style={({ pressed }) => [styles.gpsChip, pressed && { opacity: 0.85 }]}
-                  hitSlop={6}
-                >
-                  <Ionicons name="navigate" size={16} color="#0f172a" />
-                  <Text style={styles.gpsChipText}>{locationBusy ? "…" : "Refresh GPS"}</Text>
-                </Pressable>
-                <Pressable
                   onPress={() =>
                     Alert.alert(
                       "How distance works",
                       "Distances use your phone’s latest GPS fix (Expo Location) vs each branch’s coordinates.\n\n" +
-                        "• Real phone: turn on Location and tap Refresh GPS.\n" +
-                        "• Android Emulator: the emulator is NOT at your desk — open ⋯ (Extended controls) → Location, set Lat/Long to where you want to simulate, then Refresh GPS.",
+                        "• Pull down on this screen to refresh lists and update your location.\n" +
+                        "• Real phone: turn on Location services.\n" +
+                        "• Android Emulator: open ⋯ (Extended controls) → Location, set Lat/Long to where you want to simulate, then pull to refresh.",
                     )
                   }
                   hitSlop={6}
@@ -327,14 +343,9 @@ export function HomeScreen({
 
         <View style={styles.sectionHead}>
           <Text style={styles.sectionTitle}>Nearby branches</Text>
-          <View style={{ flexDirection: "row", gap: 14, alignItems: "center" }}>
-            <Pressable onPress={() => navigation.navigate("Booking" as never, { screen: "BookingBranches" } as never)}>
-              <Text style={styles.viewAll}>View all</Text>
-            </Pressable>
-            <Pressable onPress={() => void loadBranches()} disabled={busy}>
-              <Text style={styles.refreshLink}>{busy ? "…" : "Refresh"}</Text>
-            </Pressable>
-          </View>
+          <Pressable onPress={() => navigation.navigate("Booking" as never, { screen: "BookingBranches" } as never)}>
+            <Text style={styles.viewAll}>View all</Text>
+          </Pressable>
         </View>
 
         {busy && branches.length === 0 ? <ActivityIndicator color={theme.primary} style={{ marginVertical: 24 }} /> : null}
@@ -489,7 +500,6 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: 12,
   },
-  gpsChipText: { fontSize: 12, fontWeight: "800", color: "#0f172a" },
   headerIcons: { alignItems: "flex-end", gap: 8 },
   iconBtn: {
     width: 44,
@@ -570,7 +580,6 @@ const styles = StyleSheet.create({
   sectionHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 10 },
   sectionTitle: { fontSize: 18, fontWeight: "800", color: theme.textOnLight },
   viewAll: { color: theme.primaryDark, fontWeight: "700", fontSize: 14 },
-  refreshLink: { color: theme.primary, fontWeight: "600" },
   branchCard: {
     flexDirection: "row",
     alignItems: "stretch",

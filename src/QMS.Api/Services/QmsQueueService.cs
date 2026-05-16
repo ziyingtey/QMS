@@ -1070,6 +1070,8 @@ public sealed class QmsQueueService(
     /// <summary>
     /// Earlier appointment windows get lower <see cref="QueueEntry.EnqueueSequence"/> than later ones
     /// (same branch + lane), so “people ahead” and waiting lists match real slot order—not booking order.
+    /// Sequence allocation considers <b>all</b> queue rows in the bucket (not only <see cref="QueueEntryState.Waiting"/>)
+    /// so cancelled/absent tickets do not reuse <see cref="QueueEntry.TicketNumber"/> (unique per branch).
     /// </summary>
     private async Task<long> AllocateLaneEnqueueSequenceForSlotAsync(
         Guid branchId,
@@ -1082,7 +1084,7 @@ public sealed class QmsQueueService(
         var cap = floor + bucket - 1;
 
         var maxInBucket = await db.QueueEntries
-            .Where(q => q.BranchId == branchId && q.ServiceTypeId == serviceTypeId && q.State == QueueEntryState.Waiting)
+            .Where(q => q.BranchId == branchId && q.ServiceTypeId == serviceTypeId)
             .Where(q => q.EnqueueSequence >= floor && q.EnqueueSequence <= cap)
             .MaxAsync(q => (long?)q.EnqueueSequence, cancellationToken);
 

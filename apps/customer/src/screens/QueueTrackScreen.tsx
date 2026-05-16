@@ -5,6 +5,7 @@ import {
   Alert,
   Platform,
   Pressable,
+  RefreshControl,
   ScrollView,
   StatusBar as RNStatusBar,
   StyleSheet,
@@ -28,6 +29,7 @@ export function QueueTrackScreen({ route, navigation }: Props) {
   const topPad = Platform.OS === "android" ? (RNStatusBar.currentHeight ?? 0) + 8 : Math.max(insets.top, 12);
   const { token, bookings, branches, refreshBookings, checkIn, cancelBooking } = useCustomer();
   const [status, setStatus] = useState<QueueStatus | null>(null);
+  const [pullRefreshing, setPullRefreshing] = useState(false);
 
   const booking = useMemo(() => {
     if (bookingIdParam) return bookings.find((b) => b.id === bookingIdParam) ?? null;
@@ -76,6 +78,15 @@ export function QueueTrackScreen({ route, navigation }: Props) {
     onEvent: onRealtime,
   });
 
+  const onPullRefresh = useCallback(async () => {
+    setPullRefreshing(true);
+    try {
+      await Promise.all([refresh(), refreshBookings()]);
+    } finally {
+      setPullRefreshing(false);
+    }
+  }, [refresh, refreshBookings]);
+
   const displayService = status?.serviceName ?? serviceNameFromBooking ?? "—";
   const hasBookingActions = Boolean(booking?.id);
 
@@ -103,7 +114,19 @@ export function QueueTrackScreen({ route, navigation }: Props) {
   return (
     <View style={[styles.screen, { paddingTop: topPad }]}>
       <StatusBar style="dark" />
-      <ScrollView contentContainerStyle={{ paddingBottom: 120 }} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        contentContainerStyle={{ paddingBottom: 120 }}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={pullRefreshing}
+            onRefresh={() => void onPullRefresh()}
+            tintColor={theme.primary}
+            colors={[theme.primary]}
+            progressBackgroundColor="#ffffff"
+          />
+        }
+      >
         <Text style={styles.pageTitle}>Queue status</Text>
 
         {booking ? (

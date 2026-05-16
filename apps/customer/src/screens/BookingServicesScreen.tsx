@@ -1,8 +1,8 @@
 import { Ionicons } from "@expo/vector-icons";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { StatusBar } from "expo-status-bar";
-import { useEffect, useState } from "react";
-import { Alert, FlatList, Platform, Pressable, StatusBar as RNStatusBar, StyleSheet, Text, View } from "react-native";
+import { useCallback, useEffect, useState } from "react";
+import { Alert, FlatList, Platform, Pressable, RefreshControl, StatusBar as RNStatusBar, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { apiServiceLaneSummary, apiWalkIn, type ServiceLaneSummary } from "../api";
 import { PrimaryButton } from "../components/PrimaryButton";
@@ -19,24 +19,32 @@ export function BookingServicesScreen({ navigation, route }: Props) {
   const topPad = Platform.OS === "android" ? (RNStatusBar.currentHeight ?? 0) + 8 : Math.max(insets.top, 12);
   const { navigateToQueueTrack } = useCustomer();
   const [laneByService, setLaneByService] = useState<Record<string, ServiceLaneSummary>>({});
+  const [listRefreshing, setListRefreshing] = useState(false);
+
+  const loadLanes = useCallback(async () => {
+    const next: Record<string, ServiceLaneSummary> = {};
+    for (const s of branch.services) {
+      try {
+        next[s.id] = await apiServiceLaneSummary(branch.id, s.id);
+      } catch {
+        /* skip */
+      }
+    }
+    setLaneByService(next);
+  }, [branch]);
 
   useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      const next: Record<string, ServiceLaneSummary> = {};
-      for (const s of branch.services) {
-        try {
-          next[s.id] = await apiServiceLaneSummary(branch.id, s.id);
-        } catch {
-          /* skip */
-        }
-      }
-      if (!cancelled) setLaneByService(next);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [branch]);
+    void loadLanes();
+  }, [loadLanes]);
+
+  const onListRefresh = async () => {
+    setListRefreshing(true);
+    try {
+      await loadLanes();
+    } finally {
+      setListRefreshing(false);
+    }
+  };
 
   const walkIn = async (serviceId: string) => {
     const svc = branch.services.find((s) => s.id === serviceId);
@@ -68,6 +76,15 @@ export function BookingServicesScreen({ navigation, route }: Props) {
         data={branch.services}
         keyExtractor={(s) => s.id}
         contentContainerStyle={{ paddingHorizontal: 18, paddingTop: 14, paddingBottom: 120 }}
+        refreshControl={
+          <RefreshControl
+            refreshing={listRefreshing}
+            onRefresh={() => void onListRefresh()}
+            tintColor={theme.accent}
+            colors={[theme.accent]}
+            progressBackgroundColor="#1e293b"
+          />
+        }
         renderItem={({ item }) => {
           const lane = laneByService[item.id];
           const crowdLabel =
