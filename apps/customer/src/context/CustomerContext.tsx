@@ -106,7 +106,11 @@ export function CustomerProvider({ children }: { children: React.ReactNode }) {
           return;
         }
 
-        const probe = await probeCustomerSession(trimmed);
+        // Never block cold start forever: if API is down or URL wrong, fetch can hang without a client timeout.
+        const probe = await Promise.race([
+          probeCustomerSession(trimmed),
+          new Promise<"unavailable">((resolve) => setTimeout(() => resolve("unavailable"), 4000)),
+        ]);
         if (probe === "unauthorized") {
           await clearToken();
           await clearUserEmail();
