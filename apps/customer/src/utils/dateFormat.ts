@@ -84,10 +84,25 @@ export function buildMonthGrid(viewYear: number, viewMonth0: number, minYmd: str
 }
 
 /**
- * Branch-local calendar date (yyyy-MM-dd) for `?day=`.
- * Uses fixed offset minutes east of UTC: civil date = UTC instant shifted by offset, then read as UTC calendar fields.
- * (Do not mix in `getTimezoneOffset()` — that breaks when the device is not in the branch zone.)
+ * Convert an API instant to civil date/time in the branch's fixed offset (no DST).
+ * Same idea as branchCalendarYmd: shift by offset then read UTC fields.
  */
+export function branchWallComponents(d: Date, branchOffsetMinutes: number): { y: number; m0: number; d: number; h: number; mi: number } {
+  const off = Number.isFinite(branchOffsetMinutes) ? branchOffsetMinutes : 0;
+  const shifted = new Date(d.getTime() + off * 60_000);
+  return {
+    y: shifted.getUTCFullYear(),
+    m0: shifted.getUTCMonth(),
+    d: shifted.getUTCDate(),
+    h: shifted.getUTCHours(),
+    mi: shifted.getUTCMinutes(),
+  };
+}
+
+/** Default branch offset when not yet loaded (Malaysia demo). */
+export const defaultBranchOffsetMinutes = 8 * 60;
+
+/** Branch-local calendar date (yyyy-MM-dd) for `?day=` — fixed offset, not device TZ. */
 export function branchCalendarYmd(serviceZoneOffsetMinutes: number): string {
   const off = Number.isFinite(serviceZoneOffsetMinutes) ? serviceZoneOffsetMinutes : 8 * 60;
   const shifted = new Date(Date.now() + off * 60_000);
@@ -115,25 +130,43 @@ export function parseApiDateTime(iso: string | undefined | null): Date | null {
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
-export function formatSlotRange(slotStart: string, slotEnd: string): string {
+export function formatSlotRange(slotStart: string, slotEnd: string, branchOffsetMinutes?: number): string {
   const a = parseApiDateTime(slotStart);
   const b = parseApiDateTime(slotEnd);
   if (!a || !b) return `${slotStart} – ${slotEnd}`;
+  if (branchOffsetMinutes != null && Number.isFinite(branchOffsetMinutes)) {
+    const ac = branchWallComponents(a, branchOffsetMinutes);
+    const bc = branchWallComponents(b, branchOffsetMinutes);
+    return `${pad2(ac.h)}:${pad2(ac.mi)} – ${pad2(bc.h)}:${pad2(bc.mi)}`;
+  }
   const opts: Intl.DateTimeFormatOptions = { hour: "2-digit", minute: "2-digit" };
   return `${a.toLocaleTimeString([], opts)} – ${b.toLocaleTimeString([], opts)}`;
 }
 
-export function formatBookingSlotDateTime(slotStart: string, slotEnd: string): string {
+export function formatBookingSlotDateTime(slotStart: string, slotEnd: string, branchOffsetMinutes?: number): string {
   const a = parseApiDateTime(slotStart);
   const b = parseApiDateTime(slotEnd);
   if (!a || !b) return `${slotStart} – ${slotEnd}`;
+  if (branchOffsetMinutes != null && Number.isFinite(branchOffsetMinutes)) {
+    const ac = branchWallComponents(a, branchOffsetMinutes);
+    const bc = branchWallComponents(b, branchOffsetMinutes);
+    const da = new Date(Date.UTC(ac.y, ac.m0, ac.d, ac.h, ac.mi));
+    const db = new Date(Date.UTC(bc.y, bc.m0, bc.d, bc.h, bc.mi));
+    const opts: Intl.DateTimeFormatOptions = { dateStyle: "medium", timeStyle: "short", timeZone: "UTC" };
+    return `${da.toLocaleString([], opts)} – ${db.toLocaleString([], opts)}`;
+  }
   const opts: Intl.DateTimeFormatOptions = { dateStyle: "medium", timeStyle: "short" };
   return `${a.toLocaleString([], opts)} – ${b.toLocaleString([], opts)}`;
 }
 
-/** e.g. May 5, 2026 — from slot start instant */
-export function formatBookingDateMedium(slotStart: string): string {
+/** e.g. May 5, 2026 — branch wall date when offset passed */
+export function formatBookingDateMedium(slotStart: string, branchOffsetMinutes?: number): string {
   const a = parseApiDateTime(slotStart);
   if (!a) return "";
+  if (branchOffsetMinutes != null && Number.isFinite(branchOffsetMinutes)) {
+    const w = branchWallComponents(a, branchOffsetMinutes);
+    const d = new Date(Date.UTC(w.y, w.m0, w.d, w.h, w.mi));
+    return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
+  }
   return a.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 }

@@ -11,8 +11,6 @@ public class Booking
     public Branch Branch { get; set; } = null!;
     public Guid ServiceTypeId { get; set; }
     public ServiceType ServiceType { get; set; } = null!;
-    public Guid? TimeSlotId { get; set; }
-    public TimeSlot? TimeSlot { get; set; }
     public DateTimeOffset SlotStart { get; set; }
     public DateTimeOffset SlotEnd { get; set; }
     public BookingStatus Status { get; set; } = BookingStatus.Confirmed;

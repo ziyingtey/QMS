@@ -16,7 +16,6 @@ public sealed class QmsDbContext : DbContext
     public DbSet<Counter> Counters => Set<Counter>();
     public DbSet<CounterAllowedService> CounterAllowedServices => Set<CounterAllowedService>();
     public DbSet<Staff> StaffMembers => Set<Staff>();
-    public DbSet<TimeSlot> TimeSlots => Set<TimeSlot>();
     public DbSet<Booking> Bookings => Set<Booking>();
     public DbSet<QueueEntry> QueueEntries => Set<QueueEntry>();
     public DbSet<ServiceSessionLog> ServiceSessionLogs => Set<ServiceSessionLog>();
@@ -112,21 +111,12 @@ public sealed class QmsDbContext : DbContext
             e.HasOne(x => x.Branch).WithMany(b => b.StaffMembers).HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.Cascade);
         });
 
-        modelBuilder.Entity<TimeSlot>(e =>
-        {
-            e.ToTable("TIME_SLOTS");
-            e.HasIndex(x => new { x.BranchId, x.ServiceTypeId, x.StartTime, x.EndTime });
-            e.HasOne(x => x.Branch).WithMany(b => b.TimeSlots).HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.Cascade);
-            e.HasOne(x => x.ServiceType).WithMany(s => s.TimeSlots).HasForeignKey(x => x.ServiceTypeId).OnDelete(DeleteBehavior.NoAction);
-        });
-
         modelBuilder.Entity<Booking>(e =>
         {
             e.ToTable("BOOKINGS");
             e.HasOne(x => x.Customer).WithMany(u => u.Bookings).HasForeignKey(x => x.CustomerId).OnDelete(DeleteBehavior.Cascade);
             e.HasOne(x => x.Branch).WithMany().HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.NoAction);
             e.HasOne(x => x.ServiceType).WithMany(s => s.Bookings).HasForeignKey(x => x.ServiceTypeId).OnDelete(DeleteBehavior.NoAction);
-            e.HasOne(x => x.TimeSlot).WithMany(t => t.Bookings).HasForeignKey(x => x.TimeSlotId).OnDelete(DeleteBehavior.SetNull);
             e.HasOne(x => x.QueueEntry).WithOne(q => q.Booking).HasForeignKey<QueueEntry>(q => q.BookingId).OnDelete(DeleteBehavior.SetNull);
         });
 

@@ -250,7 +250,7 @@ export function BookingSlotsScreen({ navigation, route }: Props) {
               ]}
             >
               <Text style={[styles.slotTime, full && styles.slotTimeFull, !full && styles.slotTimeOpen]}>
-                {formatSlotRange(slot.slotStart, slot.slotEnd)}
+                {formatSlotRange(slot.slotStart, slot.slotEnd, offsetMin)}
               </Text>
               <View style={styles.slotRight}>
                 {full ? (

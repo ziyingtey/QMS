@@ -17,7 +17,7 @@ import { PrimaryButton } from "../components/PrimaryButton";
 import { useCustomer } from "../context/CustomerContext";
 import type { QueueStackParamList } from "../navigation/navigationRef";
 import { theme } from "../theme";
-import { formatBookingDateMedium, formatSlotRange } from "../utils/dateFormat";
+import { formatBookingDateMedium, formatSlotRange, defaultBranchOffsetMinutes } from "../utils/dateFormat";
 import { useBranchRealtime } from "../useBranchRealtime";
 
 type Props = NativeStackScreenProps<QueueStackParamList, "QueueTrack">;
@@ -36,6 +36,10 @@ export function QueueTrackScreen({ route, navigation }: Props) {
     );
   }, [bookings, bookingIdParam, branchId, ticket]);
 
+  const branchOffset = useMemo(
+    () => branches.find((b) => b.id === branchId)?.serviceZoneOffsetMinutes ?? defaultBranchOffsetMinutes,
+    [branches, branchId],
+  );
   const branchName = branches.find((b) => b.id === branchId)?.name ?? "Branch";
   const serviceNameFromBooking = useMemo(() => {
     if (!booking) return null;
@@ -129,11 +133,11 @@ export function QueueTrackScreen({ route, navigation }: Props) {
             <>
               <View style={styles.detailRow}>
                 <Text style={styles.dl}>Time slot</Text>
-                <Text style={styles.dv}>{formatSlotRange(booking.slotStart, booking.slotEnd)}</Text>
+                <Text style={styles.dv}>{formatSlotRange(booking.slotStart, booking.slotEnd, branchOffset)}</Text>
               </View>
               <View style={styles.detailRow}>
                 <Text style={styles.dl}>Date</Text>
-                <Text style={styles.dv}>{formatBookingDateMedium(booking.slotStart)}</Text>
+                <Text style={styles.dv}>{formatBookingDateMedium(booking.slotStart, branchOffset)}</Text>
               </View>
             </>
           ) : null}

@@ -1,0 +1,16 @@
+/*
+  One-time migration: remove TIME_SLOTS and BOOKINGS.TimeSlotId (replaced by API-computed windows + BOOKINGS.SlotStart/SlotEnd).
+  Run on existing SQL Server databases that were created from an older schema.sql.
+*/
+
+IF OBJECT_ID(N'dbo.FK_BOOKINGS_TIME_SLOTS', N'F') IS NOT NULL
+    ALTER TABLE dbo.BOOKINGS DROP CONSTRAINT FK_BOOKINGS_TIME_SLOTS;
+
+IF OBJECT_ID(N'dbo.FK_BOOKINGS_TIME_SLOTS2', N'F') IS NOT NULL
+    ALTER TABLE dbo.BOOKINGS DROP CONSTRAINT FK_BOOKINGS_TIME_SLOTS2;
+
+IF COL_LENGTH(N'dbo.BOOKINGS', N'TimeSlotId') IS NOT NULL
+    ALTER TABLE dbo.BOOKINGS DROP COLUMN TimeSlotId;
+
+IF OBJECT_ID(N'dbo.TIME_SLOTS', N'U') IS NOT NULL
+    DROP TABLE dbo.TIME_SLOTS;

@@ -15,5 +15,4 @@ public class ServiceType
     public ICollection<ServiceSessionLog> ServiceLogs { get; set; } = new List<ServiceSessionLog>();
     public ICollection<CounterAllowedService> CounterCapabilities { get; set; } = new List<CounterAllowedService>();
     public ICollection<MlTrainingObservation> MlTrainingObservations { get; set; } = new List<MlTrainingObservation>();
-    public ICollection<TimeSlot> TimeSlots { get; set; } = new List<TimeSlot>();
 }

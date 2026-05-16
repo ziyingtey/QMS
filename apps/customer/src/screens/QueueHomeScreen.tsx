@@ -16,14 +16,14 @@ import { PrimaryButton } from "../components/PrimaryButton";
 import { useCustomer } from "../context/CustomerContext";
 import type { QueueStackParamList } from "../navigation/navigationRef";
 import { theme } from "../theme";
-import { formatBookingSlotDateTime } from "../utils/dateFormat";
+import { formatBookingSlotDateTime, defaultBranchOffsetMinutes } from "../utils/dateFormat";
 
 type Props = NativeStackScreenProps<QueueStackParamList, "QueueHome">;
 
 export function QueueHomeScreen({ navigation }: Props) {
   const insets = useSafeAreaInsets();
   const topPad = Platform.OS === "android" ? (RNStatusBar.currentHeight ?? 0) + 8 : Math.max(insets.top, 12);
-  const { bookings, refreshBookings, checkIn, cancelBooking } = useCustomer();
+  const { bookings, refreshBookings, checkIn, cancelBooking, branches } = useCustomer();
 
   useEffect(() => {
     void refreshBookings();
@@ -61,11 +61,14 @@ export function QueueHomeScreen({ navigation }: Props) {
         keyExtractor={(b) => b.id}
         contentContainerStyle={{ paddingBottom: 120 }}
         ListEmptyComponent={<Text style={styles.muted}>No bookings yet — use the Booking tab.</Text>}
-        renderItem={({ item }) => (
+        renderItem={({ item }) => {
+          const branchOff =
+            branches.find((b) => b.id === item.branchId)?.serviceZoneOffsetMinutes ?? defaultBranchOffsetMinutes;
+          return (
           <View style={styles.card}>
             <Text style={[styles.status, { color: theme.accent }]}>{item.status}</Text>
             <Text style={styles.meta}>
-              {formatBookingSlotDateTime(item.slotStart, item.slotEnd)}
+              {formatBookingSlotDateTime(item.slotStart, item.slotEnd, branchOff)}
             </Text>
             {item.ticketNumber ? <Text style={styles.ticket}>{item.ticketNumber}</Text> : null}
             <PrimaryButton
@@ -86,7 +89,8 @@ export function QueueHomeScreen({ navigation }: Props) {
               <PrimaryButton label="Cancel" compact variant="danger" icon="close-circle-outline" onPress={() => void cancelBooking(item.id)} />
             </View>
           </View>
-        )}
+          );
+        }}
       />
     </View>
   );

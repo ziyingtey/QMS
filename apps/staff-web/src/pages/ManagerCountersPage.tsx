@@ -351,7 +351,7 @@ export function ManagerCountersPage() {
               <strong>Capacity</strong> (slots, online vs walk-in split) uses <strong>active</strong> counters that can serve the lane — so opening/closing counters or changing allowed lanes immediately changes crowding and ETAs (SignalR pushes updates).
             </li>
             <li>
-              <strong>Adaptive slot capacity</strong> (when enabled): future booking windows follow live open counters (with optional min/max caps). The <em>current</em> time window keeps the stored template so mid-slot bookings stay fair.
+              <strong>Adaptive slot capacity</strong> (when enabled): manager alerts compare the next booking window’s live seat count (from counters) to active bookings so you see pressure before the grid fills.
             </li>
           </ol>
         </section>
@@ -431,7 +431,7 @@ export function ManagerCountersPage() {
           <h2 className="manager-subtitle">Capacity control (online % · slot length · weekly hours)</h2>
           <p className="muted small-print">
             Online % reserves booking capacity; the remainder is the walk-in buffer. Slot length drives how many customers fit per window per open counter.
-            Bookable windows follow the weekly grid below (branch local calendar; demo zone UTC+8). Adaptive mode scales <strong>future</strong> windows from open counters; clear min/max to remove caps.
+            Bookable windows follow the weekly grid below (branch local calendar; demo zone UTC+8). Per-slot limits are computed from open counters, slot length, and service duration; optional min/max clamp that total. When adaptive alerts are on, insights flag overbooked upcoming windows vs current counters.
           </p>
           {settings ? (
             <p className="muted small-print">
@@ -539,7 +539,7 @@ export function ManagerCountersPage() {
                 checked={formAdaptiveCap}
                 onChange={(e) => setFormAdaptiveCap(e.target.checked)}
               />
-              <span>Adaptive slot capacity (future windows follow open counters)</span>
+              <span>Adaptive booking-pressure alerts (compare next window bookings vs counter-based seat cap)</span>
             </label>
             <label>
               Min total customers / slot (optional floor)

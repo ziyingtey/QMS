@@ -6,7 +6,7 @@ import { PrimaryButton } from "../components/PrimaryButton";
 import { useCustomer } from "../context/CustomerContext";
 import type { BookingStackParamList } from "../navigation/navigationRef";
 import { theme } from "../theme";
-import { formatBookingSlotDateTime } from "../utils/dateFormat";
+import { formatBookingSlotDateTime, defaultBranchOffsetMinutes } from "../utils/dateFormat";
 
 type Props = NativeStackScreenProps<BookingStackParamList, "BookingTicket">;
 
@@ -14,7 +14,8 @@ export function BookingTicketScreen({ navigation, route }: Props) {
   const { created, branchId } = route.params;
   const insets = useSafeAreaInsets();
   const topPad = Platform.OS === "android" ? (RNStatusBar.currentHeight ?? 0) + 8 : Math.max(insets.top, 12);
-  const { checkIn, navigateToQueueTrack } = useCustomer();
+  const { checkIn, navigateToQueueTrack, branches } = useCustomer();
+  const branchOffset = branches.find((b) => b.id === branchId)?.serviceZoneOffsetMinutes ?? defaultBranchOffsetMinutes;
 
   return (
     <View style={[styles.screen, { paddingTop: topPad }]}>
@@ -24,7 +25,7 @@ export function BookingTicketScreen({ navigation, route }: Props) {
       </View>
       <Text style={styles.service}>{created.serviceName}</Text>
       <Text style={styles.ticket}>{created.ticketNumber}</Text>
-      <Text style={styles.when}>{formatBookingSlotDateTime(created.slotStart, created.slotEnd)}</Text>
+      <Text style={styles.when}>{formatBookingSlotDateTime(created.slotStart, created.slotEnd, branchOffset)}</Text>
       <PrimaryButton label="I've arrived — check in" icon="location-outline" onPress={() => void checkIn(created.bookingId)} />
       <PrimaryButton
         label="Live queue status"

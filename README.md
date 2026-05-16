@@ -143,7 +143,7 @@ Operational exports `BDS_QMS_AUDIT`, `BDS_QMS_TICKET`, `BDS_QMS_DAILY_TRANSACTIO
 
 ### Assignment / lecturer ERD column names (SQL views)
 
-Run `database/teacher_erd_views.sql` after `database/schema.sql` on SQL Server. It creates schema **`TeacherErd`** with views **`USERS`**, **`BRANCHES`**, **`STAFF`**, **`SERVICES`**, **`COUNTERS`**, **`TIME_SLOTS`** (empty shell — slots are computed in the API), **`BOOKINGS`**, **`QUEUE_TICKETS`**, **`SERVICE_LOGS`**, **`NOTIFICATIONS`**, **`ANALYTICS_SUMMARY`**, **`ML_TRAINING_DATA`** that **project** the live `dbo.*` tables. The REST API and apps **unchanged**; use these views for diagrams, BI, or coursework ERDs that require exact entity names.
+If you use `database/teacher_erd_views.sql` (when present in your fork), it may create schema **`TeacherErd`** with views that **project** the live `dbo.*` tables for diagrams or BI. Slot windows are **not** stored per row: the API builds them from `BRANCH_OPERATING_HOURS` and `BRANCHES.SlotDurationMinutes`; capacity uses `BOOKINGS` overlap counts plus counter-driven math.
 
 ### Optional in-database BDS mirror (same SQL Server)
 

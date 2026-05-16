@@ -53,57 +53,7 @@ public sealed class QmsQueueService(
         var slots = new List<SlotDto>();
         var hidePastSlotsForToday = calendarDay == todayInBranch;
 
-        var storedSlots = await db.TimeSlots.AsNoTracking()
-            .Where(ts => ts.BranchId == branchId && ts.ServiceTypeId == serviceTypeId
-                                              && ts.StartTime >= windowStart && ts.StartTime < windowEnd)
-            .OrderBy(ts => ts.StartTime)
-            .ToListAsync(cancellationToken);
-
-        if (storedSlots.Count > 0)
-        {
-            foreach (var row in storedSlots)
-            {
-                var slotStart = row.StartTime;
-                var slotEnd = row.EndTime;
-
-                if (hidePastSlotsForToday && slotEnd <= nowAtBranch)
-                    continue;
-
-                var onlineUsed = await CountActiveOnlineBookingsForSlotAsync(
-                    branchId, serviceTypeId, slotStart, slotEnd, null, row.Id, cancellationToken);
-
-                var walkInUsed = await CountWalkInsAssignedToBucketAsync(
-                    branchId, serviceTypeId, slotStart, slotEnd, cancellationToken);
-
-                var eff = ComputeEffectiveSlotCapacity(
-                    branch,
-                    service,
-                    activeCounters,
-                    slotStart,
-                    slotEnd,
-                    nowAtBranch,
-                    row);
-                var onlineCap = eff.OnlineCapacity;
-                var walkCap = eff.WalkInBufferCapacity;
-
-                string status;
-                if (onlineUsed >= onlineCap) status = "Full";
-                else if (onlineUsed >= (int)(onlineCap * 0.85)) status = "Limited";
-                else status = "Available";
-
-                slots.Add(new SlotDto(
-                    FormatIsoOffset(slotStart),
-                    FormatIsoOffset(slotEnd),
-                    onlineUsed,
-                    onlineCap,
-                    walkInUsed,
-                    walkCap,
-                    status));
-            }
-
-            return slots;
-        }
-
+        // Fixed slot windows: uniform steps from operating-hours window + SlotDurationMinutes.
         for (var t = windowStart; t < windowEnd; t = t.AddMinutes(slotMinutes))
         {
             var slotStart = t;
@@ -113,19 +63,12 @@ public sealed class QmsQueueService(
                 continue;
 
             var onlineUsed = await CountActiveOnlineBookingsForSlotAsync(
-                branchId, serviceTypeId, slotStart, slotEnd, null, null, cancellationToken);
+                branchId, serviceTypeId, slotStart, slotEnd, null, cancellationToken);
 
             var walkInUsed = await CountWalkInsAssignedToBucketAsync(
                 branchId, serviceTypeId, slotStart, slotEnd, cancellationToken);
 
-            var eff = ComputeEffectiveSlotCapacity(
-                branch,
-                service,
-                activeCounters,
-                slotStart,
-                slotEnd,
-                nowAtBranch,
-                storedRow: null);
+            var eff = ComputeEffectiveSlotCapacity(branch, service, activeCounters);
             var onlineCap = eff.OnlineCapacity;
             var walkCap = eff.WalkInBufferCapacity;
 
@@ -178,22 +121,10 @@ public sealed class QmsQueueService(
 
         var activeCounters = await CountActiveLaneCountersAsync(branchId, serviceTypeId, cancellationToken);
 
-        var timeSlot = await db.TimeSlots.AsNoTracking().FirstOrDefaultAsync(
-            ts => ts.BranchId == branchId && ts.ServiceTypeId == serviceTypeId
-                                        && ts.StartTime == slotStart && ts.EndTime == slotEnd,
-            cancellationToken);
-
         var onlineUsed = await CountActiveOnlineBookingsForSlotAsync(
-            branchId, serviceTypeId, slotStart, slotEnd, null, timeSlot?.Id, cancellationToken);
+            branchId, serviceTypeId, slotStart, slotEnd, null, cancellationToken);
 
-        var eff = ComputeEffectiveSlotCapacity(
-            branch,
-            service,
-            activeCounters,
-            slotStart,
-            slotEnd,
-            nowAtBranch,
-            timeSlot);
+        var eff = ComputeEffectiveSlotCapacity(branch, service, activeCounters);
         var onlineCap = eff.OnlineCapacity;
 
         if (onlineUsed >= onlineCap)
@@ -208,7 +139,6 @@ public sealed class QmsQueueService(
             CustomerId = userId,
             BranchId = branchId,
             ServiceTypeId = serviceTypeId,
-            TimeSlotId = timeSlot?.Id,
             SlotStart = slotStart,
             SlotEnd = slotEnd,
             Status = BookingStatus.Confirmed
@@ -272,11 +202,7 @@ public sealed class QmsQueueService(
         for (var b = firstBucket; b < windowEnd; b = b.AddMinutes(slotM))
         {
             var be = b.AddMinutes(slotM);
-            var ts = await db.TimeSlots.AsNoTracking().FirstOrDefaultAsync(
-                t => t.BranchId == branchId && t.ServiceTypeId == serviceTypeId
-                                           && t.StartTime == b && t.EndTime == be,
-                cancellationToken);
-            var eff = ComputeEffectiveSlotCapacity(branch, service, activeCounters, b, be, nowAtBranch, ts);
+            var eff = ComputeEffectiveSlotCapacity(branch, service, activeCounters);
             var walkCap = eff.WalkInBufferCapacity;
             var used = await CountWalkInsAssignedToBucketAsync(branchId, serviceTypeId, b, be, cancellationToken);
             if (used < walkCap)
@@ -375,28 +301,15 @@ public sealed class QmsQueueService(
 
         var activeCounters = await CountActiveLaneCountersAsync(booking.BranchId, booking.ServiceTypeId, cancellationToken);
 
-        var newTimeSlot = await db.TimeSlots.AsNoTracking().FirstOrDefaultAsync(
-            ts => ts.BranchId == booking.BranchId && ts.ServiceTypeId == booking.ServiceTypeId
-                                              && ts.StartTime == newSlotStart && ts.EndTime == newSlotEnd,
-            cancellationToken);
-
         var onlineUsed = await CountActiveOnlineBookingsForSlotAsync(
             booking.BranchId,
             booking.ServiceTypeId,
             newSlotStart,
             newSlotEnd,
             bookingId,
-            newTimeSlot?.Id,
             cancellationToken);
 
-        var eff = ComputeEffectiveSlotCapacity(
-            branch,
-            service,
-            activeCounters,
-            newSlotStart,
-            newSlotEnd,
-            nowAtBranch,
-            newTimeSlot);
+        var eff = ComputeEffectiveSlotCapacity(branch, service, activeCounters);
         var onlineCap = eff.OnlineCapacity;
 
         if (onlineUsed >= onlineCap)
@@ -404,7 +317,6 @@ public sealed class QmsQueueService(
 
         booking.SlotStart = newSlotStart;
         booking.SlotEnd = newSlotEnd;
-        booking.TimeSlotId = newTimeSlot?.Id;
 
         if (booking.QueueEntry is { State: QueueEntryState.Waiting })
         {
@@ -1002,21 +914,16 @@ public sealed class QmsQueueService(
                 l => l.ServiceTypeId == svc.Id && l.EndedAt >= dayStartOffset && l.EndedAt < dayEndOffset,
                 cancellationToken);
 
-            TimeSlot? tsNext = null;
             EffectiveSlotCapacity? effNext = null;
             if (validNextWindow)
             {
-                tsNext = await db.TimeSlots.AsNoTracking().FirstOrDefaultAsync(
-                    t => t.BranchId == branchId && t.ServiceTypeId == svc.Id && t.StartTime == nextStart && t.EndTime == nextEnd,
-                    cancellationToken);
-                effNext = ComputeEffectiveSlotCapacity(branchEntity, svc, ac, nextStart, nextEnd, nowAtBranch, tsNext);
+                effNext = ComputeEffectiveSlotCapacity(branchEntity, svc, ac);
                 var usedNext = await CountActiveOnlineBookingsForSlotAsync(
                     branchId,
                     svc.Id,
                     nextStart,
                     nextEnd,
                     null,
-                    tsNext?.Id,
                     cancellationToken);
                 if (branchEntity.AdaptiveSlotCapacityEnabled && usedNext > effNext.OnlineCapacity)
                 {
@@ -1087,7 +994,7 @@ public sealed class QmsQueueService(
             suggestions.Add(new ManagerSuggestionDto(
                 "adaptive_tip",
                 "Adaptive slot capacity is on",
-                "Future booking windows automatically follow open counters. Closing counters tightens upcoming online caps; reopening them relaxes caps without editing static templates.",
+                "Online booking caps are computed from open counters, slot length, service duration, and optional min/max totals. Opening or closing counters changes how many seats appear in the booking grid after refresh.",
                 null,
                 null,
                 null));
@@ -1192,21 +1099,8 @@ public sealed class QmsQueueService(
         DateTimeOffset slotStart,
         DateTimeOffset slotEnd,
         Guid? excludeBookingId,
-        Guid? timeSlotId,
         CancellationToken cancellationToken)
     {
-        if (timeSlotId is { } tid)
-        {
-            return await db.Bookings.CountAsync(
-                b => (!excludeBookingId.HasValue || b.Id != excludeBookingId.Value)
-                     && b.BranchId == branchId
-                     && b.ServiceTypeId == serviceTypeId
-                     && (b.Status == BookingStatus.Pending || b.Status == BookingStatus.Confirmed || b.Status == BookingStatus.CheckedIn)
-                     && (b.TimeSlotId == tid
-                         || (b.TimeSlotId == null && b.SlotStart == slotStart && b.SlotEnd == slotEnd)),
-                cancellationToken);
-        }
-
         return await db.Bookings.CountAsync(
             b => (!excludeBookingId.HasValue || b.Id != excludeBookingId.Value)
                  && b.BranchId == branchId && b.ServiceTypeId == serviceTypeId
@@ -1322,11 +1216,7 @@ public sealed class QmsQueueService(
     private EffectiveSlotCapacity ComputeEffectiveSlotCapacity(
         Branch branch,
         ServiceType service,
-        int activeCounters,
-        DateTimeOffset slotStart,
-        DateTimeOffset slotEnd,
-        DateTimeOffset nowAtBranch,
-        TimeSlot? storedRow)
+        int activeCounters)
     {
         var slotMinutes = branch.SlotDurationMinutes < 1 ? 30 : branch.SlotDurationMinutes;
         var planCounters = Math.Max(1, activeCounters);
@@ -1337,14 +1227,9 @@ public sealed class QmsQueueService(
             branch.OnlineQuotaPercent);
         return AdaptiveSlotCapacity.Resolve(
             dynamicPlan,
-            storedRow,
-            branch.AdaptiveSlotCapacityEnabled,
             branch.MinSlotTotalCapacity,
             branch.MaxCapacity,
-            branch.OnlineQuotaPercent,
-            slotStart,
-            slotEnd,
-            nowAtBranch);
+            branch.OnlineQuotaPercent);
     }
 }
 

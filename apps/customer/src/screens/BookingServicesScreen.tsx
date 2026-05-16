@@ -43,7 +43,7 @@ export function BookingServicesScreen({ navigation, route }: Props) {
     if (!svc) return;
     try {
       const res = await apiWalkIn(branch.id, svc.id);
-      const pool = formatSlotRange(res.walkInCapacitySlotStart, res.walkInCapacitySlotEnd);
+      const pool = formatSlotRange(res.walkInCapacitySlotStart, res.walkInCapacitySlotEnd, branch.serviceZoneOffsetMinutes);
       Alert.alert("Walk-in ticket", `Ticket ${res.ticketNumber}\nWalk-in pool: ${pool}`, [
         { text: "View queue", onPress: () => navigateToQueueTrack(branch.id, res.ticketNumber) },
       ]);

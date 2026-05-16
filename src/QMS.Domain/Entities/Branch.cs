@@ -28,13 +28,12 @@ public class Branch
     public string? ImageUrl { get; set; }
     /// <summary>Lecturer ERD max_capacity (optional headline).</summary>
     public int? MaxCapacity { get; set; }
-    /// <summary>When true, future slot windows use live open counters (clamped); the active calendar window keeps stored TIME_SLOTS quotas.</summary>
+    /// <summary>When true, manager insights flag when active online bookings exceed computed online seat caps (counter-driven).</summary>
     public bool AdaptiveSlotCapacityEnabled { get; set; } = true;
     /// <summary>Optional floor for total customers per slot when adaptive capacity runs (null = no extra floor beyond engine output).</summary>
     public int? MinSlotTotalCapacity { get; set; }
     public ICollection<Staff> StaffMembers { get; set; } = new List<Staff>();
     public ICollection<BranchOperatingHour> OperatingHoursSchedule { get; set; } = new List<BranchOperatingHour>();
-    public ICollection<TimeSlot> TimeSlots { get; set; } = new List<TimeSlot>();
     public ICollection<Counter> Counters { get; set; } = new List<Counter>();
     public ICollection<ServiceType> Services { get; set; } = new List<ServiceType>();
     public ICollection<AnalyticsSummary> AnalyticsSummaries { get; set; } = new List<AnalyticsSummary>();

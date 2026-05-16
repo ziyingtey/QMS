@@ -20,7 +20,7 @@ import { PrimaryButton } from "../components/PrimaryButton";
 import { useCustomer } from "../context/CustomerContext";
 import { navigationRef } from "../navigation/navigationRef";
 import { theme } from "../theme";
-import { formatBookingSlotDateTime } from "../utils/dateFormat";
+import { formatBookingSlotDateTime, defaultBranchOffsetMinutes } from "../utils/dateFormat";
 import { distanceMeters, formatDistance } from "../utils/geo";
 
 type SortMode = "distance" | "wait" | "name" | "services";
@@ -76,6 +76,11 @@ export function HomeScreen({
   const primaryBooking = bookings.find(
     (b) => b.ticketNumber && b.status !== "Cancelled" && b.status !== "Completed" && b.status !== "NoShow",
   );
+
+  const primaryBookingBranchOffset = useMemo(() => {
+    if (!primaryBooking) return defaultBranchOffsetMinutes;
+    return branches.find((b) => b.id === primaryBooking.branchId)?.serviceZoneOffsetMinutes ?? defaultBranchOffsetMinutes;
+  }, [primaryBooking, branches]);
 
   useEffect(() => {
     let cancelled = false;
@@ -249,7 +254,9 @@ export function HomeScreen({
           >
             <Text style={styles.activeCardLabel}>Your current ticket</Text>
             <Text style={styles.activeTicket}>{primaryBooking.ticketNumber}</Text>
-            <Text style={styles.activeSlot}>{formatBookingSlotDateTime(primaryBooking.slotStart, primaryBooking.slotEnd)}</Text>
+            <Text style={styles.activeSlot}>
+              {formatBookingSlotDateTime(primaryBooking.slotStart, primaryBooking.slotEnd, primaryBookingBranchOffset)}
+            </Text>
             <View style={styles.activeRow}>
               <Text style={styles.activeMeta}>
                 Now serving: <Text style={{ color: theme.accent }}>{activeStatus?.currentServingTicketNumber ?? "—"}</Text>
