@@ -87,8 +87,8 @@ export function CustomerProvider({ children }: { children: React.ReactNode }) {
   const [togglingFavoriteBranchId, setTogglingFavoriteBranchId] = useState<string | null>(null);
 
   const [authMode, setAuthMode] = useState<"login" | "register">("login");
-  const [email, setEmail] = useState("customer@qms.demo");
-  const [password, setPassword] = useState("Demo123!");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [registerName, setRegisterName] = useState("");
 
   useEffect(() => {

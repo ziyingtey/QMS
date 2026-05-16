@@ -106,7 +106,6 @@ using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<QmsDbContext>();
     await db.Database.EnsureCreatedAsync();
-    await QmsDataSeeder.SeedAsync(scope.ServiceProvider);
 }
 
 if (app.Environment.IsDevelopment())

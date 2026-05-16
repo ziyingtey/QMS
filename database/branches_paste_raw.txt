@@ -1,0 +1,501 @@
+1.Bandar Sri Damansara,6, Jalan Tembaga SD5/2A, Bandar Sri Damansara 52200 Kuala Lumpur,Kuala Lumpur,3.2014421,101.6170249,Mon-Fri 9:30-16:00
+
+2.Taman Tun Dr Ismail,66, 68 & 70, Jalan Burhanuddin Helmi, Taman Tun Dr. Ismail 60000 Kuala Lumpur,Kuala Lumpur,3.1523111,101.6103008,Mon-Fri 9:30-16:00
+
+3.Bandar Menjalara,71 & 73, Jalan 3/62A Bandar Menjalara Off Jalan Kepong 52200 Kuala Lumpur,Kuala Lumpur,3.1951269,101.6210829,Mon-Fri 9:30-16:00
+
+4.Kepong,147, 149, 151 & 153, Jalan Rimbunan Raya 1, Laman Rimbunan, 52100 Kepong,Kuala Lumpur,Kuala Lumpur,3.2126547,101.6370523,Mon-Fri 9:30-16:00
+
+5.Bukit Damansara,36 - 40, Medan Setia 2 Plaza Damansara, 50490 Bukit Damansara, Kuala Lumpur,Kuala Lumpur,3.1492027,101.6535709,Mon-Fri 9:30-16:00
+
+6.Jinjang,Ground Floor & 1st Floor, Bangunan MCA Jinjang, Lot 58062, Jinjang Utara, Jalan Kepong, 52000 Kuala Lumpur,Kuala Lumpur,3.2097182,101.6477534,Mon-Fri 9:30-16:00
+
+7.Mont Kiara,1 & 3, Jalan Solaris 1, Solaris Mont` Kiara 50480 Kuala Lumpur,Kuala Lumpur,3.1741712,101.6502425,Mon-Fri 9:30-16:00
+
+8.Bangsar,36 & 38, Jalan Maarof, Bangsar Baru, 59100 Kuala Lumpur,Kuala Lumpur,3.1313706,101.6721633,Mon-Fri 9:30-16:00
+
+9.Selayang,45, 47 & 49, Jalan 2/3A, Pusat Bandar Utara Selayang, Batu Caves, 68100 Kuala Lumpur,Kuala Lumpur,3.2350274,101.6608847,Mon-Fri 9:30-16:00
+
+10.Jalan Kelang Lama,1, 3 & 5, Jalan Klang Lama & Jalan 1/137b, Seksyen 1, 58000 Kuala Lumpur, Wilayah Persekutuan Kuala Lumpur,3.0859631,101.662748,Mon-Fri 9:30-16:00
+
+11.Overseas Union Garden,3 & 5, Medan Hujan Rahmat, Taman Overseas Union 58200 Kuala Lumpur,Kuala Lumpur,3.0730994,101.6626668,Mon-Fri 9:30-16:00
+
+12.Bukit Jalil,"2 & 2A, Jalan Jalil Jaya 6, Jalil Link, Bukit Jalil, 57000 Kuala Lumpur”,Kuala Lumpur,3.0592557,101.6631125,Mon-Fri 9:30-16:00
+
+13.Segambut,73,75 &77, Jalan Segambut Pusat, Taman Teh Wan Sang, 51200 Kuala Lumpur, Wilayah Persekutuan Kuala Lumpur,3.1856447,101.6666934,,Mon-Fri 9:30-16:00
+
+14.Jalan Ipoh,480, Wisma Yap Ka, 3rd Mile Jalan Ipoh 51200 Kuala Lumpur,Kuala Lumpur,3.1814029,101.67145,Mon-Fri 9:30-16:00
+
+16.Jalan Tun Sambanthan,68, Jalan Tun Sambanthan, Brickfields 50470 Kuala Lumpur,Kuala Lumpur,3.1335875,101.6887223,Mon-Fri 9:30-16:00
+
+17.Jalan Kuchai Lama,44, 46, 48 & 50, Jalan 6/116B, Kuchai Entrepreneurs` Park, Off Jalan Kuchai Lama, 58200 Kuala Lumpur,Kuala Lumpur,3.0915118,101.6802707,Mon-Fri 9:30-16:00
+
+18.Sentul,36, 38 & 40, Jalan 14/48A, Sentul Raya Off Jalan Sentul 51000 Kuala Lumpur,Kuala Lumpur,3.1841377,101.681912,Mon-Fri 9:30-16:00
+
+19.Seri Petaling,40 - 44, Jalan Radin Tengah, Bandar Baru Seri Petaling 57000 Kuala Lumpur,Kuala Lumpur,3.0684171,101.6897409,Mon-Fri 9:30-16:00
+
+20.Jalan Raja Laut,Lot G3 & 1A.2, Bangunan KWSP, 5, Jalan Raja Laut 50350 Kuala Lumpur,Kuala Lumpur,3.1587063,101.6903949,Mon-Fri 9:30-16:00
+
+21.Jalan Sultan Sulaiman,1st & 2nd Floor, Bangunan Public Bank, No. 6, Jalan Sultan Sulaiman 50000 Kuala Lumpur,Kuala Lumpur,3.1388162,101.6853261,Mon-Fri 9:30-16:00
+
+22.Tiong nam,Wisma Public Bank, 300, Jalan Raja Laut 50350 Kuala Lumpur,Kuala Lumpur,3.1650846,101.6847013,Mon-Fri 9:30-16:00
+
+23.Jalan Tun Hs Lee,Lot G.01, Plaza First Nationwide, 161, Jalan Tun H.S. Lee 50000 Kuala Lumpur,Kuala Lumpur,3.1634389,101.6859514,Mon-Fri 9:30-16:00
+
+24.Jalan Hang Lekiu,20 - 26, Jalan Hang Lekiu 50100 Kuala Lumpur,Kuala Lumpur,3.1476896,101.6872902,Mon-Fri 9:30-16:00
+
+25.Salak South,31 - 33, Ground Floor & 1st Floor, Jalan 3/108C, Taman Sungai Besi, Salak South 57100 Kuala Lumpur,Kuala Lumpur,3.0928914,101.6902916,Mon-Fri 9:30-16:00
+
+26.Kampung Baru - Full-fledged Islamic Branch,1-1, 1-2 & 2-3, Plaza RAH, No. 111, Jalan Raja Abdullah, Kampung Baru, 50300 Kuala Lumpur,Kuala Lumpur,3.1669666,101.6681362,Mon-Fri 9:30-16:00
+
+27.Jalan Raja Chulan,Level 1 & 7, Menara Public Bank 2, 78, Jalan Raja Chulan, 50200 Kuala Lumpur,Kuala Lumpur,3.1510043,101.7074231,Mon-Fri 9:30-16:00
+
+28.Jalan Bukit Bintang,Ground & 1st Floor, Menara Hai-O, Off Jalan Bukit Bintang, 55100 Kuala Lumpur,Kuala Lumpur,3.143348,101.6980829,Mon-Fri 9:30-16:00
+
+29.Kuala Lumpur City Main Office,Ground Floor, Menara Public Bank, 146, Jalan Ampang, 50450 Kuala Lumpur,Kuala Lumpur,3.1433907,101.6980829,Mon-Fri 9:30-16:00
+
+30.Changkat Thambi Dollah,85, 87 & 89, Changkat Thambi Dollah, Off Jalan Pudu 55100 Kuala Lumpur,Kuala Lumpur,3.1405268,101.7115746,Mon-Fri 9:30-16:00
+
+31.Jalan Sungai Besi,12, Jalan Sungai Besi 57100 Kuala Lumpur,Kuala Lumpur,3.1323019,101.702889,Mon-Fri 9:30-16:00
+
+32.Medan Idaman,4, 6 & 8, Jalan Jernai 3 Medan Idaman Business Centre, Batu 5, Jalan Gombak 53000 Kuala Lumpur,Kuala Lumpur,3.2135046,101.7021111,Mon-Fri 9:30-16:00
+
+33.Bintang Walk,150, Jalan Bukit Bintang 55100 Kuala Lumpur,Kuala Lumpur,3.1475839,101.7017657,Mon-Fri 9:30-16:00
+
+34.Bandar Sri Permaisuri,95 & 97, Jalan Dwitasik 1, Bandar Sri Permaisuri, 56000 Cheras, Kuala Lumpur,Kuala Lumpur,3.1021789,101.7026948,Mon-Fri 9:30-16:00
+
+35.Setapak,263, 265, 267 & 269, Jalan Genting Kelang, 53300 Setapak, Kuala Lumpur,Kuala Lumpur,3.1962835,101.7136383,Mon-Fri 9:30-16:00
+
+37.Starparc Point,B-01-01 – B-01-03A, Pusat Komersial Setapak, 68 Jalan Taman Ibu kota, Setapak, 53300 Kuala Lumpur,Kuala Lumpur,3.204381,101.7114733,Mon-Fri 9:30-16:00
+
+38.Wangsa Maju,22 - 26, Jalan 1A/27A, Section 1, Wangsa Maju 53300 Kuala Lumpur,Kuala Lumpur,3.2014184,101.7218907,Mon-Fri 9:30-16:00
+
+39.Taman Maluri,271, 273, 275 & 277, Jalan Mahkota, Taman Maluri, 55100 Cheras, Kuala Lumpur,Kuala Lumpur,3.1294912,101.7215175,Mon-Fri 9:30-16:00
+
+40.Taman Midah,2, 4 & 6, Jalan Midah 3, Taman Midah 56000 Kuala Lumpur,Kuala Lumpur,3.1020996,101.7327175,Mon-Fri 9:30-16:00
+
+41.Taman Connaught,80 - 84, Jalan Cerdas, Taman Connaught, 56000 Cheras, Kuala Lumpur,Kuala Lumpur,3.081396,101.726295,Mon-Fri 9:30-16:00
+
+42.Taman Cheras,1, 3, 5, 7 & 9, Jalan 4/96A, Taman Cheras Makmur 56100 Kuala Lumpur,Kuala Lumpur,3.1015491,101.7301072,Mon-Fri 9:30-16:00
+
+43.Pandan Jaya,44, Jalan Pandan 2/2, Pandan Jaya 55100 Kuala Lumpur,Kuala Lumpur,3.1348834,101.7305377,Mon-Fri 9:30-16:00
+
+44.Taman Melawati,262 - 265, Jalan Bandar 12, Taman Melawati 53100 Kuala Lumpur,Kuala Lumpur,3.20982,101.74734,Mon-Fri 9:30-16:00
+
+45.Pandan Indah,1, 3 & 5, Jalan Pandan Indah 1/23, Pandan Indah 55100 Kuala Lumpur,Kuala Lumpur,3.1338488,101.7357344,Mon-Fri 9:30-16:00
+
+46.Tangkak，125, Jalan Muar, 84900 Tangkak, Johor，Johor，2.2653257,102.5385408,Mon-Fri 9:30-16:00
+
+47.Jalan Abdullah,74, 76 & 78, Jalan Abdullah, 84000 Muar, Johor,Johor,2.0474601,102.556878,Mon-Fri 9:30-16:00
+
+48.Muar,47, 48, 49 & 50, Jalan Sayang, 84000 Muar, Johor,Johor,2.0462983,102.5573856,Mon-Fri 9:30-16:00
+
+49.Bukit Pasir, 36-2 & 36-3, Taman Bahagia, Jalan Panchor, 84300 Bukit Pasir, Muar, Johor, Johor,2.0999619,102.6406462,Mon-Fri 9:30-16:00
+
+50.Segamat, 947C, D & E Jalan Genuang 85000 Segamat, Johor, Johor,2.5046335,102.8090709,Mon-Fri 9:30-16:00
+
+51.Batu Pahat, 116, 117 & 118, Jalan Chengal, Taman Makmur, 83000 Batu Pahat, Johor, Johor,1.8578907,102.9252342,Mon-Fri 9:30-16:00
+
+52.Chaah, 3 & 5, Jalan Yong Peng, Taman Sri Chaah, 85400 Chaah, Johor, Johor,2.2437057,103.0397844,Mon-Fri 9:30-16:00
+
+53.Parit Raja, 11 & 12, Jalan Kristal, Taman Kristal 2, Parit Raja, 86400 Batu Pahat, Johor, Johor,1.8654792,103.1029606,Mon-Fri 9:30-16:00
+
+54.Simpang Renggam,17 & 19, Jalan Bintang Ria 1, Taman Bintang Ria, 86200 Simpang Renggam, Johor,Johor,1.8300797,103.2980545,Mon-Fri 9:30-16:00
+
+55.Kluang,3A, 3B & 3C, Jalan Dato` Teoh Siew Khor, 86000 Kluang, Johor,Johor,2.0310262,103.3197355,Mon-Fri 9:30-16:00
+
+56.Pontian Kecil, 142, 143 & 144, Jalan Taib, 82000 Pontian, Johor, Johor,1.4867407,103.3801414,Mon-Fri 9:30-16:00
+
+57.Pekan Nenas,Nos. 7, 8 & 9 Jalan Permata 1, Pusat Perdagangan Pekan Nenas, 81500 Pekan Nenas, Johor.,Johor,1.5084207,103.4996518,Mon-Fri 9:30-16:00
+
+58.Kahang,11 & 12, Jalan Parang 1, Taman Sri Kahang, 86700 Kahang, Johor,Johor,2.2291915,103.5185602,Mon-Fri 9:30-16:00
+
+59.Kulai,42-1, 42-2 & 42-3, Jalan Raya, Kulai Besar, 81000 Kulai, Johor,Johor,1.6506453,103.6006903,Mon-Fri 9:30-16:00
+
+60.Endau,811 & 812, Jalan Aman, Taman Bahagia, 86900 Endau, Johor, Johor,2.6518232,103.6256292,Mon-Fri 9:30-16:00
+
+61.Bukit Idah, 61, 63 & 65, Jalan Indah 15/2, Taman Bukit Indah, 81200 Johor Bahru, Johor,Johor,1.4813064,103.6470912,Mon-Fri 9:30-16:00
+
+62.Skudai, 2 & 4, Jalan Nakhoda 12, Taman Ungku Tun Aminah, 81300 Skudai, Johor, Johor,1.4814133,103.6161912,Mon-Fri 9:30-16:00
+
+63.Sutera Utama,23, 25 & 27 Jalan Sutera Tanjung 8/2, Taman Sutera Utama, 81300 Skudai, Johor,Johor,1.5166219,103.6566669,Mon-Fri 9:30-16:00
+
+64.Taman Perling,31, 33 & 35, Jalan Persisiran Perling, Taman Perling, 81200 Johor Bahru, Johor,Johor,1.4952014,103.6688693,Mon-Fri 9:30-16:00
+
+65.Taman Munsyi Ibrahim,48 & 50, Jalan Dian 8, Taman Munsyi Ibrahim, 81200 Johor Bahru, Johor,Johor,1.5160849,103.6896359,Mon-Fri 9:30-16:00
+
+66.Tampoi,14 & 16, Jalan Sri Bahagia 10, Taman Sri Bahagia, 81200 Johor Bahru, Johor,Johor,1.5162603,103.6098096,Mon-Fri 9:30-16:00
+
+67.Taman Daya,71, 73 & 75, Jalan Sagu 18, Taman Daya, 81100 Johor Bahru, Johor,Johor,1.5464344,103.7642648,Mon-Fri 9:30-16:00
+
+68.Johor Bahru,Level 1 & 12, Public Bank Tower, 19, Jalan Wong Ah Fook, 80888 Ibrahim International Business District, Johor.,Johor,1.4617275,103.7282961,Mon-Fri 9:30-16:00
+
+69.Taman Sentosa,G1 & G2, Wisma Daiman, 64 Jalan Sulam, Taman Sentosa, 80150 Johor Bahru, Johor, Johor,1.4947943,103.7563703,Mon-Fri 9:30-16:00
+
+70.Taman Johor Jaya,B-21 & B-23, Jalan Molek 1/5A, Taman Molek, 81100 Johor Bahru, Johor,Johor,1.5388647,103.7372407,Mon-Fri 9:30-16:00
+
+71.Taman Desa Cemerlang,2, 4 & 6, Jalan Johar 2, Taman Desa Cemerlang, 81800 Ulu Tiram, Johor,Johor,1.5663038,103.8145573,Mon-Fri 9:30-16:00
+
+72.Bandar Baru Permas Jaya,17 & 19, Jalan Permas 10/1, Bandar Baru Permas Jaya, 81750 Masai, Johor,Johor,1.498767,103.815975,Mon-Fri 9:30-16:00
+
+73.Ulu Tiram,8, 9 & 10, Jalan Raya, Taman Tiram Baru, 81800 Ulu Tiram, Johor,Johor,1.5986913,103.8105382,Mon-Fri 9:30-16:00
+
+74.Mersing,21 & 22, Jalan Sulaiman, 86800 Mersing, Johor,Johor,2.4310993,103.8252573,Mon-Fri 9:30-16:00
+
+75.Masai,1 & 3, Jalan Suria 3, Bandar Seri Alam, 81750 Masai, Johor, Johor,1.4936434,103.8635023,Mon-Fri 9:30-16:00
+
+76.Kota Tinggi,10A, 10B & 10C, Jalan Tun Habab, 81900 Kota Tinggi, Johor,Johor,1.7318816,103.8892091,Mon-Fri 9:30-16:00
+
+77.Pulau Langkawi,No. 33A, Langkawi Boulevard, Jalan Mahawangsa 1, 07000 Langkawi, Kedah, Kedah,6.3197343,99.8387231,Mon-Fri 9:30-16:00
+
+78.Jalan Kota,1557, Jalan Kota, 05000 Alor Setar, Kedah,Kedah,6.11906,100.3693529,Mon-Fri 9:30-16:00
+
+79.Alor Setar,1070 & 1071, Jalan Telok Wanjah, 05200 Alor Setar, Kedah,Kedah,6.1190866,100.3616281,Mon-Fri 9:30-16:00
+
+80.Jitra,9 & 10, Kompleks Jitra, 06000 Jitra, Kedah,Kedah,6.263358,100.4190599,Mon-Fri 9:30-16:00
+
+81.Changlun,73, Jalan Sintok, Pekan Baru, 06010 Changlun, Kedah,Kedah,6.4319295,100.4212125,Mon-Fri 9:30-16:00
+
+82.Gurun,1, 2 & 3, Kompleks Perniagaan Suria Gurun, 08300 Gurun, Kedah,Kedah,5.8139124,100.4681719,Mon-Fri 9:30-16:00
+
+83.Sungai Petani,83A-D, 84A-D & 85A-D, Jalan Pengkalan, Susur Kiri, Taman Pekan Baru, 08000 Sungai Petani, Kedah,Kedah,5.6405784,100.4844721,Mon-Fri 9:30-16:00
+
+84.Pokok Sena,A-01 & A-02, Jalan Semarak 1, Taman Bandar Baru, 06400 Pokok Sena, Kedah, Kedah,6.166468,100.4966866,Mon-Fri 9:30-16:00
+
+85.Kulim,2, Jalan Tunku Putra, 09000 Kulim, Kedah,Kedah,5.3740164,100.5446118,Mon-Fri 9:30-16:00
+
+86.Kuala Ketil,45, 46 & 47, Jalan Putra, Taman Tanjung Peteri, 09300 Kuala Ketil, Kedah,Kedah,5.6079432,100.6408919,Mon-Fri 9:30-16:00
+
+88.Gua Musang,PT 8374 & PT 8375, Taman Wangsa Mewangi, Jalan Persiaran Raya, 18300 Gua Musang, Kelantan, Kelantan,4.8707636,101.9632094,Mon-Fri 9:30-16:00
+
+89.Tanah Merah,Nos. 43, 45 & 47 Kompleks Perniagaan Humaira Jalan Humaira 2, 17500 Tanah Merah, Kelantan,Kelantan,5.8058073,102.1374038,Mon-Fri 9:30-16:00
+
+90.Kuala Krai,91 & 92, Jalan Chin Hua, 18000Kuala Krai, Kelantan,Kelantan,5.5314334,102.2006482,Mon-Fri 9:30-16:00
+
+91.Kota Bharu,PT 282 - 285, Jalan Kebun Sultan, 15300 Kota Bharu, Kelantan,Kelantan,6.1237944,102.2382544,Mon-Fri 9:30-16:00
+
+92.Wakaf Siku,6, 7, 8 & 9, Wakaf Siku, Jalan Sultan Yahya Petra, 15200 Kota Bharu, Kelantan,Kelantan,6.1167862,102.2436515,Mon-Fri 9:30-16:00
+
+93.Labuan,Ground Floor, Public Bank Building, 5 Jalan Merdeka, 87007 Wilayah Persekutuan Labuan,Labuan,5.2772263,115.2319312,Mon-Fri 9:30-16:00
+
+94.Masjid Tanah,Lot 367 & 368, Kompleks Perniagaan, 78300 Masjid Tanah, Melaka,Melaka,2.3522293,102.1006275,Mon-Fri 9:30-16:00
+
+95.Taman Malim Jaya,Nos. 17, 19 & 21 Jalan Rahmat 2, 75250 Taman Malim Jaya, Melaka,Melaka,2.2403625,102.2338738,Mon-Fri 9:30-16:00
+
+96.Tengkera,300, 300A, 300B & 300-1, Jalan Ong Kim Wee, 75300 Tengkera, Melaka,Melaka,2.1995864,102.2311858,Mon-Fri 9:30-16:00
+
+97.Melaka,60 - 68, Jalan Laksamana, 75000 Melaka,Melaka,2.1957174,102.2409182,Mon-Fri 9:30-16:00
+
+98.Taman Melaka Raya,931 - 934, Jalan Merdeka, 75000 Taman Melaka Raya, Melaka,Melaka,2.186229,102.2481316,Mon-Fri 9:30-16:00
+
+99.Batu Berendam,1, 3 & 5, Jalan Mutiara Melaka 4, Taman Mutiara Melaka, 75350 Batu Berendam, Melaka,Melaka,2.2401037,102.2491956,Mon-Fri 9:30-16:00
+
+101.Nilai,168 - 170, Jalan Besar, 71800 Nilai, Negeri Sembilan,Negeri Sembilan,2.8019086,101.7926359,Mon-Fri 9:30-16:00
+
+102.Port Dickson,866 & 867, Jalan Pantai, 71000 Port Dickson, Negeri Sembilan,Negeri Sembilan,2.5255155,101.790166,Mon-Fri 9:30-16:00
+
+103.Seremban,411A, 413 & 414, Jalan Tuanku Munawir, 70000 Seremban, Negeri Sembilan,Negeri Sembilan,2.7144712,101.9282573,Mon-Fri 9:30-16:00
+
+104.Rasah,1281 - 1284, Jalan Rasah, 70300 Seremban, Negeri Sembilan,Negeri Sembilan,2.7030323,101.9296764,Mon-Fri 9:30-16:00
+
+105.Kuala Kelawang,128A & 128B, Jalan Syed Ali, Kuala Kelawang, 71600 Jelebu, Negeri Sembilan,Negeri Sembilan,2.9388116,102.070128,Mon-Fri 9:30-16:00
+
+106.Tampin,4707 & 4708, Jalan Besar, 73000 Tampin, Negeri Sembilan,Negeri Sembilan,2.4702425,102.2214032,Mon-Fri 9:30-16:00
+
+107.Kuala Pilah,564, Jalan Perpateh, 72000 Kuala Pilah, Negeri Sembilan,Negeri Sembilan,2.7387885,102.2364996,Mon-Fri 9:30-16:00
+
+108.Bahau,126, 127 & 128 Jalan Gurney, 72100 Bahau, Negeri Sembilan,Negeri Sembilan,2.8110363,102.39198,Mon-Fri 9:30-16:00
+
+109.Gemas,12, Jalan Mahkamah, 73400 Gemas, Negeri Sembilan,Negeri Sembilan,2.5814999,102.6005886,Mon-Fri 9:30-16:00
+
+120.Brinchang,Nos. 1, 2 & 3, Presint 1, Cameron Centrum, Brinchang, Cameron Highlands 39100 Pahang,Pahang,4.4944067,101.3788294,Mon-Fri 9:30-16:00
+
+122.Genting Highlands,T2B-03, Level 3, Sky Avenue, 69000 Genting Highlands, Pahang,Pahang,3.4245388,101.7844494,Mon-Fri 9:30-16:00
+
+123.Raub,No. 18 & 19, Bandar Raub Perdana, Jalan Lipis, 27600 Raub, Pahang Darul Makmur,Pahang,3.7976217,101.8525066,Mon-Fri 9:30-16:00
+
+124.Bentong,25 - 27, Jalan Chui Yin, 28700 Bentong, Pahang,Pahang,3.523466,101.9069028,Mon-Fri 9:30-16:00
+
+125.Benta,21 & 22, Rumahkedai LKNP, 27300 Benta, Pahang,Pahang,4.0166087,101.9554548,Mon-Fri 9:30-16:00
+
+126.Kuala Lipis,5G & 5H, Jalan Pekeliling, 27200Kuala Lipis, Pahang,Pahang,4.1848043,102.0448903,Mon-Fri 9:30-16:00
+
+127.Mentakab,16 - 18, Jalan Bunga Matahari, 28400 Mentakab, Pahang,Pahang,3.4841237,102.3365672,Mon-Fri 9:30-16:00
+
+128.Kemayan,Ground Floor, 30 & 32, Jalan Besar, 28380 Kemayan, Pahang,Pahang,3.1356004,102.3575475,Mon-Fri 9:30-16:00
+
+129.Jerantut,1 & 2 Jalan Inderapura, Bandar Inderapura, 27000 Jerantut, Pahang,Pahang,3.937066,102.3564823,Mon-Fri 9:30-16:00
+
+130.Temerloh,10, 11 & 12, Jalan Ahmad Shah, Bandar Sri Semantan, 28000 Temerloh, Pahang,Pahang,3.4493106,102.4063988,Mon-Fri 9:30-16:00
+
+131.Triang,37, 38 & 39, Jalan Temerloh, 28300 Triang, Pahang,Pahang,3.2494024,102.4081894,Mon-Fri 9:30-16:00
+
+132.Kuantan,79 - 85, Jalan Haji Abdul Aziz, 25000 Kuantan, Pahang,Pahang,3.8186748,103.3249581,Mon-Fri 9:30-16:00
+
+133.Jalan Beserah,A379/1 - A379/4, Jalan Beserah, 25300 Kuantan, Pahang,Pahang,3.827274,103.3398806,Mon-Fri 9:30-16:00
+
+134.Kangar,10-G, 10-H, 10-I & 10-J, Jalan Raja Syed Alwi, 01000 Kangar, Perlis,Perlis,6.4355267,100.1848185,Mon-Fri 9:30-16:00
+
+135.Putrajaya - Full-fledged Islamic Branch,No. 34 & 36, Jalan Perak P15, Presint 15, 62050 Putrajaya,Putrajaya,2.9465226,101.7127485,Mon-Fri 9:30-16:00
+
+136.Kuala Terengganu,1849, Bangunan Wisma Maju, Jalan Sultan Ismail, 20200 Kuala Terengganu, Terengganu,Terengganu,5.3308303,103.1342103,Mon-Fri 9:30-16:00
+
+137.Kuala Dungun,K-156 & K-157, Jalan Paka, Batu 48, 23000 Kuala Dungun, Terengganu,Terengganu,4.7534163,103.4051835,Mon-Fri 9:30-16:00
+
+138.Chukai,KCP 1, Kemaman Centre Point, 24000 Kemaman, Terengganu,Terengganu,4.2332838,103.4114821,Mon-Fri 9:30-16:00
+
+140.Parit Buntar,135 & 137, Jalan Taiping, 34200 Parit Buntar, Perak,Perak,5.1208824,100.4862507,Mon-Fri 9:30-16:00
+
+141.Bagan Serai,244, 244A & 244B Jalan Besar, 34300 Bagan Serai, Perak,Perak,5.0130349,100.5233525,Mon-Fri 9:30-16:00
+
+142.Pantai Remis,66 - 70, Jalan Damar Laut, 34900 Pantai Remis, Perak,Perak,4.4492653,100.6167675,Mon-Fri 9:30-16:00
+
+143.Seri Manjung,393, 393A & 395, Jalan Samudera 2, Taman Samudera, 32040 Seri Manjung, Perak,Perak,4.2026666,100.6487646,Mon-Fri 9:30-16:00
+
+144.Sitiawan,Lot 166 - 168, Jalan Raja Omar, 32000 Sitiawan, Perak,Perak,4.2153099,100.6856017,Mon-Fri 9:30-16:00
+
+145.Kamunting,27 - 29, Regat Kamunting, Off Jalan Kamunting, 34600 Kamunting, Perak,Perak,4.8811683,100.7189581,Mon-Fri 9:30-16:00
+
+146.Taiping,Nos. 22, 24 & 26, Jalan Taming Sari, 34000 Taiping, Perak,Perak,4.8545326,100.7322924,Mon-Fri 9:30-16:00
+
+147.Ayer Tawar,139 & 141, Jalan Besar, 32400 Ayer Tawar, Perak,Perak,4.3039283,100.7493227,Mon-Fri 9:30-16:00
+
+148.Kuala Kangsar,12, Jalan Daeng Selili, 33000 Kuala Kangsar, Perak,Perak,4.7728565,100.9319591,Mon-Fri 9:30-16:00
+
+149.Pusing,293, 295 & 297, Jalan Besar, 31550 Pusing, Perak,Perak,4.4924587,100.9994159,Mon-Fri 9:30-16:00
+
+150.Teluk Intan,Wisma Boltex, Jalan Pasar, 36000 Teluk Intan, Perak,Perak,4.0266863,101.0059433,Mon-Fri 9:30-16:00
+
+151.Menglembu,67 - 73, Jalan Besar, 31450 Menglembu, Perak,Perak,4.564395,101.0349787,Mon-Fri 9:30-16:00
+
+152.Sungai Siput,161 - 163, Jalan Besar, 31100 Sungai Siput, Perak,Perak,4.820133,101.0607068,Mon-Fri 9:30-16:00
+
+153.Jelapang,291, 293 & 295, Jalan Silibin, 30100 Ipoh, Perak,Perak,4.608755,101.0509211,Mon-Fri 9:30-16:00
+
+154.Jalan Pasir Puteh,135, 137 & 139, Jalan Pengkalan Barat, Off Jalan Pasir Putih, 31650 Ipoh, Perak,Perak,4.5547702,101.0646072,Mon-Fri 9:30-16:00
+
+155.Ipoh Main Office,7 - 13, Jalan Dato' Maharajalela, Ipoh, 30000 Perak,Perak,4.5973329,101.0661243,Mon-Fri 9:30-16:00
+
+156.Jalan Sultan Idris Shah,76, Jalan Sultan Idris Shah, 30000 Ipoh, Perak,Perak,4.597485,101.0820073,Mon-Fri 9:30-16:00
+
+157.Jalan Yang Kalsom,64 - 66, Jalan Yang Kalsom, 30250 Ipoh, Perak,Perak,4.5900477,101.0740062,Mon-Fri 9:30-16:00
+
+158.Ipoh Garden,133, 133A-D, Jalan Dato` Lau Pak Khuan, Ipoh Garden, 31400 Ipoh, Perak,Perak,4.6121826,101.1011958,Mon-Fri 9:30-16:00
+
+159.Gunung Rapat,258 & 260, Jalan Sultan Nazrin Shah, Gunung Rapat, 31350 Ipoh, Perak,Perak,4.5707811,101.1030191,Mon-Fri 9:30-16:00
+
+160.Chemor,12 - 16, Laluan Chemor Sinaran, Desa Chemor Sinaran, 31200 Chemor, Perak,Perak,4.716322,101.1215601,Mon-Fri 9:30-16:00
+
+161.Simpang Pulai,39 & 41, Persiaran Sengat Baru 2, Taman Bersatu, Simpang Pulai, 31300 Ipoh, Perak,Perak,4.5375314,101.1148489,Mon-Fri 9:30-16:00
+
+162.Bercham,4, 6, 8, 10 & 12 Persiaran Bercham Selatan 2, Taman Desa Kencana, 31400 Ipoh, Perak,Perak,4.632945,101.1171465,Mon-Fri 9:30-16:00
+
+163.Kampar,No. 77, 78 & 79 Jalan Terminal Kampar 1/D, Pusat Perdagangan Kampar, 31900 Kampar, Perak,Perak,4.3176942,101.1387497,Mon-Fri 9:30-16:00
+
+164.Bidor,62D - 62E, Jalan Besar, 35500 Bidor, Perak,Perak,4.1127226,101.2764537,Mon-Fri 9:30-16:00
+
+165.Tanjung Malim,No 32 & 33, Jalan Bunga Raya Taman Bandar 35900 Tanjung Malim, Perak,Perak,3.6812307,101.5087577,Mon-Fri 9:30-16:00
+
+166.Relau,1 & 3, Jalan Relau, 11900 Relau, Pulau Pinang, Pulau Pinang,5.3308973,100.2691809,Mon-Fri 9:30-16:00
+
+167.Bandar Baru Air Itam,54, 56 & 58, Lintang Angsana, 11500 Bandar Baru Air Itam, Pulau Pinang, Pulau Pinang,5.3891622,100.2717893,Mon-Fri 9:30-16:00
+
+168.Jalan Air Itam,27A-G-1, 27B-G-1 & 27C-G-1, Jalan Air Itam, 11500 Air Itam, Pulau Pinang, Pulau Pinang,5.4041924,100.2766883,Mon-Fri 9:30-16:00
+
+169.Bandar Bayan Baru,5, 7, 9, 11 & 11A, Lorong Kampung Jawa, Bandar Bayan Baru, 11900 Bayan Lepas, Pulau Pinang, Pulau Pinang,5.3274622,100.2842032,Mon-Fri 9:30-16:00
+
+170.Sungai Nibong,33, 35 & 37, Jalan Pantai Jerjak 13, Sungai Nibong, 11900 Bayan Lepas, Pulau Pinang, Pulau Pinang,5.3404785,100.2937836,Mon-Fri 9:30-16:00
+
+171.Pulau Tikus,Ground & 1st Floor, 58, Jalan Cantonment, 10250 Pulau Tikus, Pulau Pinang, Pulau Pinang,5.4326277,100.302251,Mon-Fri 9:30-16:00
+
+172.Jalan Datuk Keramat,Ground & 1st Floor, 456 Jalan Datuk Keramat 10460 Pulau Pinang, Pulau Pinang,5.4134453,100.3047743,Mon-Fri 9:30-16:00
+
+173.Jelutong,407-A & 409-A, Jalan Jelutong, 11600 Jelutong, Pulau Pinang, Pulau Pinang,5.3940973,100.3059582,Mon-Fri 9:30-16:00
+
+174.Jalan Macalister,104, 104A & 104B, Jalan Macalister 10400 Pulau Pinang, Pulau Pinang,5.4154596,100.3158449,Mon-Fri 9:30-16:00
+
+175.Lebuh Macallum,Harbour Trade Centre, 2-1-20 & 2-1-30, 2, Gat Lebuh Macallum 10300 Pulau Pinang, Pulau Pinang,5.4054419,100.3255476,Mon-Fri 9:30-16:00
+
+176.Pulau Pinang,87, Bishop Street 10200 Pulau Pinang, Pulau Pinang,5.4054844,100.3255476,Mon-Fri 9:30-16:00
+
+177.Butterworth,85, 87 & 89, Jalan Selat, Taman Selat, 12000 Butterworth, Pulau Pinang, Pulau Pinang,5.399906,100.367744,Mon-Fri 9:30-16:00
+
+178.Bagan Ajam,6862 - 6864, Jalan Bagan Jermal, Bagan Ajam, 13000 Butterworth, Pulau Pinang, Pulau Pinang,5.4349593,100.3690503,Mon-Fri 9:30-16:00
+
+179.Jalan Raja Uda,Ground & 1st Floor, 7320 - 7322, Jalan Raja Uda, 12300 Butterworth, Pulau Pinang, Pulau Pinang,5.4305102,100.3743177,Mon-Fri 9:30-16:00
+
+180.Prai,2683, 2684 & 2685, Jalan Chain Ferry, Taman Inderawasih, 13600 Prai, Pulau Pinang, Pulau Pinang,5.3879011,100.3777158,Mon-Fri 9:30-16:00
+
+181.Bandar Seberang Jaya,11, Jalan Todak 2, Pusatbandar Bandar Seberang Jaya, 13700 Seberang Jaya, Pulau Pinang, Pulau Pinang,5.3985555,100.3990951,Mon-Fri 9:30-16:00
+
+182.Kepala Batas,21 & 23, Jalan Bertam, Kepala Batas, 13200 Seberang Perai Utara, Pulau Pinang, Pulau Pinang,5.5171792,100.4209583,Mon-Fri 9:30-16:00
+
+183.Bukit Mertajam,2644 - 2648, Jalan Che Bee Noor, 14000 Bukit Mertajam, Pulau Pinang, Pulau Pinang,5.3631033,100.4221538,Mon-Fri 9:30-16:00
+
+184.Taman Bukit Mas,3432 - 3435, Jalan Kulim, Taman Bukit Mas, 14000 Bukit Mertajam, Pulau Pinang, Pulau Pinang,5.3632714,100.4221537,Mon-Fri 9:30-16:00
+
+185.Simpang Ampat,19, 21 & 23, Jalan Keruing, Kawasan Perniagaan, Simpang Ampat, 14100 Seberang Perai Selatan, Pulau Pinang, Pulau Pinang,5.2779803,100.4671012,Mon-Fri 9:30-16:00
+
+186.Nibong Tebal,3619 - 3620, Jalan Che Ahmad, 14300 Nibong Tebal, Seberang Perai Selatan, Pulau Pinang, Pulau Pinang,5.1683536,100.4777763,Mon-Fri 9:30-16:00
+
+188.Papar,Lot 8023, 162 Jalan Besar Pekan Papar, 89600 Papar, Sabah, Sabah,5.7341967,115.9223074,Mon-Fri 9:30-16:00
+
+189.Putatan,9 & 10, Putatan Town Phase I, Jalan Putatan, Putatan, 88200 Kota Kinabalu, Sabah, Sabah,5.89395,116.0483322,Mon-Fri 9:30-16:00
+
+190.Kota Kinabalu,Lot G.1 & Lot 1.1, Menara MAA, 6, Lorong Api-Api 1, Api-Api Centre, 88000 Kota Kinabalu, Sabah, Sabah,5.89412,115.9685059,Mon-Fri 9:30-16:00
+
+191.City Parade,Lot No. 1-0-M45-M51, 1 Jalan Centre Point City Parade Centre Point Sabah, 88000 Kota Kinabalu, P. O. Box 13026, 88833 Kota Kinabalu, Sabah, Sabah,5.9790642,116.0720379,Mon-Fri 9:30-16:00
+
+192.Jalan Pantai,39, Jalan Pantai, 88000 Kota Kinabalu, Sabah, Sabah,5.9839604,116.0662851,Mon-Fri 9:30-16:00
+
+193.Lido,Lot 8, 9 & 10, Block P, Taman Chemei Shophouse, KM 5 Jalan Penampang-Lido, 88300 Kota Kinabalu, Sabah, Sabah,5.9446769,116.0713019,Mon-Fri 9:30-16:00
+
+194.Donggongon,Lot A-5 & A-6 Donggongon New Township Jalan Tapikong, 89500 Penampang, Sabah, Sabah,5.9131588,116.0930333,Mon-Fri 9:30-16:00
+
+195.Inanam,Lot No. 1, 2 & 3, Block C, K.K. Taipan Inanam New Township, Jalan Tuaran, 88450 Kota Kinabalu, Sabah, Sabah,5.9937261,116.127061,Mon-Fri 9:30-16:00
+
+197.Kota Belud,Lot B6 & B7, Kompleks Centenary, Jalan Sabar, Locked Bag 3, 89150 Kota Belud, Sabah, Sabah,6.3558681,116.4292371,Mon-Fri 9:30-16:00
+
+199.Jalan Apas,TB1280 & TB1281, Bintang Garden, Mile 3 Jalan Apas, 91000 Tawau, Sabah, Sabah,4.252001,117.9074345,Mon-Fri 9:30-16:00
+
+200.Prima Square,Lot 149 - 152, Block 15A, Phase II Prima Square, Mile 4 Jalan Utara, 90000 Sandakan, Sabah, Sabah,5.8558305,118.0635375,Mon-Fri 9:30-16:00
+
+203.Jalan Penrissen,384 - 388, Sentosa Central, Batu 7, Jalan Penrissen, 93250 Kuching, Sarawak,Sarawak,1.4756713,110.3205713,Mon-Fri 9:30-16:00
+
+204.Jalan Tun Zaidi,Lot 2775, 2776, 2778, 2779 & 2780, Block 10, 3rd Mile, Jalan Tun Ahmad Zaidi Adruce, 93250 Kuching, Sarawak,Sarawak,1.5297543,110.3332913,Mon-Fri 9:30-16:00
+
+205.Wisma Saberkas,Lot G.01, LG01A & LG.02A, Wisma Saberkas, Off Jalan Green, Jalan Tun Abang Haji Openg, 93000 Kuching, Sarawak,Sarawak,1.5371692,110.3401903,Mon-Fri 9:30-16:00
+
+206.Kuching City,No. 102 - 110, Jalan Song Thian Cheok, 93100 Kuching, Sarawak,Sarawak,1.53726,110.3015655,Mon-Fri 9:30-16:00
+
+207.Padungan,7-10, Jalan Chan Bee Kiew, Off Jalan Padungan, 93100 Kuching, Sarawak,Sarawak,1.5510219,110.367283,Mon-Fri 9:30-16:00
+
+208.Stutong,71, 72 & 73, Stutong Parade Jalan Setia Raja, 93350 Kuching, Sarawak,Sarawak,1.5201771,110.3686001,Mon-Fri 9:30-16:00
+
+209.Sri Aman,840 & 841, Jalan Sabu, Simanggang Town, Land District, 95000 Sri Aman, Sarawak,Sarawak,1.2353103,111.4534792,Mon-Fri 9:30-16:00
+
+210.Sarikei,79, 79A & 79B, Jalan Masjid Lama, 96100 Sarikei, Sarawak,Sarawak,2.1301886,111.5082806,Mon-Fri 9:30-16:00
+
+211.Bintangor,Lot No. 1585 & 1586, Jalan Kelupu, 96500 Bintangor, Sarawak,Sarawak,2.1690083,111.6258265,Mon-Fri 9:30-16:00
+
+212.Sibu,2, 4 , 6 & 8, Lorong 2, Jalan Tuanku Osman, 96000 Sibu, Sarawak,Sarawak,2.2972324,111.7959915,Mon-Fri 9:30-16:00
+
+213.Jalan Central,3, Jalan Central, 96000 Sibu, Sarawak,Sarawak,2.2972324,111.7959915,Mon-Fri 9:30-16:00
+
+214.Li Hua,No.2 & 4, Lorong Pahlawan 7B1, Jaya Li Hua Commercial Centre, 96000 Sibu, Sarawak,Sarawak,2.3048189,111.8484975,Mon-Fri 9:30-16:00
+
+215.Mukah,41 & 42, Block 68, Mukah New Township, 96400 Mukah, Sarawak,Sarawak,2.8932784,112.0789622,Mon-Fri 9:30-16:00
+
+216.Kapit,63 - 64, Jalan Wharf, 96800 Kapit, Sarawak,Sarawak,2.016603,112.9310719,Mon-Fri 9:30-16:00
+
+217.Bintulu,Block F-G-02, F-1-02 & F-2-02, Bintulu Paragon, No 2, Old Airport Place, 97000 Bintulu, Sarawak,Sarawak,3.1838753,113.043571,Mon-Fri 9:30-16:00
+
+218.Medan Sentral,1, 2 & 3, Medan Sentral, Commercial Centre, 97000 Bintulu, Sarawak,Sarawak,3.1986382,113.0580758,Mon-Fri 9:30-16:00
+
+220.Miri,D6, D7 & D8, Miri Times Square, Marina ParkCity, 98000 Miri, Sarawak,,Sarawak,4.400081,113.9726559,Mon-Fri 9:30-16:00
+
+221.Pelita,Lot 1254, Pelita Commercial Centre, Jalan Cosmos, 98000 Miri, Sarawak,Sarawak,4.4073213,113.9909783,Mon-Fri 9:30-16:00
+
+223.Limbang,Lot 1116-1118, Jalan Buangsiol, 98700 Limbang, Sarawak,Sarawak,4.756993,114.9972514,Mon-Fri 9:30-16:00
+
+224.Sabak Bernam,2180 & 2181, Jalan Menteri, 45200 Sabak Bernam, Selangor, Selangor, 3.7660076,100.9828527,Mon-Fri 9:30-16:00
+
+225.Sekinchan,35 & 36, Jalan Bernam, 45400 Sekinchan, Selangor, Selangor, 3.5054646,101.0928957,Mon-Fri 9:30-16:00
+
+226.Kuala Selangor,1, 3 & 5, Jalan Raja Lumu, 45000 Kuala Selangor, Selangor, Selangor, 3.3416769,101.2393255,Mon-Fri 9:30-16:00
+
+227.Kapar,252, 252A & 256, Jalan Besar, 42200 Kapar, Selangor, Selangor, 3.1389078,101.3600096,Mon-Fri 9:30-16:00
+
+228.Port Klang,116 & 118, Persiaran Raja Muda Musa KS4, 42000 Port Klang, Selangor, Selangor, 3.1390973,101.287908,Mon-Fri 9:30-16:00
+
+229.Pandamaran,306 & 307, Jalan Besar, Pandamaran, 42000 Port Klang, Selangor, Selangor, 3.0081472,101.4151385,Mon-Fri 9:30-16:00
+
+230.Taman Chi Liung,20, 22, 24, 26 & 28, Lintang Menalu, Taman Chi Liung, 41200 Klang, Selangor, Selangor, 3.0230463,101.4231979,Mon-Fri 9:30-16:00
+
+231.Bandar Bukit Tinggi,69 & 71, Jalan Batu Nilam 1, Bandar Bukit Tinggi, 41200 Klang, Selangor, Selangor, 3.010735,101.4259785,Mon-Fri 9:30-16:00
+
+232.Bandar Setia Alam,35-1-1 & 35-1-2 Jalan Setia Prima A U13/A Setia Alam Seksyen U13, 40170 Shah Alam, Selangor, Selangor, 3.0964586,101.4342023,Mon-Fri 9:30-16:00
+
+233.Jalan Tapah,62, 64 & 66, Jalan Tapah Off Jalan Goh Hock Huat, 41400 Klang, Selangor, Selangor, 3.051959,101.4453583,Mon-Fri 9:30-16:00
+
+234.Klang,28 - 34, Persiaran Sultan Ibrahim, 41300 Klang, Selangor, Selangor, 3.0520493,101.4067335,Mon-Fri 9:30-16:00
+
+235.Taman Sentosa Klang,2 & 4, Jalan Dato` Yusof Shahbuddin 30, Taman Sentosa, 41200 Klang, Selangor, Selangor, 3.0104743,101.4659037,Mon-Fri 9:30-16:00
+
+236.Sungai Jarom,S10 - S12, Jalan Rajawali, 42600 Sungai Jarom, Selangor, Selangor, 2.8721, 101.7284, Mon-Fri 9:30-16:00 
+
+237.Banting,5, 7 & 9, Jalan Sultan Abdul Samad, 42700 Banting, Selangor, Selangor, 2.8122998,101.4882814,Mon-Fri 9:30-16:00
+
+238.Shah Alam,2, 4 & 6, Jalan Pahat G15/G, Komplex Otomobil, Persiaran Selangor, Section 15, 40200 Shah Alam, Selangor, Selangor, 2.8126525,101.3337709,Mon-Fri 9:30-16:00
+
+239.Kampung Baru Subang,No. 1, Block A, Pusat Bandar Subang Utama, Jalan J U6/J, Pekan Subang, Seksyen U6, 40150 Shah Alam, Selangor, Selangor, 3.1447781,101.5373683,Mon-Fri 9:30-16:00
+
+240.Kota Kemuning,49, 51 & 53, Jalan Anggerik Vanilla N 31/N, Kota Kemuning, Seksyen 31, 40460 Shah Alam, Selangor, Selangor, 3.0035652,101.5282593,Mon-Fri 9:30-16:00
+
+241.Taman Seri Muda,2, Jalan Sepadu B 25/B, Taman Perindustrian Axis, Section 25, 40400 Shah Alam, Selangor, Selangor, 3.0248196,101.5317943,Mon-Fri 9:30-16:00
+
+242.Bukit Beruntung,23 & 25, Jalan Melati 2B, Seksyen BB11, Bandar Bukit Beruntung, 48300 Rawang, Selangor, Selangor, 3.4067657,101.5459387,Mon-Fri 9:30-16:00
+
+243.Sungai Buloh,Lot 402, 403 & 404, Jalan 1A/1, Bandar Baru Sungai Buloh, 47000 Sungai Buloh, Selangor, Selangor, 3.2101039,101.5557503,Mon-Fri 9:30-16:00
+
+244.Rawang,45, Jalan 1B, Batu 17, Taman Jati, 48000 Rawang, Selangor, Selangor, 3.3079761,101.57439,Mon-Fri 9:30-16:00
+
+245.UEP Subang Jaya,3, 5 & 7, Jalan USJ 10/1F, UEP Subang Jaya 47620 Selangor, Selangor, 3.3083266,101.4198795,Mon-Fri 9:30-16:00
+
+246.Subang Jaya,B1 - B4, Jalan SS 15/4D, Subang Jaya, 47500 Petaling Jaya, Selangor, Selangor, 3.3083266,101.4198795,Mon-Fri 9:30-16:00
+
+247.Kota Damansara,A-1, A-2 & A-3, Sunway Giza Mall, Jalan PJU 5/14, Dataran Sunway, Kota Damansara, 47810 Petaling Jaya, Selangor, Selangor, Mon-Fri 9:30-16:003.1513676,101.5913086,
+
+248.Taman Mayang,21 & 23, Jalan SS 25/23, Taman Plaza, 47301 Petaling Jaya, Selangor, Selangor, 3.1142619,101.588568,Mon-Fri 9:30-16:00
+
+249.Kelana Jaya,F-07, F-08 & F-09, Jalan SS 6/5B, Dataran Glomac, Pusat Bandar Kelana Jaya, 47301 Petaling Jaya, Selangor, Selangor, 3.1143046,101.588568,Mon-Fri 9:30-16:00
+
+250.Bandar Sunway,48 & 50, Jalan PJS 11/28A, Bandar Sunway, 47500 Petaling Jaya, Selangor, Selangor, 3.0733092,101.6092211,Mon-Fri 9:30-16:00
+
+251.Bandar Puteri Puchong,1, 3 & 5, Jalan Puteri 2/3, Bandar Puteri, 47100 Puchong, Selangor, Selangor, 3.0223394,101.6050153,Mon-Fri 9:30-16:00
+
+252.Damansara Jaya,1, 3 & 5, Jalan SS 22/23, Damansara Jaya, 47400 Petaling Jaya, Selangor, Selangor, 3.0225291,101.5329137,Mon-Fri 9:30-16:00
+
+253.Seri Setia,B01 & G01, Plaza Seri Setia, 1 Jalan SS9A/2, 47300 Petaling Jaya, Selangor, Selangor, 3.0851584,101.6204804,Mon-Fri 9:30-16:00
+
+254.Bandar Puchong Jaya,9 & 10, Jalan Kenari 1, Bandar Puchong Jaya, 47100 Puchong, Selangor, Selangor,3.0448652,101.6098875,Mon-Fri 9:30-16:00
+
+255.SS2,No. 56, 58 & 60, Jalan SS 2/67, 47300 Petaling Jaya, Selangor, Selangor, 3.12016,101.6113827,Mon-Fri 9:30-16:00
+
+256.Damansara Utama,49, 51 & 53, Jalan SS 21/60, Damansara Utama, 47400 Petaling Jaya, Selangor, Selangor, 3.1328853,101.6119143,Mon-Fri 9:30-16:00
+
+257.Sea Park,8 & 10, Jalan 21/12, Sea Park, 46300 Petaling Jaya, Selangor, Selangor, 3.108754,101.6130513,Mon-Fri 9:30-16:00
+
+259.Section 14,12, 14 & 16, Jalan 14/14, 46100 Petaling Jaya, Selangor, Selangor, 3.109932,101.6263867,Mon-Fri 9:30-16:00
+
+260.Petaling Jaya New Town,1, 3 & 5, Jalan 52/2, 46200 Petaling Jaya, Selangor, Selangor, 3.0933352,101.6403067,Mon-Fri 9:30-16:00
+
+261.Petaling Jaya Old Town,N19 & O19, Jalan Pasar, Off Jalan Othman, 46000 Petaling Jaya, Selangor, Selangor, 3.0867877,101.6361526,Mon-Fri 9:30-16:00
+
+262. Bandar Kinrara,26 & 28, Block B, Jalan BK5A/2C, Bandar Kinrara, 47180 Puchong, Selangor, Selangor,3.0468546,101.6361368,Mon-Fri 9:30-16:00
+
+263.Taman Equine,3, Jalan Equine 1B, Taman Equine, 43300 Seri Kembangan, Selangor, Selangor, 2.996634,101.6783668,Mon-Fri 9:30-16:00
+
+264.Seri Gombak,19, 21 & 23, Jalan SG 1/6, Taman Seri Gombak, 68100 Batu Caves, Selangor, Selangor, 3.2377134,101.6882862,Mon-Fri 9:30-16:00
+
+265.Seri Kembangan,1, Jalan Perusahaan 2, 43300 Seri Kembangan, Selangor, Selangor, 3.0172727,101.6932116,Mon-Fri 9:30-16:00
+
+266.Sungai Pelek,24-C, Jalan Besar, 43950 Sungai Pelek, Selangor, Selangor, 2.6414081,101.7053953,Mon-Fri 9:30-16:00
+
+267.Taman Taming Jaya,2-1-G, 2-1-1 & 2-1-2, Wisma Pauson, Jalan Taming Kanan Satu, Taman Taming Jaya, 43300 Balakong, Selangor, Selangor, 3.0252571,101.7307298,Mon-Fri 9:30-16:00
+
+268. Taman Muda,1 & 3, Jalan Bunga Tanjung 6A, Taman Muda, 68000 Ampang, Selangor, Selangor, 3.121097,101.7519044,Mon-Fri 9:30-16:00
+
+269.Ampang,No. 22 & 24, Jalan Wawasan 2/12, Bandar Baru Ampang, 68000 Ampang, Selangor, Selangor, 3.1212033,101.7210045,Mon-Fri 9:30-16:00
+
+270.Taman Indah,No 15 & 17, Jalan Kasturi 1, Plaza Kasturi, Off Jalan Balakong, Batu 11, 43200 Cheras, Selangor, Selangor, 3.0388099,101.7588003,Mon-Fri 9:30-16:00
+
+271.Sungai Chua,1 & 3, Jalan M/J 2, Taman Majlis Jaya, Jalan Sungai Chua, 43000 Kajang, Selangor, Selangor, 2.9902354,101.7668204,Mon-Fri 9:30-16:00
+
+272.Bandar Mahkota Cheras,2, Jalan Temenggung 7/9, Bandar Mahkota Cheras, 43200 Cheras, Selangor, Selangor, 3.052667,101.7765209,Mon-Fri 9:30-16:00
+
+273.Kajang,14, 15 & 16, Jalan Raja Haroun, 43000 Kajang, Selangor, Selangor, 3.0527733,101.7456209,Mon-Fri 9:30-16:00
+
+274. Bandar Sungai Long,1 & 3, Jalan SL 1/11 Bandar Sungai Long, 43000 Kajang, Selangor, Selangor, 3.0413578,101.7816377,Mon-Fri 9:30-16:00
+
+275. Semenyih,22B & 23, Jalan Besar, 43500 Semenyih, Selangor, Selangor,2.9460782,101.8457652,Mon-Fri 9:30-16:00

@@ -9,7 +9,7 @@ Backend reference implementation for your specification: **unified queue**, **on
 | `QMS.Domain` | Entities and enums (users, branches, services, bookings, queue entries, session logs). |
 | `QMS.Application` | Pure logic: capacity engine, wait-time estimator, hybrid dispatch selector. |
 | `QMS.Infrastructure` | EF Core `QmsDbContext`, in-memory dispatch round state (swap for Redis in production). |
-| `QMS.Api` | REST API, SignalR `QueueHub`, `QmsQueueService`, **background late / no-show policy**, seed data. |
+| `QMS.Api` | REST API, SignalR `QueueHub`, `QmsQueueService`, **background late / no-show policy**. |
 | `apps/customer` | **Expo (React Native)** — booking, walk-in, **SignalR live refresh**, optional **GPS check-in**, queue tracking. |
 | `apps/staff-web` | **Vite + React + TypeScript** — teller deck & manager console, **SignalR** live KPIs and queues. |
 
@@ -53,22 +53,20 @@ Default dev server: `http://localhost:5173`.
 - **SignalR:** if the live log shows `Failed to complete negotiation` / `Failed to fetch`, the browser could not reach the API (server stopped, wrong host, or `VITE_API_URL` in `.env.local` not matching the API, e.g. `http://127.0.0.1:5154`). KPIs still refresh on the **8s poll**; fix the URL and reload.
 - **Call next → Complete:** the API requires **Start service** before **End service**. The teller UI now **auto-starts** after a successful Call next; use **Start service** in the sidebar only if auto-start fails.
 
-- **Teller / counter:** `staff@qms.demo` / `Demo123!` — **counter workspace**: KPIs, hybrid queue list, call next, start/complete service. Counter **open / break / closed** is manager-only.
-- **Branch manager:** `manager@qms.demo` / `Demo123!` — **`/manager`**: live KPI strip + counter modes. **Counter workspace** link opens the teller view.
+- **Teller / counter:** use a **Staff** row you created in SQL (or future admin tools) — same JWT flow as before once that user exists.
+- **Branch manager:** same for a **Manager** role user on a branch.
 
 - If `ConnectionStrings:Default` is **empty**, the API uses an **EF InMemory** database (good for demos).
 - Set `ConnectionStrings:Default` to a **SQL Server** connection string to persist data; run `dotnet ef database update` if you add migrations (currently `EnsureCreated()` is used for quick start).
 
-## Demo accounts (seeded on first run)
+## Data (branches, staff, customers)
 
-| Email | Password | Role |
-|-------|----------|------|
-| `customer@qms.demo` | `Demo123!` | Customer |
-| `cust01@qms.demo` … `cust15@qms.demo` | `Demo123!` | Extra customers (seeded for load / multi-device tests) |
-| `staff@qms.demo` | `Demo123!` | Staff (assigned to counter 1) |
-| `manager@qms.demo` | `Demo123!` | Manager |
+The API **does not** insert demo branches or demo users on startup. After `EnsureCreated`, tables are **empty** until you load data:
 
-Seeding runs only when the database has **no branches** (first API start). With **InMemory**, restart clears data; with SQL Server, drop/recreate or delete rows to re-seed. The seed also inserts a few **today** bookings in the wait queue (mixed lanes + one walk-in) so dashboards are non-empty.
+- **Branches / services / counters / staff:** use SQL scripts under `database/` (e.g. `schema.sql`, `insert-branches-*.sql`, `insert-service-types-all-branches.sql`) in SSMS or your pipeline, or add your own **admin/import** flow later.
+- **Customers:** `POST /api/auth/register`, or insert into `CUSTOMERS` with a valid password hash if you script it.
+
+There are **no** pre-seeded accounts like `customer@qms.demo` unless you insert them yourself.
 
 ## Key HTTP endpoints
 
@@ -124,7 +122,7 @@ A hosted service runs every **30s**: **confirmed** bookings that are **not check
 
 1. Start **API**, then **staff-web** and **customer** apps (see above).
 2. **Customer:** book a slot or take a **walk-in** ticket; open **Track** — numbers should update **live** when staff call the next ticket (SignalR), with a slow poll as backup.
-3. **Customer:** **Check-in** on a booking (optional GPS near branch coordinates from seed data, or omit coords).
+3. **Customer:** **Check-in** on a booking (optional GPS near branch coordinates from **your** branch data, or omit coords).
 4. **Staff:** **Call next** → **Start service** → **Complete** — KPIs and customer ETA update live.
 5. **Manager** (`/manager`): adjust **online % / slot length / hours**, set each counter to **General** or a **dedicated lane**, assign **staff**, open/break/close counters — watch **live lane table**, **KPIs**, and **alerts** update in real time.
 

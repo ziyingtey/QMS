@@ -5,8 +5,8 @@ import { apiLogin, setStoredEmail, setStoredRole, setStoredToken } from "../api"
 
 export function LoginPage() {
   const navigate = useNavigate();
-  const [email, setEmail] = useState("staff@qms.demo");
-  const [password, setPassword] = useState("Demo123!");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -40,11 +40,11 @@ export function LoginPage() {
         </div>
         <h1 className="login-title">IH-QMS · Staff</h1>
         <p className="login-hint">
-          <strong>Branch manager</strong> — use <code>manager@qms.demo</code> / <code>Demo123!</code>. After sign-in you’ll land on{" "}
-          <strong>Branch operations</strong> (<code>/manager</code>) to open, break, or close counters.
+          Sign in with a <strong>Staff</strong> or <strong>Manager</strong> account that exists in your database (insert via SQL or your admin process).
+          Managers land on <strong>Branch operations</strong> (<code>/manager</code>) to open, break, or close counters.
         </p>
         <p className="login-hint muted-small">
-          Counter staff: <code>staff@qms.demo</code> / <code>Demo123!</code>
+          There are no built-in demo users; create <code>STAFF</code> rows (and branches/counters) before using this screen.
         </p>
         <form className="login-form" onSubmit={(e) => void onSubmit(e)}>
           <label>
