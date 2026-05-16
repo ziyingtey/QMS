@@ -97,7 +97,7 @@ SELECT
     b.[Latitude],
     b.[Longitude],
     70,
-    30,
+    60,
     80,
     480,
     0,

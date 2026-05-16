@@ -4,6 +4,20 @@ function bearerHeaders(token: string): { Authorization: string } {
   return { Authorization: `Bearer ${token.trim()}` };
 }
 
+/** Cold start: check whether a stored JWT is still accepted. Do not treat network/5xx as logout. */
+export async function probeCustomerSession(token: string): Promise<"ok" | "unauthorized" | "unavailable"> {
+  const trimmed = token.trim();
+  if (!trimmed) return "unauthorized";
+  try {
+    const res = await fetch(`${API_BASE}/api/customers/me`, { headers: bearerHeaders(trimmed) });
+    if (res.status === 401 || res.status === 403) return "unauthorized";
+    if (res.ok) return "ok";
+    return "unavailable";
+  } catch {
+    return "unavailable";
+  }
+}
+
 export type LoginResponse = {
   token: string;
   userId: string;

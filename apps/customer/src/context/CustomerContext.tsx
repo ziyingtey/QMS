@@ -10,6 +10,7 @@ import {
   apiMyBookings,
   apiRegister,
   apiToggleFavoriteBranch,
+  probeCustomerSession,
   userFacingApiError,
   type BookingSummary,
   type BranchDto,
@@ -20,6 +21,8 @@ import { navigationRef } from "../navigation/navigationRef";
 import { useBranchRealtime } from "../useBranchRealtime";
 
 type CustomerContextValue = {
+  /** False until SecureStore has been read (and optional session probe finished). */
+  authReady: boolean;
   token: string | null;
   userEmail: string | null;
   busy: boolean;
@@ -75,6 +78,7 @@ function navigateToQueueTrack(branchId: string, ticket: string, bookingId?: stri
 }
 
 export function CustomerProvider({ children }: { children: React.ReactNode }) {
+  const [authReady, setAuthReady] = useState(false);
   const [token, setToken] = useState<string | null>(null);
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -93,9 +97,32 @@ export function CustomerProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     void (async () => {
-      const [t, em] = await Promise.all([readToken(), readUserEmail()]);
-      setToken(t);
-      setUserEmail(em);
+      try {
+        const [tRaw, em] = await Promise.all([readToken(), readUserEmail()]);
+        const trimmed = tRaw?.trim() ?? "";
+        if (!trimmed) {
+          setToken(null);
+          setUserEmail(null);
+          return;
+        }
+
+        const probe = await probeCustomerSession(trimmed);
+        if (probe === "unauthorized") {
+          await clearToken();
+          await clearUserEmail();
+          setToken(null);
+          setUserEmail(null);
+          return;
+        }
+
+        setToken(trimmed);
+        setUserEmail(em?.trim() || null);
+      } catch {
+        setToken(null);
+        setUserEmail(null);
+      } finally {
+        setAuthReady(true);
+      }
     })();
   }, []);
 
@@ -293,6 +320,7 @@ export function CustomerProvider({ children }: { children: React.ReactNode }) {
   const value = useMemo(
     () =>
       ({
+        authReady,
         token,
         userEmail,
         busy,
@@ -323,6 +351,7 @@ export function CustomerProvider({ children }: { children: React.ReactNode }) {
         navigateToQueueTrack,
       }) satisfies CustomerContextValue,
     [
+      authReady,
       token,
       userEmail,
       busy,
