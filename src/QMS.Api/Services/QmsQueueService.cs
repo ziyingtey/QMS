@@ -2,6 +2,7 @@ using System.Globalization;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using QMS.Api.Hubs;
+using QMS.Api.Dtos;
 using QMS.Application.Capacity;
 using QMS.Application.Geo;
 using QMS.Application.Queue;
@@ -34,25 +35,20 @@ public sealed class QmsQueueService(
                       ?? throw new InvalidOperationException("Service not found");
 
         var slotMinutes = branch.SlotDurationMinutes < 1 ? 30 : branch.SlotDurationMinutes;
-        var startMin = branch.ServiceDayStartMinutes;
-        var endMin = branch.ServiceDayEndMinutes;
-        if (endMin <= startMin)
-        {
-            startMin = 9 * 60;
-            endMin = 17 * 60;
-        }
-
-        var activeCounters = await CountActiveLaneCountersAsync(branchId, serviceTypeId, cancellationToken);
 
         var zone = TimeSpan.FromMinutes(branch.ServiceZoneOffsetMinutes);
-        var dayStart = new DateTimeOffset(calendarDay.Year, calendarDay.Month, calendarDay.Day, 0, 0, 0, zone);
-        var windowStart = dayStart.AddMinutes(startMin);
-        var windowEnd = dayStart.AddMinutes(endMin);
         var nowAtBranch = DateTimeOffset.UtcNow.ToOffset(zone);
         var todayInBranch = DateOnly.FromDateTime(nowAtBranch.Date);
 
         if (calendarDay < todayInBranch)
             return Array.Empty<SlotDto>();
+
+        var window = await GetBranchLocalServiceWindowAsync(branch.Id, calendarDay, zone, cancellationToken);
+        if (window is null)
+            return Array.Empty<SlotDto>();
+        var (windowStart, windowEnd) = window.Value;
+
+        var activeCounters = await CountActiveLaneCountersAsync(branchId, serviceTypeId, cancellationToken);
 
         var slots = new List<SlotDto>();
         var hidePastSlotsForToday = calendarDay == todayInBranch;
@@ -170,6 +166,16 @@ public sealed class QmsQueueService(
         if (slotEnd <= nowAtBranch)
             throw new InvalidOperationException("This time slot is no longer available (it is in the past).");
 
+        var slotStartZ = slotStart.ToOffset(zone);
+        var slotEndZ = slotEnd.ToOffset(zone);
+        var bookingDay = DateOnly.FromDateTime(slotStartZ.DateTime);
+        var serviceWindow = await GetBranchLocalServiceWindowAsync(branch.Id, bookingDay, zone, cancellationToken);
+        if (serviceWindow is null)
+            throw new InvalidOperationException("The branch is not open for booking on this day.");
+        var (serviceWindowStart, serviceWindowEnd) = serviceWindow.Value;
+        if (slotStartZ < serviceWindowStart || slotEndZ > serviceWindowEnd)
+            throw new InvalidOperationException("This time slot is outside branch service hours.");
+
         var activeCounters = await CountActiveLaneCountersAsync(branchId, serviceTypeId, cancellationToken);
 
         var timeSlot = await db.TimeSlots.AsNoTracking().FirstOrDefaultAsync(
@@ -243,8 +249,11 @@ public sealed class QmsQueueService(
         var zone = TimeSpan.FromMinutes(branch.ServiceZoneOffsetMinutes);
         var nowAtBranch = DateTimeOffset.UtcNow.ToOffset(zone);
         var dayStart = new DateTimeOffset(nowAtBranch.Year, nowAtBranch.Month, nowAtBranch.Day, 0, 0, 0, zone);
-        var windowStart = dayStart.AddMinutes(branch.ServiceDayStartMinutes);
-        var windowEnd = dayStart.AddMinutes(branch.ServiceDayEndMinutes);
+        var todayLocal = DateOnly.FromDateTime(nowAtBranch.DateTime);
+        var todayWindow = await GetBranchLocalServiceWindowAsync(branch.Id, todayLocal, zone, cancellationToken);
+        if (todayWindow is null)
+            throw new InvalidOperationException("Branch is closed today.");
+        var (windowStart, windowEnd) = todayWindow.Value;
 
         if (nowAtBranch >= windowEnd)
             throw new InvalidOperationException("Branch service hours have ended for today.");
@@ -353,6 +362,16 @@ public sealed class QmsQueueService(
         var nowAtBranch = DateTimeOffset.UtcNow.ToOffset(zone);
         if (newSlotEnd <= nowAtBranch)
             throw new InvalidOperationException("This time slot is no longer available (it is in the past).");
+
+        var newSlotStartZ = newSlotStart.ToOffset(zone);
+        var newSlotEndZ = newSlotEnd.ToOffset(zone);
+        var newBookingDay = DateOnly.FromDateTime(newSlotStartZ.DateTime);
+        var newWindow = await GetBranchLocalServiceWindowAsync(booking.BranchId, newBookingDay, zone, cancellationToken);
+        if (newWindow is null)
+            throw new InvalidOperationException("The branch is not open for booking on the selected day.");
+        var (newWindowStart, newWindowEnd) = newWindow.Value;
+        if (newSlotStartZ < newWindowStart || newSlotEndZ > newWindowEnd)
+            throw new InvalidOperationException("This time slot is outside branch service hours.");
 
         var activeCounters = await CountActiveLaneCountersAsync(booking.BranchId, booking.ServiceTypeId, cancellationToken);
 
@@ -802,24 +821,33 @@ public sealed class QmsQueueService(
     {
         var b = await db.Branches.AsNoTracking().FirstOrDefaultAsync(x => x.Id == branchId, cancellationToken)
                 ?? throw new InvalidOperationException("Branch not found.");
+        var hours = await db.BranchOperatingHours.AsNoTracking()
+            .Where(h => h.BranchId == branchId)
+            .ToListAsync(cancellationToken);
+        var weekly = hours
+            .OrderBy(h => DayOfWeekSortKey(h.DayOfWeek))
+            .Select(h => new BranchOperatingHourRow(
+                h.DayOfWeek,
+                h.IsClosed,
+                h.IsClosed ? null : (int?)h.OpenTime!.Value.TotalMinutes,
+                h.IsClosed ? null : (int?)h.CloseTime!.Value.TotalMinutes))
+            .ToList();
         return new BranchOperationalSettingsDto(
             b.OnlineQuotaPercent,
             100 - b.OnlineQuotaPercent,
             b.SlotDurationMinutes,
-            b.ServiceDayStartMinutes,
-            b.ServiceDayEndMinutes,
             b.ServiceZoneOffsetMinutes,
             b.AdaptiveSlotCapacityEnabled,
             b.MinSlotTotalCapacity,
-            b.MaxCapacity);
+            b.MaxCapacity,
+            weekly);
     }
 
     public async Task UpdateBranchOperationalSettingsAsync(
         Guid branchId,
         int? onlineQuotaPercent,
         int? slotDurationMinutes,
-        int? serviceDayStartMinutes,
-        int? serviceDayEndMinutes,
+        IReadOnlyList<BranchOperatingHourRow>? weeklyOperatingHours,
         bool? adaptiveSlotCapacityEnabled,
         int? minSlotTotalCapacity,
         int? maxSlotTotalCapacity,
@@ -834,10 +862,6 @@ public sealed class QmsQueueService(
             b.OnlineQuotaPercent = Math.Clamp(o, 0, 100);
         if (slotDurationMinutes is int sd)
             b.SlotDurationMinutes = Math.Clamp(sd, 5, 180);
-        if (serviceDayStartMinutes is int ds)
-            b.ServiceDayStartMinutes = Math.Clamp(ds, 0, 24 * 60 - 1);
-        if (serviceDayEndMinutes is int de)
-            b.ServiceDayEndMinutes = Math.Clamp(de, 1, 24 * 60);
         if (adaptiveSlotCapacityEnabled is bool adapt)
             b.AdaptiveSlotCapacityEnabled = adapt;
 
@@ -851,11 +875,11 @@ public sealed class QmsQueueService(
         else if (maxSlotTotalCapacity is int mx)
             b.MaxCapacity = Math.Max(1, mx);
 
-        if (b.ServiceDayStartMinutes >= b.ServiceDayEndMinutes)
-            throw new InvalidOperationException("Service day start must be before end (minutes from midnight).");
-
         if (b.MinSlotTotalCapacity is { } floor && b.MaxCapacity is { } cap && floor > cap)
             throw new InvalidOperationException("Min slot total capacity cannot exceed max slot total capacity.");
+
+        if (weeklyOperatingHours is { Count: > 0 })
+            await ReplaceBranchWeeklyOperatingHoursAsync(branchId, weeklyOperatingHours, cancellationToken);
 
         await db.SaveChangesAsync(cancellationToken);
         await hubContext.Clients.Group(QueueHub.BranchGroup(branchId)).SendAsync("QueueUpdated", branchId, cancellationToken);
@@ -902,15 +926,28 @@ public sealed class QmsQueueService(
         var nowAtBranch = DateTimeOffset.UtcNow.ToOffset(zone);
         var slotMin = branchEntity.SlotDurationMinutes < 1 ? 30 : branchEntity.SlotDurationMinutes;
         var dayStartLocal = new DateTimeOffset(nowAtBranch.Year, nowAtBranch.Month, nowAtBranch.Day, 0, 0, 0, zone);
-        var windowStart = dayStartLocal.AddMinutes(branchEntity.ServiceDayStartMinutes);
-        var windowEnd = dayStartLocal.AddMinutes(branchEntity.ServiceDayEndMinutes);
-        var nextStart = AlignSlot(nowAtBranch, slotMin);
-        if (nextStart < windowStart)
-            nextStart = windowStart;
-        while (nextStart <= nowAtBranch && nextStart < windowEnd)
-            nextStart = nextStart.AddMinutes(slotMin);
-        var nextEnd = nextStart.AddMinutes(slotMin);
-        var validNextWindow = nextStart < windowEnd && nextEnd <= windowEnd;
+        var todayLocal = DateOnly.FromDateTime(nowAtBranch.DateTime);
+        DateTimeOffset nextStart;
+        DateTimeOffset nextEnd;
+        var validNextWindow = false;
+        var todaySvcWindow = await GetBranchLocalServiceWindowAsync(branchEntity.Id, todayLocal, zone, cancellationToken);
+        if (todaySvcWindow is { } tw)
+        {
+            var windowStart = tw.Start;
+            var windowEnd = tw.End;
+            nextStart = AlignSlot(nowAtBranch, slotMin);
+            if (nextStart < windowStart)
+                nextStart = windowStart;
+            while (nextStart <= nowAtBranch && nextStart < windowEnd)
+                nextStart = nextStart.AddMinutes(slotMin);
+            nextEnd = nextStart.AddMinutes(slotMin);
+            validNextWindow = nextStart < windowEnd && nextEnd <= windowEnd;
+        }
+        else
+        {
+            nextStart = default;
+            nextEnd = default;
+        }
 
         var waitingTotal = await db.QueueEntries.CountAsync(
             q => q.BranchId == branchId && q.State == QueueEntryState.Waiting,
@@ -1197,6 +1234,91 @@ public sealed class QmsQueueService(
             cancellationToken);
     }
 
+    /// <summary>
+    /// Local service window for <paramref name="calendarDay"/> from <c>BRANCH_OPERATING_HOURS</c> for that weekday (branch timezone used only for constructing instants).
+    /// </summary>
+    private async Task<(DateTimeOffset Start, DateTimeOffset End)?> GetBranchLocalServiceWindowAsync(
+        Guid branchId,
+        DateOnly calendarDay,
+        TimeSpan zone,
+        CancellationToken cancellationToken)
+    {
+        var dowName = calendarDay.DayOfWeek.ToString();
+        var row = await db.BranchOperatingHours.AsNoTracking()
+            .Where(h => h.BranchId == branchId && h.DayOfWeek == dowName)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (row is null || row.IsClosed || row.OpenTime is null || row.CloseTime is null)
+            return null;
+
+        var sm = (int)row.OpenTime.Value.TotalMinutes;
+        var em = (int)row.CloseTime.Value.TotalMinutes;
+        if (em <= sm)
+            return null;
+
+        var dayStart = new DateTimeOffset(calendarDay.Year, calendarDay.Month, calendarDay.Day, 0, 0, 0, zone);
+        return (dayStart.AddMinutes(sm), dayStart.AddMinutes(em));
+    }
+
+    private static int DayOfWeekSortKey(string dayOfWeek) =>
+        dayOfWeek switch
+        {
+            "Monday" => 0,
+            "Tuesday" => 1,
+            "Wednesday" => 2,
+            "Thursday" => 3,
+            "Friday" => 4,
+            "Saturday" => 5,
+            "Sunday" => 6,
+            _ => 99,
+        };
+
+    private async Task ReplaceBranchWeeklyOperatingHoursAsync(
+        Guid branchId,
+        IReadOnlyList<BranchOperatingHourRow> rows,
+        CancellationToken cancellationToken)
+    {
+        if (rows.Count != 7)
+            throw new InvalidOperationException("Weekly operating hours must include exactly 7 rows (Monday through Sunday).");
+
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var r in rows)
+        {
+            if (!seen.Add(r.DayOfWeek))
+                throw new InvalidOperationException($"Duplicate day: {r.DayOfWeek}.");
+            if (DayOfWeekSortKey(r.DayOfWeek) == 99)
+                throw new InvalidOperationException($"Invalid weekday name: {r.DayOfWeek} (use Monday..Sunday).");
+            if (r.IsClosed)
+                continue;
+            if (r.OpenMinutesFromMidnight is null || r.CloseMinutesFromMidnight is null)
+                throw new InvalidOperationException($"Open and close minutes are required when {r.DayOfWeek} is not closed.");
+            var openM = r.OpenMinutesFromMidnight.Value;
+            var closeMin = r.CloseMinutesFromMidnight.Value;
+            if (openM < 0 || closeMin > 24 * 60 || openM >= closeMin)
+                throw new InvalidOperationException(
+                    $"Invalid open/close for {r.DayOfWeek}: use minutes from midnight with 0 ≤ open < close ≤ 1440.");
+        }
+
+        if (seen.Count != 7 || !seen.SetEquals(
+                new[] { "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday" }))
+            throw new InvalidOperationException("Weekly operating hours must list Monday through Sunday exactly once each.");
+
+        var existing = await db.BranchOperatingHours.Where(h => h.BranchId == branchId).ToListAsync(cancellationToken);
+        db.BranchOperatingHours.RemoveRange(existing);
+
+        foreach (var r in rows.OrderBy(x => DayOfWeekSortKey(x.DayOfWeek)))
+        {
+            db.BranchOperatingHours.Add(new BranchOperatingHour
+            {
+                Id = Guid.NewGuid(),
+                BranchId = branchId,
+                DayOfWeek = r.DayOfWeek,
+                IsClosed = r.IsClosed,
+                OpenTime = r.IsClosed ? null : TimeSpan.FromMinutes(r.OpenMinutesFromMidnight!.Value),
+                CloseTime = r.IsClosed ? null : TimeSpan.FromMinutes(r.CloseMinutesFromMidnight!.Value),
+            });
+        }
+    }
+
     private EffectiveSlotCapacity ComputeEffectiveSlotCapacity(
         Branch branch,
         ServiceType service,
@@ -1289,12 +1411,11 @@ public sealed record BranchOperationalSettingsDto(
     int OnlineQuotaPercent,
     int WalkInQuotaPercent,
     int SlotDurationMinutes,
-    int ServiceDayStartMinutes,
-    int ServiceDayEndMinutes,
     int ServiceZoneOffsetMinutes,
     bool AdaptiveSlotCapacityEnabled,
     int? MinSlotTotalCapacity,
-    int? MaxSlotTotalCapacity);
+    int? MaxSlotTotalCapacity,
+    IReadOnlyList<BranchOperatingHourRow> WeeklyOperatingHours);
 
 public sealed record AssignableStaffDto(Guid Id, string Email, string Name, string Role);
 

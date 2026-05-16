@@ -4,6 +4,13 @@ export type LoginResponse = { token: string; userId: string; email: string; role
 
 export type ServiceDto = { id: string; code: string; name: string; defaultAvgServiceMinutes: number };
 
+export type BranchOperatingHourRow = {
+  dayOfWeek: string;
+  isClosed: boolean;
+  openMinutesFromMidnight: number | null;
+  closeMinutesFromMidnight: number | null;
+};
+
 export type BranchDto = {
   id: string;
   branchCode: number;
@@ -11,6 +18,7 @@ export type BranchDto = {
   address?: string;
   state?: string;
   services: ServiceDto[];
+  weeklyOperatingHours?: BranchOperatingHourRow[];
 };
 
 export type CallNextResponse = { ticketNumber: string | null; counterNumber: number | null; message: string | null };
@@ -56,12 +64,11 @@ export type BranchOperationalSettings = {
   onlineQuotaPercent: number;
   walkInQuotaPercent: number;
   slotDurationMinutes: number;
-  serviceDayStartMinutes: number;
-  serviceDayEndMinutes: number;
   serviceZoneOffsetMinutes: number;
   adaptiveSlotCapacityEnabled: boolean;
   minSlotTotalCapacity: number | null;
   maxSlotTotalCapacity: number | null;
+  weeklyOperatingHours: BranchOperatingHourRow[];
 };
 
 export type AssignableStaffDto = { id: string; email: string; name: string; role: string };
@@ -290,8 +297,7 @@ export async function apiManagerPatchOperationalSettings(
   body: {
     onlineQuotaPercent?: number;
     slotDurationMinutes?: number;
-    serviceDayStartMinutes?: number;
-    serviceDayEndMinutes?: number;
+    weeklyOperatingHours?: BranchOperatingHourRow[];
     adaptiveSlotCapacityEnabled?: boolean;
     minSlotTotalCapacity?: number;
     maxSlotTotalCapacity?: number;

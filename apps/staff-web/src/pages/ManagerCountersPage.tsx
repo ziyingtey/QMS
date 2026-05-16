@@ -18,6 +18,7 @@ import {
   getStoredToken,
   type AssignableStaffDto,
   type BranchDto,
+  type BranchOperatingHourRow,
   type BranchOperationalSettings,
   type LiveDashboard,
   type ManagerCounterRowDto,
@@ -29,6 +30,27 @@ function minsToClock(m: number): string {
   const h = Math.floor(m / 60);
   const mi = m % 60;
   return `${h}:${mi.toString().padStart(2, "0")}`;
+}
+
+function defaultWeeklyHours(): BranchOperatingHourRow[] {
+  const row = (day: string, weekend: boolean): BranchOperatingHourRow =>
+    weekend
+      ? { dayOfWeek: day, isClosed: true, openMinutesFromMidnight: null, closeMinutesFromMidnight: null }
+      : {
+          dayOfWeek: day,
+          isClosed: false,
+          openMinutesFromMidnight: 9 * 60,
+          closeMinutesFromMidnight: 17 * 60,
+        };
+  return [
+    row("Monday", false),
+    row("Tuesday", false),
+    row("Wednesday", false),
+    row("Thursday", false),
+    row("Friday", false),
+    row("Saturday", true),
+    row("Sunday", true),
+  ];
 }
 
 export function ManagerCountersPage() {
@@ -47,8 +69,7 @@ export function ManagerCountersPage() {
 
   const [formOnline, setFormOnline] = useState(70);
   const [formSlot, setFormSlot] = useState(30);
-  const [formDayStart, setFormDayStart] = useState(540);
-  const [formDayEnd, setFormDayEnd] = useState(1020);
+  const [formWeekly, setFormWeekly] = useState<BranchOperatingHourRow[]>(defaultWeeklyHours);
   const [formAdaptiveCap, setFormAdaptiveCap] = useState(true);
   const [formMinSlotTotal, setFormMinSlotTotal] = useState("");
   const [formMaxSlotTotal, setFormMaxSlotTotal] = useState("");
@@ -95,8 +116,17 @@ export function ManagerCountersPage() {
       setSettings(s);
       setFormOnline(s.onlineQuotaPercent);
       setFormSlot(s.slotDurationMinutes);
-      setFormDayStart(s.serviceDayStartMinutes);
-      setFormDayEnd(s.serviceDayEndMinutes);
+      const w = s.weeklyOperatingHours;
+      setFormWeekly(
+        w && w.length === 7
+          ? w.map((r) => ({
+              dayOfWeek: r.dayOfWeek,
+              isClosed: r.isClosed,
+              openMinutesFromMidnight: r.openMinutesFromMidnight,
+              closeMinutesFromMidnight: r.closeMinutesFromMidnight,
+            }))
+          : defaultWeeklyHours(),
+      );
       setFormAdaptiveCap(s.adaptiveSlotCapacityEnabled ?? true);
       setFormMinSlotTotal(s.minSlotTotalCapacity != null ? String(s.minSlotTotalCapacity) : "");
       setFormMaxSlotTotal(s.maxSlotTotalCapacity != null ? String(s.maxSlotTotalCapacity) : "");
@@ -260,8 +290,7 @@ export function ManagerCountersPage() {
       const s = await apiManagerPatchOperationalSettings(token, branchId, {
         onlineQuotaPercent: formOnline,
         slotDurationMinutes: formSlot,
-        serviceDayStartMinutes: formDayStart,
-        serviceDayEndMinutes: formDayEnd,
+        weeklyOperatingHours: formWeekly,
         adaptiveSlotCapacityEnabled: formAdaptiveCap,
         ...(minRaw === "" ? { clearMinSlotTotalCapacity: true } : { minSlotTotalCapacity: Number(minRaw) }),
         ...(maxRaw === "" ? { clearMaxSlotTotalCapacity: true } : { maxSlotTotalCapacity: Number(maxRaw) }),
@@ -399,10 +428,10 @@ export function ManagerCountersPage() {
         ) : null}
 
         <section className="manager-section">
-          <h2 className="manager-subtitle">Capacity control (online % · slot length · hours)</h2>
+          <h2 className="manager-subtitle">Capacity control (online % · slot length · weekly hours)</h2>
           <p className="muted small-print">
             Online % reserves booking capacity; the remainder is the walk-in buffer. Slot length drives how many customers fit per window per open counter.
-            Service window uses branch timezone offset (demo: UTC+8). Adaptive mode scales <strong>future</strong> windows from open counters; clear min/max to remove caps.
+            Bookable windows follow the weekly grid below (branch local calendar; demo zone UTC+8). Adaptive mode scales <strong>future</strong> windows from open counters; clear min/max to remove caps.
           </p>
           {settings ? (
             <p className="muted small-print">
@@ -425,16 +454,85 @@ export function ManagerCountersPage() {
               Slot duration (minutes)
               <input type="number" min={5} max={180} value={formSlot} onChange={(e) => setFormSlot(Number(e.target.value))} />
             </label>
-            <label>
-              Service day start (min from midnight)
-              <input type="number" min={0} max={1439} value={formDayStart} onChange={(e) => setFormDayStart(Number(e.target.value))} />
-              <span className="field-hint">{minsToClock(formDayStart)}</span>
-            </label>
-            <label>
-              Service day end (min from midnight)
-              <input type="number" min={1} max={1440} value={formDayEnd} onChange={(e) => setFormDayEnd(Number(e.target.value))} />
-              <span className="field-hint">{minsToClock(formDayEnd)}</span>
-            </label>
+            <div className="manager-weekly-hours" style={{ gridColumn: "1 / -1" }}>
+              <h3 className="manager-h3">Weekly schedule (minutes from midnight)</h3>
+              <div className="manager-table-wrap">
+                <table className="manager-table">
+                  <thead>
+                    <tr>
+                      <th>Day</th>
+                      <th>Closed</th>
+                      <th>Open (min)</th>
+                      <th>Close (min)</th>
+                      <th>Preview</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {formWeekly.map((r, idx) => (
+                      <tr key={r.dayOfWeek}>
+                        <td>{r.dayOfWeek}</td>
+                        <td>
+                          <input
+                            type="checkbox"
+                            checked={r.isClosed}
+                            onChange={(e) => {
+                              const closed = e.target.checked;
+                              setFormWeekly((prev) =>
+                                prev.map((x, i) =>
+                                  i === idx
+                                    ? {
+                                        ...x,
+                                        isClosed: closed,
+                                        openMinutesFromMidnight: closed ? null : x.openMinutesFromMidnight ?? 9 * 60,
+                                        closeMinutesFromMidnight: closed ? null : x.closeMinutesFromMidnight ?? 17 * 60,
+                                      }
+                                    : x,
+                                ),
+                              );
+                            }}
+                          />
+                        </td>
+                        <td>
+                          <input
+                            type="number"
+                            min={0}
+                            max={1439}
+                            disabled={r.isClosed}
+                            value={r.openMinutesFromMidnight ?? ""}
+                            onChange={(e) => {
+                              const v = e.target.value === "" ? null : Number(e.target.value);
+                              setFormWeekly((prev) =>
+                                prev.map((x, i) => (i === idx ? { ...x, openMinutesFromMidnight: v } : x)),
+                              );
+                            }}
+                          />
+                        </td>
+                        <td>
+                          <input
+                            type="number"
+                            min={1}
+                            max={1440}
+                            disabled={r.isClosed}
+                            value={r.closeMinutesFromMidnight ?? ""}
+                            onChange={(e) => {
+                              const v = e.target.value === "" ? null : Number(e.target.value);
+                              setFormWeekly((prev) =>
+                                prev.map((x, i) => (i === idx ? { ...x, closeMinutesFromMidnight: v } : x)),
+                              );
+                            }}
+                          />
+                        </td>
+                        <td className="muted small-print">
+                          {r.isClosed || r.openMinutesFromMidnight == null || r.closeMinutesFromMidnight == null
+                            ? "—"
+                            : `${minsToClock(r.openMinutesFromMidnight)}–${minsToClock(r.closeMinutesFromMidnight)}`}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
             <label className="manager-check-row">
               <input
                 type="checkbox"
@@ -465,7 +563,7 @@ export function ManagerCountersPage() {
             </label>
           </div>
           <button type="button" className="btn-primary-lg manager-save-cap" disabled={busy} onClick={() => void saveCapacity()}>
-            Save capacity, hours &amp; adaptive rules
+            Save capacity, weekly hours &amp; adaptive rules
           </button>
         </section>
 

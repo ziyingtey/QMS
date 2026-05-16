@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using QMS.Api.Dtos;
 using QMS.Api.Services;
 
 namespace QMS.Api.Controllers;
@@ -41,8 +42,7 @@ public sealed class ManagerOperationsController(QmsQueueService queue) : Control
                 branchId,
                 body.OnlineQuotaPercent,
                 body.SlotDurationMinutes,
-                body.ServiceDayStartMinutes,
-                body.ServiceDayEndMinutes,
+                body.WeeklyOperatingHours,
                 body.AdaptiveSlotCapacityEnabled,
                 body.MinSlotTotalCapacity,
                 body.MaxSlotTotalCapacity,
@@ -76,8 +76,7 @@ public sealed class ManagerOperationsController(QmsQueueService queue) : Control
 public sealed record ManagerBranchSettingsPatch(
     int? OnlineQuotaPercent,
     int? SlotDurationMinutes,
-    int? ServiceDayStartMinutes,
-    int? ServiceDayEndMinutes,
+    IReadOnlyList<BranchOperatingHourRow>? WeeklyOperatingHours,
     bool? AdaptiveSlotCapacityEnabled,
     int? MinSlotTotalCapacity,
     int? MaxSlotTotalCapacity,

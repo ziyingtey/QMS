@@ -1,7 +1,7 @@
 /*
   Auto-generated from branches_paste_raw.txt — 251 branches.
   Run against QMS. BranchCode = MAX(existing)+row (empty DB starts at 101001).
-  Service window defaults: 09:30–16:00 local → ServiceDayStartMinutes=570, ServiceDayEndMinutes=960.
+  Service window for new branches: Mon–Fri 09:30–16:00 local (see INSERT into BRANCH_OPERATING_HOURS at end of script).
   After insert, run insert-service-types-all-branches.sql if you need SERVICES rows.
 
   Manual fix: Sungai Jarom (236) had no coordinates in the source paste — approximate lat/lng were
@@ -289,8 +289,6 @@ INSERT INTO [dbo].[BRANCHES] (
     [OnlineQuotaPercent],
     [SlotDurationMinutes],
     [GeofenceMeters],
-    [ServiceDayStartMinutes],
-    [ServiceDayEndMinutes],
     [ServiceZoneOffsetMinutes],
     [OpeningStatus],
     [OperatingHours],
@@ -310,8 +308,6 @@ SELECT
     70 AS [OnlineQuotaPercent],
     30 AS [SlotDurationMinutes],
     80 AS [GeofenceMeters],
-    570 AS [ServiceDayStartMinutes],
-    960 AS [ServiceDayEndMinutes],
     480 AS [ServiceZoneOffsetMinutes],
     0 AS [OpeningStatus],
     b.[OperatingHours],
@@ -321,6 +317,28 @@ SELECT
     CAST(NULL AS INT) AS [MinSlotTotalCapacity]
 FROM @Branches AS b
 ORDER BY b.[RowOrd];
+
+INSERT INTO dbo.BRANCH_OPERATING_HOURS (Id, BranchId, DayOfWeek, OpenTime, CloseTime, IsClosed)
+SELECT
+    NEWID(),
+    br.Id,
+    d.DayOfWeek,
+    d.OpenTime,
+    d.CloseTime,
+    d.IsClosed
+FROM dbo.BRANCHES AS br
+CROSS JOIN (
+    VALUES
+        (N'Monday',    CAST('09:30' AS time), CAST('16:00' AS time), 0),
+        (N'Tuesday',   CAST('09:30' AS time), CAST('16:00' AS time), 0),
+        (N'Wednesday', CAST('09:30' AS time), CAST('16:00' AS time), 0),
+        (N'Thursday',  CAST('09:30' AS time), CAST('16:00' AS time), 0),
+        (N'Friday',    CAST('09:30' AS time), CAST('16:00' AS time), 0),
+        (N'Saturday',  NULL, NULL, 1),
+        (N'Sunday',    NULL, NULL, 1)
+) AS d(DayOfWeek, OpenTime, CloseTime, IsClosed)
+WHERE br.BranchCode > @Base
+  AND NOT EXISTS (SELECT 1 FROM dbo.BRANCH_OPERATING_HOURS AS h WHERE h.BranchId = br.Id);
 
 SELECT [BranchCode], [Name], [Id] FROM [dbo].[BRANCHES] WHERE [BranchCode] > @Base ORDER BY [BranchCode];
 GO

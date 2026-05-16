@@ -18,6 +18,13 @@ export type ServiceDto = {
   defaultAvgServiceMinutes: number;
 };
 
+export type BranchOperatingHourRow = {
+  dayOfWeek: string;
+  isClosed: boolean;
+  openMinutesFromMidnight: number | null;
+  closeMinutesFromMidnight: number | null;
+};
+
 export type BranchDto = {
   id: string;
   branchCode: number;
@@ -31,13 +38,13 @@ export type BranchDto = {
   onlineQuotaPercent: number;
   slotDurationMinutes: number;
   geofenceMeters: number;
-  serviceDayStartMinutes: number;
-  serviceDayEndMinutes: number;
   /** Minutes east of UTC for branch calendar / slot dates (e.g. 480 = UTC+8). */
   serviceZoneOffsetMinutes: number;
   operatingHours?: string | null;
   openingStatus?: string | null;
   imageUrl?: string | null;
+  /** Mon–Sun rows when API returns them (drives real bookable days vs weekend closed). */
+  weeklyOperatingHours?: BranchOperatingHourRow[];
   services: ServiceDto[];
 };
 
@@ -162,6 +169,21 @@ export async function apiBranches(): Promise<BranchDto[]> {
           defaultAvgServiceMinutes: Number(s.defaultAvgServiceMinutes ?? s.DefaultAvgServiceMinutes ?? 0),
         }))
       : [];
+    const weeklyRaw = o.weeklyOperatingHours ?? o.WeeklyOperatingHours;
+    const weeklyOperatingHours = Array.isArray(weeklyRaw)
+      ? (weeklyRaw as Record<string, unknown>[]).map((h) => ({
+          dayOfWeek: String(h.dayOfWeek ?? h.DayOfWeek ?? ""),
+          isClosed: Boolean(h.isClosed ?? h.IsClosed ?? false),
+          openMinutesFromMidnight:
+            h.openMinutesFromMidnight != null || h.OpenMinutesFromMidnight != null
+              ? Number(h.openMinutesFromMidnight ?? h.OpenMinutesFromMidnight)
+              : null,
+          closeMinutesFromMidnight:
+            h.closeMinutesFromMidnight != null || h.CloseMinutesFromMidnight != null
+              ? Number(h.closeMinutesFromMidnight ?? h.CloseMinutesFromMidnight)
+              : null,
+        }))
+      : undefined;
     return {
       id: String(o.id ?? o.Id ?? ""),
       branchCode: Number(o.branchCode ?? o.BranchCode ?? 0),
@@ -173,12 +195,11 @@ export async function apiBranches(): Promise<BranchDto[]> {
       onlineQuotaPercent: Number(o.onlineQuotaPercent ?? o.OnlineQuotaPercent ?? 0),
       slotDurationMinutes: Number(o.slotDurationMinutes ?? o.SlotDurationMinutes ?? 30),
       geofenceMeters: Number(o.geofenceMeters ?? o.GeofenceMeters ?? 0),
-      serviceDayStartMinutes: Number(o.serviceDayStartMinutes ?? o.ServiceDayStartMinutes ?? 540),
-      serviceDayEndMinutes: Number(o.serviceDayEndMinutes ?? o.ServiceDayEndMinutes ?? 1020),
       serviceZoneOffsetMinutes: Number(o.serviceZoneOffsetMinutes ?? o.ServiceZoneOffsetMinutes ?? 480),
       operatingHours: o.operatingHours != null ? String(o.operatingHours) : o.OperatingHours != null ? String(o.OperatingHours) : undefined,
       openingStatus: o.openingStatus != null ? String(o.openingStatus) : o.OpeningStatus != null ? String(o.OpeningStatus) : "Open",
       imageUrl: o.imageUrl != null ? String(o.imageUrl) : o.ImageUrl != null ? String(o.ImageUrl) : undefined,
+      weeklyOperatingHours,
       services,
     } satisfies BranchDto;
   });

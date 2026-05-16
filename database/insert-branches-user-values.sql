@@ -6,9 +6,10 @@
     - Id = NEWID()
     - BranchCode = MAX(existing BranchCode) + row number (empty DB → first new row 101001)
     - OnlineQuotaPercent=70, SlotDurationMinutes=30, GeofenceMeters=80
-    - ServiceDay 09:00–17:00 (540–1020), ServiceZoneOffsetMinutes=480 (UTC+8)
+    - ServiceZoneOffsetMinutes=480 (UTC+8)
     - OpeningStatus=0 (Open), AdaptiveSlotCapacityEnabled=1
     - ImageUrl, MaxCapacity, MinSlotTotalCapacity = NULL
+    - Weekly hours: Mon–Fri 09:00–17:00, Sat–Sun closed (see INSERT into BRANCH_OPERATING_HOURS below)
 
   After insert, add SERVICES/COUNTERS via API or separate scripts if you need booking flows.
 */
@@ -47,8 +48,6 @@ INSERT INTO [dbo].[BRANCHES] (
     [OnlineQuotaPercent],
     [SlotDurationMinutes],
     [GeofenceMeters],
-    [ServiceDayStartMinutes],
-    [ServiceDayEndMinutes],
     [ServiceZoneOffsetMinutes],
     [OpeningStatus],
     [OperatingHours],
@@ -68,8 +67,6 @@ SELECT
     70 AS [OnlineQuotaPercent],
     30 AS [SlotDurationMinutes],
     80 AS [GeofenceMeters],
-    540 AS [ServiceDayStartMinutes],
-    1020 AS [ServiceDayEndMinutes],
     480 AS [ServiceZoneOffsetMinutes],
     0 AS [OpeningStatus],
     b.[OperatingHours],
@@ -79,6 +76,28 @@ SELECT
     CAST(NULL AS INT) AS [MinSlotTotalCapacity]
 FROM @Branches AS b
 ORDER BY b.[RowOrd];
+
+INSERT INTO dbo.BRANCH_OPERATING_HOURS (Id, BranchId, DayOfWeek, OpenTime, CloseTime, IsClosed)
+SELECT
+    NEWID(),
+    br.Id,
+    d.DayOfWeek,
+    d.OpenTime,
+    d.CloseTime,
+    d.IsClosed
+FROM dbo.BRANCHES AS br
+CROSS JOIN (
+    VALUES
+        (N'Monday',    CAST('09:00' AS time), CAST('17:00' AS time), 0),
+        (N'Tuesday',   CAST('09:00' AS time), CAST('17:00' AS time), 0),
+        (N'Wednesday', CAST('09:00' AS time), CAST('17:00' AS time), 0),
+        (N'Thursday',  CAST('09:00' AS time), CAST('17:00' AS time), 0),
+        (N'Friday',    CAST('09:00' AS time), CAST('17:00' AS time), 0),
+        (N'Saturday',  NULL, NULL, 1),
+        (N'Sunday',    NULL, NULL, 1)
+) AS d(DayOfWeek, OpenTime, CloseTime, IsClosed)
+WHERE br.BranchCode > @Base
+  AND NOT EXISTS (SELECT 1 FROM dbo.BRANCH_OPERATING_HOURS AS h WHERE h.BranchId = br.Id);
 
 SELECT [BranchCode], [Name], [Id] FROM [dbo].[BRANCHES] WHERE [BranchCode] > @Base ORDER BY [BranchCode];
 GO

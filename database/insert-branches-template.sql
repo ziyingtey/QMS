@@ -2,7 +2,7 @@
   Manual INSERT into EF table [BRANCHES] (SQL Server).
   - [BranchCode] must be UNIQUE (see IX_BRANCHES_BranchCode in EF model).
   - [OpeningStatus]: 0 = Open, 1 = Closed (enum BranchOpeningStatus).
-  - Times: ServiceDayStartMinutes / ServiceDayEndMinutes = minutes from midnight (e.g. 540 = 09:00, 1020 = 17:00).
+  - Weekly bookable hours live in [BRANCH_OPERATING_HOURS] (7 rows per branch); example below Mon–Fri 9–17, weekend closed.
   - [ServiceZoneOffsetMinutes]: e.g. 480 = UTC+8 for Malaysia.
 
   After you add branches, you usually need SERVICES + COUNTERS for that branch
@@ -26,8 +26,6 @@ INSERT INTO [dbo].[BRANCHES] (
     [OnlineQuotaPercent],
     [SlotDurationMinutes],
     [GeofenceMeters],
-    [ServiceDayStartMinutes],
-    [ServiceDayEndMinutes],
     [ServiceZoneOffsetMinutes],
     [OpeningStatus],
     [OperatingHours],
@@ -47,8 +45,6 @@ VALUES (
     70,
     30,
     80,
-    540,
-    1020,
     480,
     0,
     N'Mon–Fri 9:00–17:00',
@@ -57,6 +53,16 @@ VALUES (
     1,
     NULL
 );
+
+INSERT INTO dbo.BRANCH_OPERATING_HOURS (Id, BranchId, DayOfWeek, OpenTime, CloseTime, IsClosed)
+VALUES
+(NEWID(), @Id, N'Monday',    CAST('09:00' AS time), CAST('17:00' AS time), 0),
+(NEWID(), @Id, N'Tuesday',   CAST('09:00' AS time), CAST('17:00' AS time), 0),
+(NEWID(), @Id, N'Wednesday', CAST('09:00' AS time), CAST('17:00' AS time), 0),
+(NEWID(), @Id, N'Thursday',  CAST('09:00' AS time), CAST('17:00' AS time), 0),
+(NEWID(), @Id, N'Friday',    CAST('09:00' AS time), CAST('17:00' AS time), 0),
+(NEWID(), @Id, N'Saturday',  NULL, NULL, 1),
+(NEWID(), @Id, N'Sunday',    NULL, NULL, 1);
 
 -- Optional: print new Id for follow-up inserts (SERVICES, etc.)
 SELECT @Id AS NewBranchId;

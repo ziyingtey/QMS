@@ -18,10 +18,6 @@ public class Branch
     public int OnlineQuotaPercent { get; set; } = 70;
     public int SlotDurationMinutes { get; set; } = 30;
     public int GeofenceMeters { get; set; } = 80;
-    /// <summary>Minutes from local midnight when same-day slots begin (default 09:00).</summary>
-    public int ServiceDayStartMinutes { get; set; } = 9 * 60;
-    /// <summary>Minutes from local midnight when same-day slots end (default 17:00).</summary>
-    public int ServiceDayEndMinutes { get; set; } = 17 * 60;
     /// <summary>Fixed offset from UTC for interpreting calendar dates (e.g. 480 = Singapore UTC+8).</summary>
     public int ServiceZoneOffsetMinutes { get; set; } = 8 * 60;
     /// <summary>Lecturer ERD branch status (open/closed).</summary>
@@ -37,6 +33,7 @@ public class Branch
     /// <summary>Optional floor for total customers per slot when adaptive capacity runs (null = no extra floor beyond engine output).</summary>
     public int? MinSlotTotalCapacity { get; set; }
     public ICollection<Staff> StaffMembers { get; set; } = new List<Staff>();
+    public ICollection<BranchOperatingHour> OperatingHoursSchedule { get; set; } = new List<BranchOperatingHour>();
     public ICollection<TimeSlot> TimeSlots { get; set; } = new List<TimeSlot>();
     public ICollection<Counter> Counters { get; set; } = new List<Counter>();
     public ICollection<ServiceType> Services { get; set; } = new List<ServiceType>();

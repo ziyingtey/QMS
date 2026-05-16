@@ -11,6 +11,7 @@ public sealed class QmsDbContext : DbContext
     public DbSet<Customer> Customers => Set<Customer>();
     public DbSet<CustomerFavoriteBranch> CustomerFavoriteBranches => Set<CustomerFavoriteBranch>();
     public DbSet<Branch> Branches => Set<Branch>();
+    public DbSet<BranchOperatingHour> BranchOperatingHours => Set<BranchOperatingHour>();
     public DbSet<ServiceType> ServiceTypes => Set<ServiceType>();
     public DbSet<Counter> Counters => Set<Counter>();
     public DbSet<CounterAllowedService> CounterAllowedServices => Set<CounterAllowedService>();
@@ -57,6 +58,17 @@ public sealed class QmsDbContext : DbContext
             e.Property(x => x.State).HasMaxLength(80);
             e.Property(x => x.OperatingHours).HasMaxLength(200);
             e.Property(x => x.ImageUrl).HasMaxLength(800);
+        });
+
+        modelBuilder.Entity<BranchOperatingHour>(e =>
+        {
+            e.ToTable("BRANCH_OPERATING_HOURS");
+            e.HasIndex(x => new { x.BranchId, x.DayOfWeek }).IsUnique();
+            e.Property(x => x.DayOfWeek).HasMaxLength(20);
+            e.HasOne(x => x.Branch)
+                .WithMany(b => b.OperatingHoursSchedule)
+                .HasForeignKey(x => x.BranchId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<ServiceType>(e =>
