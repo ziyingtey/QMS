@@ -8,7 +8,9 @@ using QMS.Infrastructure.Persistence;
 
 namespace QMS.Api.Background;
 
-/// <summary>Periodic late / no-show policy: degrades unchecked online bookings after slot start, removes no-shows after slot end.</summary>
+/// <summary>
+/// Periodic queue attendance: late online degradation, no-shows after slot end, and <b>called-but-never-arrived</b> after branch grace.
+/// </summary>
 public sealed class BookingLifecycleHostedService(
     IServiceScopeFactory scopeFactory,
     ILogger<BookingLifecycleHostedService> logger) : BackgroundService
@@ -69,6 +71,27 @@ public sealed class BookingLifecycleHostedService(
                 q.EntryType = QueueEntryType.LateDegraded;
                 branchIds.Add(b.BranchId);
             }
+        }
+
+        var calledEntries = await db.QueueEntries
+            .Include(q => q.Booking)
+            .Include(q => q.Branch)
+            .Where(q => q.State == QueueEntryState.Called && q.CalledAt != null)
+            .ToListAsync(ct);
+
+        foreach (var q in calledEntries)
+        {
+            var graceMin = Math.Max(1, q.Branch.CalledAbsentGraceMinutes);
+            if (now < q.CalledAt!.Value.AddMinutes(graceMin))
+                continue;
+
+            q.State = QueueEntryState.Absent;
+            q.CounterId = null;
+            if (q.Booking is { } bk
+                && bk.Status is BookingStatus.Confirmed or BookingStatus.CheckedIn)
+                bk.Status = BookingStatus.NoShow;
+
+            branchIds.Add(q.BranchId);
         }
 
         if (branchIds.Count == 0)

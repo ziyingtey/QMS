@@ -46,6 +46,8 @@ public sealed class ManagerOperationsController(QmsQueueService queue) : Control
                 body.AdaptiveSlotCapacityEnabled,
                 body.MinSlotTotalCapacity,
                 body.MaxSlotTotalCapacity,
+                body.OnlineEarlyCallMinutes,
+                body.CalledAbsentGraceMinutes,
                 body.ClearMinSlotTotalCapacity == true,
                 body.ClearMaxSlotTotalCapacity == true,
                 cancellationToken);
@@ -80,5 +82,7 @@ public sealed record ManagerBranchSettingsPatch(
     bool? AdaptiveSlotCapacityEnabled,
     int? MinSlotTotalCapacity,
     int? MaxSlotTotalCapacity,
+    int? OnlineEarlyCallMinutes,
+    int? CalledAbsentGraceMinutes,
     bool? ClearMinSlotTotalCapacity,
     bool? ClearMaxSlotTotalCapacity);

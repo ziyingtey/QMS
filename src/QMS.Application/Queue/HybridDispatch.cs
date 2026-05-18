@@ -5,6 +5,7 @@ namespace QMS.Application.Queue;
 
 /// <summary>
 /// <b>At the counter (who gets called next):</b> weighted <b>2 online : 1 walk-in</b> round (persist <paramref name="onlineTakenInRound"/> 0..2 per branch+lane).
+/// Callers should pass only one <b>slot wave</b> (same effective service window) when using slot-aware dispatch.
 /// Among <b>online</b> tickets: checked-in first, then earlier <c>SlotStart</c>, then enqueue order.
 /// Among <b>walk-ins</b>: earlier enqueue (aligned to walk-in capacity bucket / appointment-style sequence).
 /// If walk-ins are a large share of the waiting line (<paramref name="walkInBacklogRatio"/> ≥ <paramref name="walkInBoostThreshold"/>), the next pick is forced to a walk-in to reduce walk-in starvation.

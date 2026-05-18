@@ -73,6 +73,8 @@ export function ManagerCountersPage() {
   const [formAdaptiveCap, setFormAdaptiveCap] = useState(true);
   const [formMinSlotTotal, setFormMinSlotTotal] = useState("");
   const [formMaxSlotTotal, setFormMaxSlotTotal] = useState("");
+  const [formEarlyCallMinutes, setFormEarlyCallMinutes] = useState(10);
+  const [formCalledGraceMinutes, setFormCalledGraceMinutes] = useState(5);
 
   const branch = branches.find((b) => b.id === branchId);
 
@@ -130,6 +132,8 @@ export function ManagerCountersPage() {
       setFormAdaptiveCap(s.adaptiveSlotCapacityEnabled ?? true);
       setFormMinSlotTotal(s.minSlotTotalCapacity != null ? String(s.minSlotTotalCapacity) : "");
       setFormMaxSlotTotal(s.maxSlotTotalCapacity != null ? String(s.maxSlotTotalCapacity) : "");
+      setFormEarlyCallMinutes(s.onlineEarlyCallMinutes ?? 10);
+      setFormCalledGraceMinutes(s.calledAbsentGraceMinutes ?? 5);
     } catch {
       setSettings(null);
     }
@@ -292,6 +296,8 @@ export function ManagerCountersPage() {
         slotDurationMinutes: formSlot,
         weeklyOperatingHours: formWeekly,
         adaptiveSlotCapacityEnabled: formAdaptiveCap,
+        onlineEarlyCallMinutes: formEarlyCallMinutes,
+        calledAbsentGraceMinutes: formCalledGraceMinutes,
         ...(minRaw === "" ? { clearMinSlotTotalCapacity: true } : { minSlotTotalCapacity: Number(minRaw) }),
         ...(maxRaw === "" ? { clearMaxSlotTotalCapacity: true } : { maxSlotTotalCapacity: Number(maxRaw) }),
       });
@@ -453,6 +459,26 @@ export function ManagerCountersPage() {
             <label>
               Slot duration (minutes)
               <input type="number" min={5} max={180} value={formSlot} onChange={(e) => setFormSlot(Number(e.target.value))} />
+            </label>
+            <label title="Unchecked online may enter the call pool this many minutes before their booking slot starts.">
+              Online early call (minutes before slot)
+              <input
+                type="number"
+                min={0}
+                max={120}
+                value={formEarlyCallMinutes}
+                onChange={(e) => setFormEarlyCallMinutes(Number(e.target.value))}
+              />
+            </label>
+            <label title="After Call next, if Start service is not used within this time, the ticket is released as no-show.">
+              Called → absent if no start (minutes)
+              <input
+                type="number"
+                min={1}
+                max={60}
+                value={formCalledGraceMinutes}
+                onChange={(e) => setFormCalledGraceMinutes(Number(e.target.value))}
+              />
             </label>
             <div className="manager-weekly-hours" style={{ gridColumn: "1 / -1" }}>
               <h3 className="manager-h3">Weekly schedule (minutes from midnight)</h3>

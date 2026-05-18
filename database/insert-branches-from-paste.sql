@@ -1,5 +1,10 @@
 /*
   Auto-generated from branches_paste_raw.txt — 251 branches.
+  Prerequisites: create the QMS database if needed, then run database/schema.sql so dbo.BRANCHES
+  and dbo.BRANCH_OPERATING_HOURS exist. If SSMS shows "Invalid object name dbo.BRANCHES" / red
+  squiggles, you are on the wrong database or schema was not applied — fix that first, then
+  Query Editor → IntelliSense → Refresh Local Cache (Ctrl+Shift+R).
+
   Run against QMS. BranchCode = MAX(existing)+row (empty DB starts at 101001).
   Service window for new branches: Mon–Fri 09:30–16:00 local (see INSERT into BRANCH_OPERATING_HOURS at end of script).
   After insert, run insert-service-types-all-branches.sql if you need SERVICES rows.
@@ -10,6 +15,9 @@
 
 USE QMS;
 GO
+
+/* Must stay in this batch with the statements below: table variable @Branches does not survive GO. */
+USE QMS;
 
 DECLARE @Branches TABLE (
     RowOrd        INT IDENTITY(1, 1) PRIMARY KEY,

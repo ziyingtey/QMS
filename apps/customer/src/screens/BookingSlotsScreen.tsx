@@ -72,6 +72,15 @@ export function BookingSlotsScreen({ navigation, route }: Props) {
     setSelectedSlot(null);
   }, [selectedYmd, service.id, branch.id]);
 
+  useEffect(() => {
+    setSelectedSlot((prev) => {
+      if (!prev) return prev;
+      const row = slots.find((s) => s.slotStart === prev.slotStart);
+      if (!row || row.status === "Past" || row.status === "Full") return null;
+      return prev;
+    });
+  }, [slots]);
+
   const reload = useCallback(async () => {
     const tok = (sessionToken ?? (await readToken()))?.trim() || null;
     if (!tok) {
@@ -126,7 +135,7 @@ export function BookingSlotsScreen({ navigation, route }: Props) {
   };
 
   const bookSlot = async (slot: SlotDto) => {
-    if (slot.status === "Full") return;
+    if (slot.status === "Full" || slot.status === "Past") return;
     const tok = (sessionToken ?? (await readToken()))?.trim() || null;
     if (!tok) {
       Alert.alert("Sign in", "Use Profile tab — you must be logged in to book.");
@@ -248,35 +257,40 @@ export function BookingSlotsScreen({ navigation, route }: Props) {
             Branch-local “today” had no slots; showing device calendar day {loadedDay} instead.
           </Text>
         ) : null}
-        <PrimaryButton label="Reload slots" variant="ghost" icon="refresh-outline" onPress={() => void reload()} disabled={busy} />
         {slots.length === 0 && !busy ? (
           <Text style={styles.muted}>No slots for this date — try another day or confirm API is running.</Text>
         ) : null}
 
         {slots.map((slot) => {
           const full = slot.status === "Full";
+          const past = slot.status === "Past";
+          const unavailable = full || past;
           const limited = slot.status === "Limited";
           const selected = selectedSlot?.slotStart === slot.slotStart;
           return (
             <Pressable
               key={slot.slotStart}
-              disabled={full}
+              disabled={unavailable}
               onPress={() => {
-                if (full) return;
+                if (unavailable) return;
                 setSelectedSlot(slot);
               }}
               style={[
                 styles.slotCard,
-                full && styles.slotCardFull,
-                !full && styles.slotCardOpen,
-                selected && !full && styles.slotCardSelected,
+                unavailable && styles.slotCardFull,
+                !unavailable && styles.slotCardOpen,
+                selected && !unavailable && styles.slotCardSelected,
               ]}
             >
-              <Text style={[styles.slotTime, full && styles.slotTimeFull, !full && styles.slotTimeOpen]}>
+              <Text style={[styles.slotTime, unavailable && styles.slotTimeFull, !unavailable && styles.slotTimeOpen]}>
                 {formatSlotRange(slot.slotStart, slot.slotEnd, offsetMin)}
               </Text>
               <View style={styles.slotRight}>
-                {full ? (
+                {past ? (
+                  <View style={styles.badgePast}>
+                    <Text style={styles.badgePastText}>PAST</Text>
+                  </View>
+                ) : full ? (
                   <View style={styles.badgeFull}>
                     <Text style={styles.badgeFullText}>FULL</Text>
                   </View>
@@ -286,7 +300,7 @@ export function BookingSlotsScreen({ navigation, route }: Props) {
                   </View>
                 ) : null}
               </View>
-              <Text style={[styles.meta, full ? styles.metaFull : styles.metaOpen]}>
+              <Text style={[styles.meta, unavailable ? styles.metaFull : styles.metaOpen]}>
                 Online {slot.onlineUsed}/{slot.onlineCapacity} · Walk-in {slot.walkInUsed}/{slot.walkInCapacity}
               </Text>
             </Pressable>
@@ -296,7 +310,11 @@ export function BookingSlotsScreen({ navigation, route }: Props) {
 
       <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, 12) }]}>
         <PrimaryButton label="CONFIRM" variant="success" disabled={!selectedSlot || busy} onPress={onConfirm} />
-        <PrimaryButton label="CANCEL" variant="danger" onPress={() => navigation.navigate("BookingServices", { branch })} />
+        <PrimaryButton
+          label="Back to services"
+          variant="ghost"
+          onPress={() => navigation.navigate("BookingServices", { branch })}
+        />
       </View>
     </View>
   );
@@ -393,6 +411,13 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   badgeLimText: { fontSize: 11, fontWeight: "900", color: "#422006" },
+  badgePast: {
+    backgroundColor: "rgba(100,116,139,0.35)",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  badgePastText: { fontSize: 11, fontWeight: "900", color: theme.textMutedOnLight },
   meta: { fontSize: 11, marginTop: 10, fontWeight: "600" },
   metaFull: { color: theme.textMutedOnLight },
   metaOpen: { color: "rgba(255,255,255,0.75)" },

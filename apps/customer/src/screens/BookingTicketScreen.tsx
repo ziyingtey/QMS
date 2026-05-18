@@ -1,6 +1,6 @@
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { StatusBar } from "expo-status-bar";
-import { Platform, StatusBar as RNStatusBar, StyleSheet, Text, View } from "react-native";
+import { Alert, Platform, StatusBar as RNStatusBar, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { PrimaryButton } from "../components/PrimaryButton";
 import { useCustomer } from "../context/CustomerContext";
@@ -14,7 +14,7 @@ export function BookingTicketScreen({ navigation, route }: Props) {
   const { created, branchId } = route.params;
   const insets = useSafeAreaInsets();
   const topPad = Platform.OS === "android" ? (RNStatusBar.currentHeight ?? 0) + 8 : Math.max(insets.top, 12);
-  const { checkIn, navigateToQueueTrack, branches } = useCustomer();
+  const { checkIn, navigateToQueueTrack, branches, cancelBooking, busy } = useCustomer();
   const branchOffset = branches.find((b) => b.id === branchId)?.serviceZoneOffsetMinutes ?? defaultBranchOffsetMinutes;
 
   return (
@@ -32,6 +32,31 @@ export function BookingTicketScreen({ navigation, route }: Props) {
         variant="ghost"
         icon="pulse-outline"
         onPress={() => navigateToQueueTrack(branchId, created.ticketNumber, created.bookingId)}
+      />
+      <PrimaryButton
+        label="Cancel booking"
+        variant="danger"
+        icon="close-circle-outline"
+        disabled={busy}
+        onPress={() =>
+          Alert.alert(
+            "Cancel this booking?",
+            "Your queue ticket will be released. You can book again later.",
+            [
+              { text: "Keep booking", style: "cancel" },
+              {
+                text: "Cancel booking",
+                style: "destructive",
+                onPress: () => {
+                  void (async () => {
+                    const ok = await cancelBooking(created.bookingId);
+                    if (ok) navigation.navigate("BookingBranches");
+                  })();
+                },
+              },
+            ],
+          )
+        }
       />
       <PrimaryButton label="Done" variant="ghost" onPress={() => navigation.navigate("BookingBranches")} />
     </View>

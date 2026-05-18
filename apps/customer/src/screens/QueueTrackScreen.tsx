@@ -27,14 +27,21 @@ export function QueueTrackScreen({ route, navigation }: Props) {
   const { branchId, ticket, bookingId: bookingIdParam } = route.params;
   const insets = useSafeAreaInsets();
   const topPad = Platform.OS === "android" ? (RNStatusBar.currentHeight ?? 0) + 8 : Math.max(insets.top, 12);
-  const { token, bookings, branches, refreshBookings, checkIn, cancelBooking } = useCustomer();
+  const { token, bookings, branches, refreshBookings, checkIn, cancelBooking, busy } = useCustomer();
   const [status, setStatus] = useState<QueueStatus | null>(null);
   const [pullRefreshing, setPullRefreshing] = useState(false);
 
   const booking = useMemo(() => {
     if (bookingIdParam) return bookings.find((b) => b.id === bookingIdParam) ?? null;
     return (
-      bookings.find((b) => b.branchId === branchId && b.ticketNumber === ticket && b.status !== "Cancelled") ?? null
+      bookings.find(
+        (b) =>
+          b.branchId === branchId &&
+          b.ticketNumber === ticket &&
+          b.status !== "Cancelled" &&
+          b.status !== "Completed" &&
+          b.status !== "NoShow",
+      ) ?? null
     );
   }, [bookings, bookingIdParam, branchId, ticket]);
 
@@ -88,7 +95,14 @@ export function QueueTrackScreen({ route, navigation }: Props) {
   }, [refresh, refreshBookings]);
 
   const displayService = status?.serviceName ?? serviceNameFromBooking ?? "—";
-  const hasBookingActions = Boolean(booking?.id);
+  /** Prefer list row; fall back to route id so actions work before /mine finishes loading. */
+  const appointmentBookingId = booking?.id ?? bookingIdParam ?? null;
+  const bookingIsActive =
+    !booking ||
+    (booking.status !== "Cancelled" && booking.status !== "Completed" && booking.status !== "NoShow");
+  const showCheckIn = Boolean(appointmentBookingId) && bookingIsActive;
+  const showReschedule = Boolean(booking) && bookingIsActive;
+  const showCancel = Boolean(appointmentBookingId) && bookingIsActive;
 
   const openReschedule = async () => {
     if (!booking) return;
@@ -109,6 +123,30 @@ export function QueueTrackScreen({ route, navigation }: Props) {
     } catch (e) {
       Alert.alert("Reschedule", e instanceof Error ? e.message : String(e));
     }
+  };
+
+  const confirmCancelBooking = () => {
+    if (!appointmentBookingId) return;
+    Alert.alert(
+      "Cancel this booking?",
+      "Your queue ticket will be released. You can book again later.",
+      [
+        { text: "Keep", style: "cancel" },
+        {
+          text: "Cancel booking",
+          style: "destructive",
+          onPress: () => {
+            void (async () => {
+              const ok = await cancelBooking(appointmentBookingId);
+              if (ok) {
+                if (navigation.canGoBack()) navigation.goBack();
+                else navigation.navigate("QueueHome");
+              }
+            })();
+          },
+        },
+      ],
+    );
   };
 
   return (
@@ -197,13 +235,14 @@ export function QueueTrackScreen({ route, navigation }: Props) {
           ) : null}
         </View>
 
-        {hasBookingActions ? (
+        {showCheckIn ? (
           <View style={styles.checkCard}>
             <Text style={styles.checkTitle}>Check-in required</Text>
             <PrimaryButton
               label="I've arrived — check in"
               icon="qr-code-outline"
-              onPress={() => void checkIn(booking!.id)}
+              disabled={busy}
+              onPress={() => void checkIn(appointmentBookingId!)}
             />
           </View>
         ) : (
@@ -213,13 +252,13 @@ export function QueueTrackScreen({ route, navigation }: Props) {
         )}
 
         <View style={styles.rowBtns}>
-          {hasBookingActions ? (
-            <Pressable style={styles.btnGhost} onPress={() => void openReschedule()}>
+          {showReschedule ? (
+            <Pressable style={styles.btnGhost} disabled={busy} onPress={() => void openReschedule()}>
               <Text style={styles.btnGhostText}>Reschedule</Text>
             </Pressable>
           ) : null}
-          {hasBookingActions ? (
-            <Pressable style={styles.btnDangerGhost} onPress={() => void cancelBooking(booking!.id)}>
+          {showCancel ? (
+            <Pressable style={styles.btnDangerGhost} disabled={busy} onPress={confirmCancelBooking}>
               <Text style={styles.btnDangerGhostText}>Cancel</Text>
             </Pressable>
           ) : null}

@@ -54,7 +54,7 @@ type CustomerContextValue = {
   onLogin: () => Promise<void>;
   onLogout: () => Promise<void>;
   checkIn: (bookingId: string) => Promise<void>;
-  cancelBooking: (id: string) => Promise<void>;
+  cancelBooking: (id: string) => Promise<boolean>;
   navigateToQueueTrack: (branchId: string, ticket: string, bookingId?: string) => void;
 };
 
@@ -106,11 +106,7 @@ export function CustomerProvider({ children }: { children: React.ReactNode }) {
           return;
         }
 
-        // Never block cold start forever: if API is down or URL wrong, fetch can hang without a client timeout.
-        const probe = await Promise.race([
-          probeCustomerSession(trimmed),
-          new Promise<"unavailable">((resolve) => setTimeout(() => resolve("unavailable"), 4000)),
-        ]);
+        const probe = await probeCustomerSession(trimmed);
         if (probe === "unauthorized") {
           await clearToken();
           await clearUserEmail();
@@ -305,15 +301,20 @@ export function CustomerProvider({ children }: { children: React.ReactNode }) {
   );
 
   const cancelBooking = useCallback(
-    async (id: string) => {
+    async (id: string): Promise<boolean> => {
       const t = await readToken();
-      if (!t) return;
+      if (!t) {
+        Alert.alert("Sign in required", "Log in from the Profile tab to manage bookings.");
+        return false;
+      }
       setBusy(true);
       try {
         await apiCancelBooking(t, id);
         await refreshBookings();
+        return true;
       } catch (e) {
         Alert.alert("Cancel", e instanceof Error ? e.message : String(e));
+        return false;
       } finally {
         setBusy(false);
       }

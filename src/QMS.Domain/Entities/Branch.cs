@@ -32,6 +32,10 @@ public class Branch
     public bool AdaptiveSlotCapacityEnabled { get; set; } = true;
     /// <summary>Optional floor for total customers per slot when adaptive capacity runs (null = no extra floor beyond engine output).</summary>
     public int? MinSlotTotalCapacity { get; set; }
+    /// <summary>Unchecked online bookings may enter the call pool this many minutes before <c>SlotStart</c> (0 = only at or after slot start).</summary>
+    public int OnlineEarlyCallMinutes { get; set; } = 10;
+    /// <summary>After <see cref="QueueEntryState.Called"/>, if the customer does not start service within this many minutes, mark absent / no-show.</summary>
+    public int CalledAbsentGraceMinutes { get; set; } = 5;
     public ICollection<Staff> StaffMembers { get; set; } = new List<Staff>();
     public ICollection<BranchOperatingHour> OperatingHoursSchedule { get; set; } = new List<BranchOperatingHour>();
     public ICollection<Counter> Counters { get; set; } = new List<Counter>();

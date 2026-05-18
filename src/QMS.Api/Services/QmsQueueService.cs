@@ -59,9 +59,6 @@ public sealed class QmsQueueService(
             var slotStart = t;
             var slotEnd = t.AddMinutes(slotMinutes);
 
-            if (hidePastSlotsForToday && slotEnd <= nowAtBranch)
-                continue;
-
             var onlineUsed = await CountActiveOnlineBookingsForSlotAsync(
                 branchId, serviceTypeId, slotStart, slotEnd, null, cancellationToken);
 
@@ -73,7 +70,9 @@ public sealed class QmsQueueService(
             var walkCap = eff.WalkInBufferCapacity;
 
             string status;
-            if (onlineUsed >= onlineCap) status = "Full";
+            if (hidePastSlotsForToday && slotEnd <= nowAtBranch)
+                status = "Past";
+            else if (onlineUsed >= onlineCap) status = "Full";
             else if (onlineUsed >= (int)(onlineCap * 0.85)) status = "Limited";
             else status = "Available";
 
@@ -216,7 +215,11 @@ public sealed class QmsQueueService(
         if (chosenStart is null || chosenEnd is null)
             throw new InvalidOperationException("Walk-in buffers are full for all remaining slots today.");
 
-        var seq = await AllocateLaneEnqueueSequenceForSlotAsync(branchId, serviceTypeId, chosenStart.Value, cancellationToken);
+        // Order in the lane follows **arrival time** (aligned "now" slot), not the capacity bucket we
+        // attach the walk-in to. Otherwise, if counters open and an earlier bucket gains space, a
+        // later arrival could get a lower EnqueueSequence than people who arrived earlier but overflowed
+        // into a later bucket — unfair wait for early walk-ins.
+        var seq = await AllocateLaneEnqueueSequenceForSlotAsync(branchId, serviceTypeId, firstBucket, cancellationToken);
         var ticket = FormatTicket(branch.BranchCode, seq);
 
         var entry = new QueueEntry
@@ -415,25 +418,32 @@ public sealed class QmsQueueService(
 
         var laneId = serviceTypeId;
 
+        var zone = TimeSpan.FromMinutes(counter.Branch.ServiceZoneOffsetMinutes);
+        var nowAtBranch = DateTimeOffset.UtcNow.ToOffset(zone);
+        var earlyCall = Math.Max(0, counter.Branch.OnlineEarlyCallMinutes);
+
         var waiting = await db.QueueEntries
             .Include(q => q.Booking)
             .Where(q => q.BranchId == branchId && q.ServiceTypeId == laneId && q.State == QueueEntryState.Waiting)
-            .OrderByDescending(q =>
-                (q.EntryType == QueueEntryType.WalkIn || q.EntryType == QueueEntryType.LateDegraded)
-                || (q.Booking != null && q.Booking.Status == BookingStatus.CheckedIn))
-            .ThenBy(q => q.Booking != null ? q.Booking.SlotStart : DateTimeOffset.MaxValue)
-            .ThenBy(q => q.EnqueueSequence)
             .ToListAsync(cancellationToken);
+
+        waiting = waiting.Where(q => !IsOnlineExcludedFromCallPool(q, nowAtBranch, earlyCall)).ToList();
 
         if (waiting.Count == 0)
             return new CallNextDto(null, null, "No waiting customers.");
 
-        var total = waiting.Count;
-        var walk = waiting.Count(q => q.EntryType == QueueEntryType.WalkIn || q.EntryType == QueueEntryType.LateDegraded);
+        // Slot-aware wave: only the earliest effective service window participates in hybrid dispatch.
+        // Walk-ins moved earlier by bucket rebalance share the same effective slot as on-site customers
+        // for that window, so they are called before later-slot customers even if EnqueueSequence is higher.
+        var minSlotUnix = waiting.Min(EffectiveCallSlotUnix);
+        var wave = waiting.Where(q => EffectiveCallSlotUnix(q) == minSlotUnix).ToList();
+
+        var total = wave.Count;
+        var walk = wave.Count(q => q.EntryType == QueueEntryType.WalkIn || q.EntryType == QueueEntryType.LateDegraded);
         var ratio = total == 0 ? 0 : (double)walk / total;
 
         var streak = await dispatchRound.GetOnlineStreakAsync(branchId, laneId, cancellationToken);
-        var (next, newStreak) = HybridDispatch.PickNext(waiting, streak, ratio);
+        var (next, newStreak) = HybridDispatch.PickNext(wave, streak, ratio);
         await dispatchRound.SetOnlineStreakAsync(branchId, laneId, newStreak, cancellationToken);
 
         if (next is null)
@@ -563,10 +573,22 @@ public sealed class QmsQueueService(
                       cancellationToken)
                   ?? throw new InvalidOperationException("Service not found.");
 
+        var branch = await db.Branches.AsNoTracking().FirstOrDefaultAsync(b => b.Id == branchId, cancellationToken)
+                     ?? throw new InvalidOperationException("Branch not found.");
+        var nowBr = DateTimeOffset.UtcNow.ToOffset(TimeSpan.FromMinutes(branch.ServiceZoneOffsetMinutes));
+        var earlyCall = Math.Max(0, branch.OnlineEarlyCallMinutes);
+
         var list = await db.QueueEntries.AsNoTracking()
+            .Include(q => q.Booking)
             .Where(q => q.BranchId == branchId && q.ServiceTypeId == serviceTypeId && q.State == QueueEntryState.Waiting)
-            .OrderBy(q => q.EnqueueSequence)
             .ToListAsync(cancellationToken);
+
+        list = list
+            .OrderByDescending(q => !IsOnlineExcludedFromCallPool(q, nowBr, earlyCall))
+            .ThenBy(EffectiveCallSlotUnix)
+            .ThenByDescending(IsHighCallPriority)
+            .ThenBy(q => q.EnqueueSequence)
+            .ToList();
 
         var result = new List<WaitingTicketDto>();
         var position = 1;
@@ -632,6 +654,7 @@ public sealed class QmsQueueService(
         counter.Mode = mode;
         await db.SaveChangesAsync(cancellationToken);
         await hubContext.Clients.Group(QueueHub.BranchGroup(branchId)).SendAsync("CountersUpdated", branchId, cancellationToken);
+        await RebalanceWalkInCapacityBucketsForBranchAsync(branchId, cancellationToken);
     }
 
     public async Task SetCounterStaffForManagerAsync(
@@ -666,6 +689,7 @@ public sealed class QmsQueueService(
 
         await db.SaveChangesAsync(cancellationToken);
         await hubContext.Clients.Group(QueueHub.BranchGroup(branchId)).SendAsync("CountersUpdated", branchId, cancellationToken);
+        await RebalanceWalkInCapacityBucketsForBranchAsync(branchId, cancellationToken);
     }
 
     public async Task SetCounterAllowedServicesForManagerAsync(
@@ -693,6 +717,7 @@ public sealed class QmsQueueService(
             counter.AllowedServices.Add(new CounterAllowedService { ServiceTypeId = sid });
 
         await db.SaveChangesAsync(cancellationToken);
+        await RebalanceWalkInCapacityBucketsForBranchAsync(branchId, cancellationToken);
         await hubContext.Clients.Group(QueueHub.BranchGroup(branchId)).SendAsync("CountersUpdated", branchId, cancellationToken);
         await hubContext.Clients.Group(QueueHub.BranchGroup(branchId)).SendAsync("QueueUpdated", branchId, cancellationToken);
     }
@@ -752,6 +777,8 @@ public sealed class QmsQueueService(
             b.AdaptiveSlotCapacityEnabled,
             b.MinSlotTotalCapacity,
             b.MaxCapacity,
+            b.OnlineEarlyCallMinutes,
+            b.CalledAbsentGraceMinutes,
             weekly);
     }
 
@@ -763,6 +790,8 @@ public sealed class QmsQueueService(
         bool? adaptiveSlotCapacityEnabled,
         int? minSlotTotalCapacity,
         int? maxSlotTotalCapacity,
+        int? onlineEarlyCallMinutes,
+        int? calledAbsentGraceMinutes,
         bool clearMinSlotTotalCapacity = false,
         bool clearMaxSlotTotalCapacity = false,
         CancellationToken cancellationToken = default)
@@ -789,6 +818,11 @@ public sealed class QmsQueueService(
 
         if (b.MinSlotTotalCapacity is { } floor && b.MaxCapacity is { } cap && floor > cap)
             throw new InvalidOperationException("Min slot total capacity cannot exceed max slot total capacity.");
+
+        if (onlineEarlyCallMinutes is int oec)
+            b.OnlineEarlyCallMinutes = Math.Clamp(oec, 0, 120);
+        if (calledAbsentGraceMinutes is int cag)
+            b.CalledAbsentGraceMinutes = Math.Clamp(cag, 1, 60);
 
         if (weeklyOperatingHours is { Count: > 0 })
             await ReplaceBranchWeeklyOperatingHoursAsync(branchId, weeklyOperatingHours, cancellationToken);
@@ -1054,6 +1088,28 @@ public sealed class QmsQueueService(
         return new DateTimeOffset(now.Year, now.Month, now.Day, 0, 0, 0, now.Offset).AddMinutes(aligned);
     }
 
+    /// <summary>Booking slot for online; walk-in capacity bucket (after rebalance) or creation time.</summary>
+    private static DateTimeOffset GetEffectiveCallSlotStart(QueueEntry q) =>
+        q.Booking is not null ? q.Booking.SlotStart : q.WalkInCapacityBucketStart ?? q.CreatedAt;
+
+    private static long EffectiveCallSlotUnix(QueueEntry q) => GetEffectiveCallSlotStart(q).ToUnixTimeSeconds();
+
+    private static bool IsHighCallPriority(QueueEntry q) =>
+        q.EntryType is QueueEntryType.WalkIn or QueueEntryType.LateDegraded
+        || (q.Booking is not null && q.Booking.Status == BookingStatus.CheckedIn);
+
+    /// <summary>Unchecked online: not yet allowed into the call pool (before slot start minus early window).</summary>
+    private static bool IsOnlineExcludedFromCallPool(QueueEntry q, DateTimeOffset nowBranch, int onlineEarlyCallMinutes)
+    {
+        if (q.EntryType != QueueEntryType.OnlineBooked || q.Booking is null)
+            return false;
+        if (q.Booking.Status == BookingStatus.CheckedIn)
+            return false;
+        var slotStart = q.Booking.SlotStart;
+        var eligibleFrom = onlineEarlyCallMinutes <= 0 ? slotStart : slotStart.AddMinutes(-onlineEarlyCallMinutes);
+        return nowBranch < eligibleFrom;
+    }
+
     private static string ToBdsStaff10(Staff? staff)
     {
         if (staff?.Email is not { Length: > 0 } email)
@@ -1128,6 +1184,126 @@ public sealed class QmsQueueService(
                      || (q.WalkInCapacityBucketStart == null && q.CreatedAt >= bucketStart && q.CreatedAt < bucketEnd)
                  ),
             cancellationToken);
+    }
+
+    /// <summary>
+    /// After counters open / lane eligibility changes, re-pack <b>still-waiting</b> walk-ins into the earliest
+    /// walk-in capacity buckets from “now” forward (FIFO by <see cref="QueueEntry.EnqueueSequence"/>).
+    /// Ticket numbers and enqueue order stay the same; only <see cref="QueueEntry.WalkInCapacityBucketStart"/> /
+    /// <see cref="QueueEntry.WalkInCapacityBucketEnd"/> move so slot grids (e.g. 6/6) match reality.
+    /// </summary>
+    private async Task RebalanceWalkInCapacityBucketsForBranchAsync(Guid branchId, CancellationToken cancellationToken = default)
+    {
+        var branch = await db.Branches.AsNoTracking().FirstOrDefaultAsync(b => b.Id == branchId, cancellationToken);
+        if (branch is null)
+            return;
+
+        var zone = TimeSpan.FromMinutes(branch.ServiceZoneOffsetMinutes);
+        var nowAtBranch = DateTimeOffset.UtcNow.ToOffset(zone);
+        var todayLocal = DateOnly.FromDateTime(nowAtBranch.DateTime);
+        var window = await GetBranchLocalServiceWindowAsync(branch.Id, todayLocal, zone, cancellationToken);
+        if (window is null || nowAtBranch >= window.Value.End)
+            return;
+
+        var (windowStart, windowEnd) = window.Value;
+        var slotM = branch.SlotDurationMinutes < 1 ? 30 : branch.SlotDurationMinutes;
+
+        var services = await db.ServiceTypes.AsNoTracking()
+            .Where(s => s.BranchId == branchId)
+            .ToListAsync(cancellationToken);
+
+        var anyChange = false;
+        foreach (var service in services)
+        {
+            if (await RebalanceWalkInCapacityBucketsForLaneAsync(
+                    branch,
+                    service,
+                    windowStart,
+                    windowEnd,
+                    slotM,
+                    nowAtBranch,
+                    cancellationToken))
+                anyChange = true;
+        }
+
+        if (!anyChange)
+            return;
+
+        await db.SaveChangesAsync(cancellationToken);
+        await hubContext.Clients.Group(QueueHub.BranchGroup(branchId)).SendAsync("QueueUpdated", branchId, cancellationToken);
+    }
+
+    private async Task<bool> RebalanceWalkInCapacityBucketsForLaneAsync(
+        Branch branch,
+        ServiceType service,
+        DateTimeOffset windowStart,
+        DateTimeOffset windowEnd,
+        int slotMinutes,
+        DateTimeOffset nowAtBranch,
+        CancellationToken cancellationToken)
+    {
+        var branchId = branch.Id;
+        var serviceTypeId = service.Id;
+
+        var activeCounters = await CountActiveLaneCountersAsync(branchId, serviceTypeId, cancellationToken);
+        var entries = await db.QueueEntries
+            .Where(q => q.BranchId == branchId && q.ServiceTypeId == serviceTypeId
+                        && q.State == QueueEntryState.Waiting
+                        && (q.EntryType == QueueEntryType.WalkIn || q.EntryType == QueueEntryType.LateDegraded))
+            .OrderBy(q => q.EnqueueSequence)
+            .ToListAsync(cancellationToken);
+
+        if (entries.Count == 0)
+            return false;
+
+        var packStart = AlignSlot(nowAtBranch, slotMinutes);
+        if (packStart < windowStart)
+            packStart = windowStart;
+
+        var slots = new List<(DateTimeOffset b, DateTimeOffset be, int cap)>();
+        for (var b = packStart; b < windowEnd; b = b.AddMinutes(slotMinutes))
+        {
+            var be = b.AddMinutes(slotMinutes);
+            if (be <= nowAtBranch)
+                continue;
+
+            var eff = ComputeEffectiveSlotCapacity(branch, service, activeCounters);
+            slots.Add((b, be, eff.WalkInBufferCapacity));
+        }
+
+        if (slots.Count == 0)
+            return false;
+
+        var qi = 0;
+        var modified = false;
+        foreach (var (b, be, cap) in slots)
+        {
+            for (var k = 0; k < cap && qi < entries.Count; k++)
+            {
+                var e = entries[qi];
+                if (e.WalkInCapacityBucketStart != b || e.WalkInCapacityBucketEnd != be)
+                    modified = true;
+                e.WalkInCapacityBucketStart = b;
+                e.WalkInCapacityBucketEnd = be;
+                qi++;
+            }
+        }
+
+        if (qi < entries.Count)
+        {
+            var last = slots[^1];
+            while (qi < entries.Count)
+            {
+                var e = entries[qi];
+                if (e.WalkInCapacityBucketStart != last.b || e.WalkInCapacityBucketEnd != last.be)
+                    modified = true;
+                e.WalkInCapacityBucketStart = last.b;
+                e.WalkInCapacityBucketEnd = last.be;
+                qi++;
+            }
+        }
+
+        return modified;
     }
 
     /// <summary>
@@ -1302,6 +1478,8 @@ public sealed record BranchOperationalSettingsDto(
     bool AdaptiveSlotCapacityEnabled,
     int? MinSlotTotalCapacity,
     int? MaxSlotTotalCapacity,
+    int OnlineEarlyCallMinutes,
+    int CalledAbsentGraceMinutes,
     IReadOnlyList<BranchOperatingHourRow> WeeklyOperatingHours);
 
 public sealed record AssignableStaffDto(Guid Id, string Email, string Name, string Role);

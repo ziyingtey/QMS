@@ -68,6 +68,10 @@ export type BranchOperationalSettings = {
   adaptiveSlotCapacityEnabled: boolean;
   minSlotTotalCapacity: number | null;
   maxSlotTotalCapacity: number | null;
+  /** Minutes before booking SlotStart that an unchecked online may enter the call pool (0 = at slot start only). */
+  onlineEarlyCallMinutes: number;
+  /** After Call next, if service is not started within this many minutes, mark absent / no-show. */
+  calledAbsentGraceMinutes: number;
   weeklyOperatingHours: BranchOperatingHourRow[];
 };
 
@@ -303,6 +307,8 @@ export async function apiManagerPatchOperationalSettings(
     maxSlotTotalCapacity?: number;
     clearMinSlotTotalCapacity?: boolean;
     clearMaxSlotTotalCapacity?: boolean;
+    onlineEarlyCallMinutes?: number;
+    calledAbsentGraceMinutes?: number;
   },
 ): Promise<BranchOperationalSettings> {
   const res = await fetch(`${API_BASE}/api/manager/branches/${branchId}/operational-settings`, {
