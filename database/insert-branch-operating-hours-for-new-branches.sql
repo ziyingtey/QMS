@@ -26,4 +26,7 @@ CROSS JOIN (
         (N'Sunday',    NULL, NULL, 1)
 ) AS d(DayOfWeek, OpenTime, CloseTime, IsClosed)
 WHERE br.BranchCode > @Base
-  AND NOT EXISTS (SELECT 1 FROM dbo.BRANCH_OPERATING_HOURS AS h WHERE h.BranchId = br.Id);
+  AND NOT EXISTS (
+      SELECT 1
+      FROM dbo.BRANCH_OPERATING_HOURS AS h
+      WHERE h.BranchId = br.Id AND h.DayOfWeek = d.DayOfWeek);

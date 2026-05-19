@@ -1,5 +1,5 @@
 /*
-  SSMS: load weekly hours for every branch that does not yet have BRANCH_OPERATING_HOURS rows.
+  SSMS: insert missing weekday rows for every branch (skips only (BranchId, DayOfWeek) pairs that already exist).
   Edit the VALUES block (times / closed flags) before running.
 
   Requires: table dbo.BRANCH_OPERATING_HOURS (see database/schema.sql).
@@ -27,5 +27,8 @@ CROSS JOIN (
         (N'Saturday',  NULL, NULL, 1),
         (N'Sunday',    NULL, NULL, 1)
 ) AS d(DayOfWeek, OpenTime, CloseTime, IsClosed)
-WHERE NOT EXISTS (SELECT 1 FROM dbo.BRANCH_OPERATING_HOURS AS h WHERE h.BranchId = b.Id);
+WHERE NOT EXISTS (
+    SELECT 1
+    FROM dbo.BRANCH_OPERATING_HOURS AS h
+    WHERE h.BranchId = b.Id AND h.DayOfWeek = d.DayOfWeek);
 GO

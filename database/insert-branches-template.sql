@@ -32,7 +32,9 @@ INSERT INTO [dbo].[BRANCHES] (
     [ImageUrl],
     [MaxCapacity],
     [AdaptiveSlotCapacityEnabled],
-    [MinSlotTotalCapacity]
+    [MinSlotTotalCapacity],
+    [OnlineEarlyCallMinutes],
+    [CalledAbsentGraceMinutes]
 )
 VALUES (
     @Id,
@@ -51,7 +53,9 @@ VALUES (
     NULL,
     NULL,
     1,
-    NULL
+    NULL,
+    10,
+    5
 );
 
 INSERT INTO dbo.BRANCH_OPERATING_HOURS (Id, BranchId, DayOfWeek, OpenTime, CloseTime, IsClosed)

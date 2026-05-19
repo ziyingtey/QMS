@@ -303,7 +303,9 @@ INSERT INTO [dbo].[BRANCHES] (
     [ImageUrl],
     [MaxCapacity],
     [AdaptiveSlotCapacityEnabled],
-    [MinSlotTotalCapacity]
+    [MinSlotTotalCapacity],
+    [OnlineEarlyCallMinutes],
+    [CalledAbsentGraceMinutes]
 )
 SELECT
     NEWID() AS [Id],
@@ -322,7 +324,9 @@ SELECT
     CAST(NULL AS NVARCHAR(800)) AS [ImageUrl],
     CAST(NULL AS INT) AS [MaxCapacity],
     CAST(1 AS BIT) AS [AdaptiveSlotCapacityEnabled],
-    CAST(NULL AS INT) AS [MinSlotTotalCapacity]
+    CAST(NULL AS INT) AS [MinSlotTotalCapacity],
+    10 AS [OnlineEarlyCallMinutes],
+    5 AS [CalledAbsentGraceMinutes]
 FROM @Branches AS b
 ORDER BY b.[RowOrd];
 
@@ -346,7 +350,11 @@ CROSS JOIN (
         (N'Sunday',    NULL, NULL, 1)
 ) AS d(DayOfWeek, OpenTime, CloseTime, IsClosed)
 WHERE br.BranchCode > @Base
-  AND NOT EXISTS (SELECT 1 FROM dbo.BRANCH_OPERATING_HOURS AS h WHERE h.BranchId = br.Id);
+  /* Per (BranchId, DayOfWeek): avoids duplicate-key on IX_BRANCH_OPERATING_HOURS_Branch_Day if hours were partially inserted earlier. */
+  AND NOT EXISTS (
+      SELECT 1
+      FROM dbo.BRANCH_OPERATING_HOURS AS h
+      WHERE h.BranchId = br.Id AND h.DayOfWeek = d.DayOfWeek);
 
 SELECT [BranchCode], [Name], [Id] FROM [dbo].[BRANCHES] WHERE [BranchCode] > @Base ORDER BY [BranchCode];
 GO

@@ -156,7 +156,9 @@ INSERT INTO [dbo].[BRANCHES] (
     [ImageUrl],
     [MaxCapacity],
     [AdaptiveSlotCapacityEnabled],
-    [MinSlotTotalCapacity]
+    [MinSlotTotalCapacity],
+    [OnlineEarlyCallMinutes],
+    [CalledAbsentGraceMinutes]
 )
 SELECT
     NEWID() AS [Id],
@@ -175,7 +177,9 @@ SELECT
     CAST(NULL AS NVARCHAR(800)) AS [ImageUrl],
     CAST(NULL AS INT) AS [MaxCapacity],
     CAST(1 AS BIT) AS [AdaptiveSlotCapacityEnabled],
-    CAST(NULL AS INT) AS [MinSlotTotalCapacity]
+    CAST(NULL AS INT) AS [MinSlotTotalCapacity],
+    10 AS [OnlineEarlyCallMinutes],
+    5 AS [CalledAbsentGraceMinutes]
 FROM @Branches AS b
 ORDER BY b.[RowOrd];
 
