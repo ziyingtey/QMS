@@ -6,7 +6,7 @@
   - [ServiceZoneOffsetMinutes]: e.g. 480 = UTC+8 for Malaysia.
 
   After you add branches, you usually need SERVICES + COUNTERS for that branch
-  (see database/*.sql and schema alignment with EF) or the customer app may show empty services.
+  (e.g. run database/insert-counters-8-closed-per-branch.sql after SERVICES) or the customer app may show empty services.
 */
 
 USE QMS;

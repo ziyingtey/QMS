@@ -2,7 +2,8 @@ import { Ionicons } from "@expo/vector-icons";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { NavigationContainer } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
-import { Pressable } from "react-native";
+import { Pressable, StyleSheet } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { BookingBranchesScreen } from "../screens/BookingBranchesScreen";
 import { BookingServicesScreen } from "../screens/BookingServicesScreen";
 import { BookingSlotsScreen } from "../screens/BookingSlotsScreen";
@@ -43,38 +44,41 @@ function QueueNavigator() {
 }
 
 function MainTabs() {
+  const insets = useSafeAreaInsets();
+  const tabBarBottomPad = Math.max(insets.bottom, 10);
+  const tabBarHeight = 52 + tabBarBottomPad;
+
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({
         headerShown: false,
+        tabBarShowLabel: true,
         tabBarActiveTintColor: "#ffffff",
         tabBarInactiveTintColor: "rgba(255,255,255,0.55)",
         tabBarStyle: {
           backgroundColor: theme.tabBarBg,
           borderTopColor: "rgba(255,255,255,0.12)",
           paddingTop: 6,
-          height: 64,
+          paddingBottom: tabBarBottomPad,
+          height: tabBarHeight,
         },
-        tabBarLabelStyle: { fontSize: 11, fontWeight: "700" },
+        tabBarLabelStyle: { fontSize: 11, fontWeight: "700", marginTop: 2 },
+        tabBarIconStyle: { marginTop: 4 },
+        // Merge RN's tab item `style` (flex column for icon + label); omitting it hid labels.
         tabBarButton: (props) => {
-          const { children, onPress, accessibilityState } = props;
-          const selected = accessibilityState?.selected;
+          const { children, onPress, onLongPress, accessibilityRole, accessibilityState, testID, style } = props;
           return (
             <Pressable
-              accessibilityRole="button"
+              accessibilityRole={accessibilityRole}
               accessibilityState={accessibilityState}
+              testID={testID}
               onPress={onPress}
-              style={({ pressed }) => ({
-                flex: 1,
-                alignItems: "center",
-                justifyContent: "center",
-                paddingVertical: 8,
-                marginHorizontal: 2,
-                marginVertical: 6,
-                borderRadius: 12,
-                backgroundColor: "transparent",
-                opacity: pressed ? 0.85 : 1,
-              })}
+              onLongPress={onLongPress}
+              style={(state) => [
+                style,
+                styles.tabPressable,
+                state.pressed && { opacity: 0.88 },
+              ]}
             >
               {children}
             </Pressable>
@@ -83,8 +87,8 @@ function MainTabs() {
         tabBarIcon: ({ color, size, focused }) => {
           const map: Record<keyof MainTabParamList, [keyof typeof Ionicons.glyphMap, keyof typeof Ionicons.glyphMap]> = {
             Home: ["home", "home-outline"],
-            Booking: ["albums", "albums-outline"],
-            Queue: ["tv", "tv-outline"],
+            Booking: ["calendar", "calendar-outline"],
+            Queue: ["ticket", "ticket-outline"],
             Profile: ["person", "person-outline"],
           };
           const [on, off] = map[route.name];
@@ -100,11 +104,26 @@ function MainTabs() {
   );
 }
 
+const styles = StyleSheet.create({
+  tabPressable: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    marginHorizontal: 2,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+});
+
 export function AppNavigator() {
   return (
     <NavigationContainer ref={navigationRef}>
       <RootStack.Navigator screenOptions={{ headerShown: false }}>
-        <RootStack.Screen name="MainTabs" component={MainTabs} />
+        <RootStack.Screen
+          name="MainTabs"
+          component={MainTabs}
+          options={{ contentStyle: { backgroundColor: theme.headerNavy } }}
+        />
         <RootStack.Screen name="MapBranches" component={MapBranchesScreen} options={{ presentation: "modal" }} />
         <RootStack.Screen name="BranchDetail" component={BranchDetailScreen} options={{ presentation: "card" }} />
       </RootStack.Navigator>

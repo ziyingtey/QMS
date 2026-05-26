@@ -7,6 +7,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { apiServiceLaneSummary, apiWalkIn, type ServiceLaneSummary } from "../api";
 import { PrimaryButton } from "../components/PrimaryButton";
 import type { BookingStackParamList } from "../navigation/navigationRef";
+import { exitBookingFlow } from "../navigation/bookingExit";
 import { useCustomer } from "../context/CustomerContext";
 import { theme } from "../theme";
 import { formatSlotRange } from "../utils/dateFormat";
@@ -14,7 +15,7 @@ import { formatSlotRange } from "../utils/dateFormat";
 type Props = NativeStackScreenProps<BookingStackParamList, "BookingServices">;
 
 export function BookingServicesScreen({ navigation, route }: Props) {
-  const { branch } = route.params;
+  const { branch, returnTo } = route.params;
   const insets = useSafeAreaInsets();
   const topPad = Platform.OS === "android" ? (RNStatusBar.currentHeight ?? 0) + 8 : Math.max(insets.top, 12);
   const { navigateToQueueTrack } = useCustomer();
@@ -64,9 +65,9 @@ export function BookingServicesScreen({ navigation, route }: Props) {
     <View style={styles.screen}>
       <StatusBar style="light" />
       <View style={[styles.header, { paddingTop: topPad }]}>
-        <Pressable style={styles.back} onPress={() => navigation.navigate("BookingBranches")}>
+        <Pressable style={styles.back} onPress={() => exitBookingFlow(navigation, returnTo)}>
           <Ionicons name="arrow-back" size={22} color={theme.accent} />
-          <Text style={styles.backText}>All branches</Text>
+          <Text style={styles.backText}>{returnTo === "home" ? "Home" : "All branches"}</Text>
         </Pressable>
         <Text style={styles.title}>{branch.name}</Text>
         <Text style={styles.sub}>Choose a service type to continue</Text>
@@ -124,7 +125,7 @@ export function BookingServicesScreen({ navigation, route }: Props) {
                   label="BOOK SLOT"
                   compact
                   icon="calendar-outline"
-                  onPress={() => navigation.navigate("BookingSlots", { branch, service: item })}
+                  onPress={() => navigation.navigate("BookingSlots", { branch, service: item, returnTo })}
                 />
                 <PrimaryButton
                   label="WALK-IN TICKET"

@@ -1,6 +1,6 @@
 namespace QMS.Domain.Entities;
 
-/// <summary>Maps a counter to one allowed service lane. Empty collection on a counter = General (can serve all lanes).</summary>
+/// <summary>Maps a counter to one allowed service lane. Counters must have at least one row to serve customers.</summary>
 public class CounterAllowedService
 {
     public Guid CounterId { get; set; }

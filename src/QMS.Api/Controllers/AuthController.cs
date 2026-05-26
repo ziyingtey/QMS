@@ -64,10 +64,10 @@ public sealed class AuthController(QmsDbContext db, IPasswordHasher<string> pass
 
         var staffRole = staff.Role.ToString();
         var staffToken = jwt.CreateToken(staff.Id, staff.Email, staffRole);
-        return Ok(new LoginResponse(staffToken, staff.Id, staff.Email, staffRole));
+        return Ok(new LoginResponse(staffToken, staff.Id, staff.Email, staffRole, staff.BranchId));
     }
 }
 
 public sealed record RegisterRequest(string Email, string Password, string? Name);
 public sealed record LoginRequest(string Email, string Password);
-public sealed record LoginResponse(string Token, Guid UserId, string Email, string Role);
+public sealed record LoginResponse(string Token, Guid UserId, string Email, string Role, Guid? BranchId = null);

@@ -1,6 +1,6 @@
 import { API_BASE } from "./config";
 
-export type LoginResponse = { token: string; userId: string; email: string; role: string };
+export type LoginResponse = { token: string; userId: string; email: string; role: string; branchId: string | null };
 
 export type ServiceDto = { id: string; code: string; name: string; defaultAvgServiceMinutes: number };
 
@@ -111,6 +111,7 @@ export type ManagerInsights = {
 const TOKEN_KEY = "qms_staff_token";
 const ROLE_KEY = "qms_staff_role";
 const EMAIL_KEY = "qms_staff_email";
+const BRANCH_KEY = "qms_staff_branch";
 
 export function getStoredToken(): string | null {
   return sessionStorage.getItem(TOKEN_KEY);
@@ -136,10 +137,19 @@ export function getStoredEmail(): string | null {
   return sessionStorage.getItem(EMAIL_KEY);
 }
 
+export function setStoredBranchId(id: string): void {
+  sessionStorage.setItem(BRANCH_KEY, id);
+}
+
+export function getStoredBranchId(): string | null {
+  return sessionStorage.getItem(BRANCH_KEY);
+}
+
 export function clearStoredSession(): void {
   sessionStorage.removeItem(TOKEN_KEY);
   sessionStorage.removeItem(ROLE_KEY);
   sessionStorage.removeItem(EMAIL_KEY);
+  sessionStorage.removeItem(BRANCH_KEY);
 }
 
 async function parseError(res: Response): Promise<string> {
@@ -328,8 +338,8 @@ export async function apiManagerInsights(token: string, branchId: string): Promi
   return res.json() as Promise<ManagerInsights>;
 }
 
-export async function apiManagerAssignableStaff(token: string): Promise<AssignableStaffDto[]> {
-  const res = await fetch(`${API_BASE}/api/manager/assignable-staff`, {
+export async function apiManagerAssignableStaff(token: string, branchId: string): Promise<AssignableStaffDto[]> {
+  const res = await fetch(`${API_BASE}/api/manager/branches/${branchId}/assignable-staff`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!res.ok) throw new Error(await parseError(res));

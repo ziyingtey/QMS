@@ -14,6 +14,8 @@ import {
   apiManagerSetCounterStaff,
   apiManagerSetDedicatedLane,
   clearStoredSession,
+  getStoredBranchId,
+  getStoredEmail,
   getStoredRole,
   getStoredToken,
   type AssignableStaffDto,
@@ -23,6 +25,7 @@ import {
   type LiveDashboard,
   type ManagerCounterRowDto,
   type ManagerInsights,
+  type ManagerLaneAnalytics,
 } from "../api";
 import { API_BASE } from "../config";
 
@@ -53,12 +56,129 @@ function defaultWeeklyHours(): BranchOperatingHourRow[] {
   ];
 }
 
+const MGR_SVC_COLORS = ["#2563eb", "#16a34a", "#9333ea", "#ea580c", "#0891b2", "#ca8a04"];
+
+function crowdFromQueue(n: number): { label: string; level: "low" | "medium" | "high" } {
+  if (n <= 5) return { label: "Low", level: "low" };
+  if (n <= 15) return { label: "Medium", level: "medium" };
+  return { label: "High", level: "high" };
+}
+
+function staffDisplayName(r: ManagerCounterRowDto, pick: AssignableStaffDto[]): string {
+  if (!r.assignedStaffEmail) return "Unassigned";
+  return pick.find((s) => s.email === r.assignedStaffEmail)?.name ?? r.assignedStaffEmail;
+}
+
+function ServiceCompletedMixChart({ lanes }: { lanes: ManagerLaneAnalytics[] }) {
+  const total = lanes.reduce((s, l) => s + Math.max(0, l.completedToday), 0);
+  if (lanes.length === 0) return <p className="muted small-print">No lane analytics yet.</p>;
+  if (total === 0) {
+    return (
+      <div className="mgr-chart-empty">
+        <h3 className="mgr-chart-title">Service mix (completed today)</h3>
+        <p className="muted small-print">No completed visits yet — the bar will fill as tickets finish.</p>
+      </div>
+    );
+  }
+  return (
+    <div>
+      <h3 className="mgr-chart-title">Service mix (completed today)</h3>
+      <div className="mgr-stacked-track" role="img" aria-label="Share of completed visits by service lane">
+        {lanes.map((l, i) => (
+          <div
+            key={l.serviceTypeId}
+            className="mgr-stacked-seg"
+            style={{
+              width: `${(Math.max(0, l.completedToday) / total) * 100}%`,
+              background: MGR_SVC_COLORS[i % MGR_SVC_COLORS.length],
+            }}
+            title={`${l.serviceName}: ${l.completedToday}`}
+          />
+        ))}
+      </div>
+      <ul className="mgr-legend">
+        {lanes.map((l, i) => (
+          <li key={l.serviceTypeId}>
+            <span className="mgr-swatch" style={{ background: MGR_SVC_COLORS[i % MGR_SVC_COLORS.length] }} />
+            <span>{l.serviceName}</span>
+            <strong>{l.completedToday}</strong>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function LaneThroughputBars({ lanes }: { lanes: ManagerLaneAnalytics[] }) {
+  const max = Math.max(1, ...lanes.map((l) => l.completedToday));
+  return (
+    <div>
+      <h3 className="mgr-chart-title">Throughput by lane (today)</h3>
+      <div className="mgr-bars">
+        {lanes.map((l, i) => (
+          <div key={l.serviceTypeId} className="mgr-bar-row">
+            <span className="mgr-bar-name">{l.serviceName}</span>
+            <div className="mgr-bar-track">
+              <div
+                className="mgr-bar-fill"
+                style={{
+                  width: `${(l.completedToday / max) * 100}%`,
+                  background: MGR_SVC_COLORS[i % MGR_SVC_COLORS.length],
+                }}
+              />
+            </div>
+            <span className="mgr-bar-num">{l.completedToday}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function SnapshotWaitBars({
+  byService,
+  resolveName,
+}: {
+  byService: LiveDashboard["byService"];
+  resolveName: (id: string) => string;
+}) {
+  const data = byService.map((row) => ({
+    id: row.serviceTypeId,
+    name: resolveName(row.serviceTypeId),
+    w: row.estimatedWaitMinutes,
+  }));
+  const maxW = Math.max(1, ...data.map((d) => (d.w == null ? 0 : d.w)));
+  return (
+    <div>
+      <h3 className="mgr-chart-title">Estimated wait by lane (live snapshot)</h3>
+      <p className="muted small-print mgr-chart-note">Uses the current dashboard estimate per lane — not an hourly trend chart.</p>
+      <div className="mgr-bars">
+        {data.map((d, i) => (
+          <div key={d.id} className="mgr-bar-row">
+            <span className="mgr-bar-name">{d.name}</span>
+            <div className="mgr-bar-track">
+              <div
+                className="mgr-bar-fill mgr-bar-fill--wait"
+                style={{
+                  width: `${d.w == null ? 0 : Math.min(100, (d.w / maxW) * 100)}%`,
+                  background: MGR_SVC_COLORS[i % MGR_SVC_COLORS.length],
+                }}
+              />
+            </div>
+            <span className="mgr-bar-num">{d.w == null ? "—" : `${Math.round(d.w)}m`}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function ManagerCountersPage() {
   const navigate = useNavigate();
   const token = useMemo(() => getStoredToken(), []);
   const role = useMemo(() => getStoredRole(), []);
   const [branches, setBranches] = useState<BranchDto[]>([]);
-  const [branchId, setBranchId] = useState("");
+  const [branchId, setBranchId] = useState(() => getStoredBranchId() ?? "");
   const [rows, setRows] = useState<ManagerCounterRowDto[]>([]);
   const [live, setLive] = useState<LiveDashboard | null>(null);
   const [settings, setSettings] = useState<BranchOperationalSettings | null>(null);
@@ -66,6 +186,9 @@ export function ManagerCountersPage() {
   const [staffPickList, setStaffPickList] = useState<AssignableStaffDto[]>([]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  /** Split manager work like typical ops consoles (e.g. bank back-office): floor vs policy vs analytics. */
+  const [managerTab, setManagerTab] = useState<"counters" | "capacity" | "queue">("counters");
+  const [expandedCounterId, setExpandedCounterId] = useState<string | null>(null);
 
   const [formOnline, setFormOnline] = useState(70);
   const [formSlot, setFormSlot] = useState(30);
@@ -77,6 +200,11 @@ export function ManagerCountersPage() {
   const [formCalledGraceMinutes, setFormCalledGraceMinutes] = useState(5);
 
   const branch = branches.find((b) => b.id === branchId);
+  const managerEmail = useMemo(() => getStoredEmail(), []);
+
+  useEffect(() => {
+    setExpandedCounterId(null);
+  }, [branchId]);
 
   useEffect(() => {
     if (!token || role !== "Manager") {
@@ -86,16 +214,24 @@ export function ManagerCountersPage() {
     void (async () => {
       const b = await apiBranches();
       setBranches(b);
-      if (b.length > 0) setBranchId(b[0].id);
+      // branchId is already set from session storage (login response)
+      // fallback: if somehow missing, use first branch
+      if (!branchId && b.length > 0) setBranchId(b[0].id);
     })();
+  }, [navigate, token, role]);
+
+  useEffect(() => {
+    if (!token || !branchId) return;
     void (async () => {
       try {
-        setStaffPickList(await apiManagerAssignableStaff(token));
-      } catch {
+        const list = await apiManagerAssignableStaff(token, branchId);
+        setStaffPickList(list);
+      } catch (err) {
+        console.error("[staff-pick-list] failed for branch", branchId, err);
         setStaffPickList([]);
       }
     })();
-  }, [navigate, token, role]);
+  }, [token, branchId]);
 
   const load = useCallback(async () => {
     if (!token || !branchId) return;
@@ -171,6 +307,7 @@ export function ManagerCountersPage() {
     if (!token || !branchId) return;
     const conn = new signalR.HubConnectionBuilder()
       .withUrl(`${API_BASE}/hubs/queue?access_token=${encodeURIComponent(token)}`)
+      .configureLogging(signalR.LogLevel.None)
       .withAutomaticReconnect()
       .build();
 
@@ -241,6 +378,10 @@ export function ManagerCountersPage() {
     const next = new Set(row.allowedServiceTypeIds);
     if (checked) next.add(laneId);
     else next.delete(laneId);
+    if (next.size === 0) {
+      setMessage("Keep at least one allowed lane, or set the counter to Closed. (Empty lane set is not allowed.)");
+      return;
+    }
     setBusy(true);
     try {
       await apiManagerSetAllowedServices(token, branchId, counterId, [...next]);
@@ -321,20 +462,32 @@ export function ManagerCountersPage() {
     return m?.id ?? "";
   };
 
+  const crowd = live ? crowdFromQueue(live.queueLength) : null;
+
   return (
-    <div className="deck-page">
-      <header className="deck-topbar">
+    <div className="deck-page deck-page--manager">
+      <header className="deck-topbar manager-topbar">
         <div className="brand-inline">
           <span className="brand-mark" />
           <span className="brand-text">IH-QMS</span>
+          <span className="manager-topbar-tag">Manager</span>
         </div>
-        <div className="topbar-actions">
+        <div className="topbar-actions manager-topbar-actions">
+          <span className="mgr-bell" aria-hidden title="Notifications">
+            🔔
+          </span>
           <span className="live-pill" title="SignalR live updates + 12s backup refresh (dashboard, insights, counters)">
             <span className="live-dot" /> Live
           </span>
           <Link to="/" className="link-muted">
             Counter workspace
           </Link>
+          <div className="manager-user-chip" title={managerEmail ?? "Signed in"}>
+            <span className="manager-user-avatar" aria-hidden>
+              {(managerEmail ?? "?").slice(0, 1).toUpperCase()}
+            </span>
+            <span className="manager-user-email">{managerEmail ?? "—"}</span>
+          </div>
           <button type="button" className="btn-ghost" onClick={() => void onLogout()}>
             Logout
           </button>
@@ -342,98 +495,249 @@ export function ManagerCountersPage() {
       </header>
 
       <main className="manager-main">
-        <h1 className="section-title">Branch manager · operations &amp; crowd control</h1>
+        <header className="manager-page-head">
+          <h1 className="section-title">Branch live monitor</h1>
+          <p className="manager-page-sub">
+            High-level view similar to a branch dashboard: KPIs first, then counter tiles, booking policy in its own tab, and lane analytics with simple charts where data exists.
+          </p>
+        </header>
 
-        <section className="manager-flow-card">
-          <h2 className="manager-subtitle">How the system links (real-time)</h2>
-          <ol className="manager-flow-list">
-            <li>
-              <strong>Customer</strong> picks a <strong>branch</strong> and a <strong>service type</strong> (lane). Their ticket is stored on that lane’s queue.
-            </li>
-            <li>
-              <strong>Call next</strong> only pulls from that lane. A counter counts toward a lane if it is <strong>General</strong> (no lanes checked — serves every lane) or its <strong>allowed lanes</strong> include that service type.
-            </li>
-            <li>
-              <strong>Capacity</strong> (slots, online vs walk-in split) uses <strong>active</strong> counters that can serve the lane — so opening/closing counters or changing allowed lanes immediately changes crowding and ETAs (SignalR pushes updates).
-            </li>
-            <li>
-              <strong>Adaptive slot capacity</strong> (when enabled): manager alerts compare the next booking window’s live seat count (from counters) to active bookings so you see pressure before the grid fills.
-            </li>
-          </ol>
-        </section>
-
-        <label className="select-row">
-          Branch
-          <select value={branchId} onChange={(e) => setBranchId(e.target.value)}>
-            {branches.map((b) => (
-              <option key={b.id} value={b.id}>
-                {b.name}
-              </option>
-            ))}
-          </select>
-        </label>
+        <div className="manager-toolbar">
+          <label className="select-row manager-branch-select">
+            Branch: <strong>{branch?.name ?? "—"}</strong>
+          </label>
+        </div>
 
         {message ? <p className="error">{message}</p> : null}
 
         {live ? (
-          <div className="manager-kpi-strip">
-            <div className="manager-kpi-chip">
-              <span className="manager-kpi-label">In queue</span>
-              <span className="manager-kpi-val">{live.queueLength}</span>
+          <div className="manager-kpi-dash">
+            <div className="manager-kpi-tile">
+              <span className="manager-kpi-tile-icon manager-kpi-tile-icon--success" aria-hidden>
+                ✓
+              </span>
+              <div>
+                <div className="manager-kpi-tile-label">Customers served</div>
+                <div className="manager-kpi-tile-val">{live.customersServedToday}</div>
+                <div className="manager-kpi-tile-foot">Today</div>
+              </div>
             </div>
-            <div className="manager-kpi-chip">
-              <span className="manager-kpi-label">Avg wait</span>
-              <span className="manager-kpi-val">{live.avgWaitMinutes}m</span>
+            <div className="manager-kpi-tile">
+              <span className="manager-kpi-tile-icon manager-kpi-tile-icon--queue" aria-hidden>
+                ⏳
+              </span>
+              <div>
+                <div className="manager-kpi-tile-label">Waiting (all lanes)</div>
+                <div className="manager-kpi-tile-val">{live.queueLength}</div>
+                <div className="manager-kpi-tile-foot">Tickets in queue</div>
+              </div>
             </div>
-            <div className="manager-kpi-chip">
-              <span className="manager-kpi-label">Active counters</span>
-              <span className="manager-kpi-val">{live.activeCounters}</span>
+            <div className="manager-kpi-tile">
+              <span className="manager-kpi-tile-icon manager-kpi-tile-icon--crowd" aria-hidden>
+                ◎
+              </span>
+              <div>
+                <div className="manager-kpi-tile-label">Crowd level</div>
+                <div className="manager-kpi-tile-val">
+                  <span className={`mgr-crowd-pill mgr-crowd-pill--${crowd!.level}`}>{crowd!.label}</span>
+                </div>
+                <div className="manager-kpi-tile-foot">From queue depth</div>
+              </div>
             </div>
-            <div className="manager-kpi-chip">
-              <span className="manager-kpi-label">In branch</span>
-              <span className="manager-kpi-val">{live.customersInBranch}</span>
-            </div>
-            <div className="manager-kpi-chip">
-              <span className="manager-kpi-label">Priority (checked-in)</span>
-              <span className="manager-kpi-val">{live.priorityWaiting}</span>
-            </div>
-            <div className="manager-kpi-chip">
-              <span className="manager-kpi-label">Served today</span>
-              <span className="manager-kpi-val">{live.customersServedToday}</span>
+            <div className="manager-kpi-tile">
+              <span className="manager-kpi-tile-icon manager-kpi-tile-icon--clock" aria-hidden>
+                🕐
+              </span>
+              <div>
+                <div className="manager-kpi-tile-label">Avg wait (branch)</div>
+                <div className="manager-kpi-tile-val">{live.avgWaitMinutes}m</div>
+                <div className="manager-kpi-tile-foot">{live.activeCounters} active counters</div>
+              </div>
             </div>
           </div>
-        ) : null}
+        ) : (
+          <p className="muted small-print manager-live-fallback">Loading live snapshot…</p>
+        )}
 
-        {live && live.byService.length > 0 ? (
-          <section className="manager-section">
-            <h2 className="manager-subtitle">Live queue by service lane</h2>
-            <div className="manager-table-wrap">
-              <table className="manager-table">
-                <thead>
-                  <tr>
-                    <th>Lane</th>
-                    <th>Waiting</th>
-                    <th>ETA (est.)</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {live.byService.map((row) => {
-                    const name = branch?.services.find((s) => s.id === row.serviceTypeId)?.name ?? row.serviceTypeId;
-                    return (
-                      <tr key={row.serviceTypeId}>
-                        <td>{name}</td>
-                        <td>{row.queueLength}</td>
-                        <td>{row.estimatedWaitMinutes == null ? "—" : `${row.estimatedWaitMinutes} min`}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+        <nav className="manager-tabs" aria-label="Manager sections">
+          <button
+            type="button"
+            className={managerTab === "counters" ? "is-active" : undefined}
+            onClick={() => setManagerTab("counters")}
+          >
+            Live floor &amp; counters
+          </button>
+          <button
+            type="button"
+            className={managerTab === "capacity" ? "is-active" : undefined}
+            onClick={() => setManagerTab("capacity")}
+          >
+            Booking &amp; weekly schedule
+          </button>
+          <button type="button" className={managerTab === "queue" ? "is-active" : undefined} onClick={() => setManagerTab("queue")}>
+            Queue &amp; charts
+          </button>
+        </nav>
+
+        {managerTab === "counters" ? (
+          <section className="manager-dash-panel manager-tab-panel" aria-labelledby="mgr-floor-heading">
+            <div className="manager-dash-panel-head">
+              <h2 id="mgr-floor-heading" className="manager-dash-panel-title">
+                Counter status
+              </h2>
+              <p className="manager-dash-panel-sub muted">
+                Each tile shows who is on the desk and lane routing. Use <strong>Configure</strong> to assign teller, allowed lanes, and primary display lane — like a branch monitoring wall with drill-down.
+              </p>
             </div>
+            <div className="manager-counter-grid manager-counter-grid--monitor">
+              {rows.map((r) => {
+                const expanded = expandedCounterId === r.id;
+                const modeKey = r.mode.toLowerCase();
+                return (
+                  <article key={r.id} className={`mgr-monitor-card${expanded ? " mgr-monitor-card--open" : ""}`}>
+                    <div className="mgr-monitor-top">
+                      <span className={`mgr-status-dot mgr-status-dot--${modeKey}`} title={r.mode} />
+                      <div className="mgr-monitor-top-main">
+                        <div className="mgr-monitor-title-row">
+                          <h3 className="mgr-monitor-title">Counter {r.number}</h3>
+                          <button
+                            type="button"
+                            className="mgr-link-btn"
+                            onClick={() => setExpandedCounterId(expanded ? null : r.id)}
+                          >
+                            {expanded ? "Hide" : "Configure"}
+                          </button>
+                        </div>
+                        <div className="mgr-monitor-staff">{staffDisplayName(r, staffPickList)}</div>
+                        <dl className="mgr-monitor-dl">
+                          <div>
+                            <dt>Status</dt>
+                            <dd>
+                              <span className={`mode-pill mode-${modeKey}`}>{r.mode}</span>
+                            </dd>
+                          </div>
+                          <div>
+                            <dt>Allowed lanes</dt>
+                            <dd className="mgr-monitor-dd-clip" title={r.allowedLanesDisplay}>
+                              {r.allowedServiceTypeIds.length === 0 ? "None — assign in Configure" : r.allowedLanesDisplay}
+                            </dd>
+                          </div>
+                          <div>
+                            <dt>Primary display</dt>
+                            <dd>{r.currentDedicatedLaneName ?? "—"}</dd>
+                          </div>
+                        </dl>
+                        <div className="mgr-ticket-placeholder" role="note">
+                          Active ticket and dwell time appear on the teller workspace; manager API does not stream per-counter tickets yet.
+                        </div>
+                      </div>
+                    </div>
+                    {expanded ? (
+                      <div className="mgr-monitor-form">
+                        <label className="manager-field">
+                          <span className="manager-field-label">Teller</span>
+                          <select
+                            className="manager-select"
+                            value={staffIdForRow(r)}
+                            disabled={busy}
+                            onChange={(e) => void onStaffChange(r.id, e.target.value)}
+                          >
+                            <option value="">Unassigned</option>
+                            {staffPickList.map((s) => (
+                              <option key={s.id} value={s.id}>
+                                {s.name} ({s.email})
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <fieldset className="manager-fieldset">
+                          <legend>Allowed lanes</legend>
+                          <p className="manager-fieldset-hint muted small-print">
+                            {r.allowedServiceTypeIds.length === 0 ? (
+                              <strong>No lanes yet</strong>
+                            ) : (
+                              <>
+                                <strong>Allowed:</strong> {r.allowedLanesDisplay}
+                              </>
+                            )}
+                          </p>
+                          <div className="manager-lane-picks manager-lane-picks--card">
+                            {(branch?.services ?? []).map((s) => (
+                              <label key={s.id} className="manager-lane-check">
+                                <input
+                                  type="checkbox"
+                                  checked={r.allowedServiceTypeIds.includes(s.id)}
+                                  disabled={busy}
+                                  onChange={(e) => void onAllowedLaneToggle(r.id, s.id, e.target.checked)}
+                                />
+                                <span>{s.name}</span>
+                              </label>
+                            ))}
+                          </div>
+                        </fieldset>
+                        <label className="manager-field">
+                          <span className="manager-field-label">Primary lane (counter display)</span>
+                          <select
+                            className="manager-select"
+                            value={r.currentDedicatedServiceTypeId ?? ""}
+                            disabled={busy}
+                            onChange={(e) => void onDedicatedLaneChange(r.id, e.target.value)}
+                          >
+                            <option value="">None</option>
+                            {(branch?.services ?? []).map((s) => (
+                              <option key={s.id} value={s.id}>
+                                {s.name}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      </div>
+                    ) : null}
+                    <footer className="mgr-monitor-actions">
+                      <button
+                        type="button"
+                        className="btn-sm btn-open"
+                        disabled={busy || r.allowedServiceTypeIds.length === 0}
+                        title={r.allowedServiceTypeIds.length === 0 ? "Assign at least one lane before Open" : undefined}
+                        onClick={() => void setMode(r.id, "Active")}
+                      >
+                        Open
+                      </button>
+                      <button type="button" className="btn-sm btn-break" disabled={busy} onClick={() => void setMode(r.id, "Break")}>
+                        Break
+                      </button>
+                      <button type="button" className="btn-sm btn-close" disabled={busy} onClick={() => void setMode(r.id, "Closed")}>
+                        Closed
+                      </button>
+                    </footer>
+                  </article>
+                );
+              })}
+            </div>
+            {rows.length === 0 ? <p className="muted">No counters for this branch.</p> : null}
           </section>
         ) : null}
 
-        <section className="manager-section">
+        {managerTab === "capacity" ? (
+          <>
+            <details className="manager-help">
+              <summary>How queue routing &amp; capacity relate (real-time)</summary>
+              <ol className="manager-flow-list">
+                <li>
+                  <strong>Customer</strong> picks a <strong>branch</strong> and a <strong>service type</strong> (lane). Their ticket is stored on that lane’s queue.
+                </li>
+                <li>
+                  <strong>Call next</strong> only pulls from that lane. A counter counts toward a lane only if it is <strong>Open (Active)</strong> and its <strong>allowed lanes</strong> include that service type (at least one lane is required — there is no all-lanes fallback).
+                </li>
+                <li>
+                  <strong>Capacity</strong> (slots, online vs walk-in split) uses <strong>active</strong> counters that can serve the lane — so opening/closing counters or changing allowed lanes immediately changes crowding and ETAs (SignalR pushes updates).
+                </li>
+                <li>
+                  <strong>Adaptive slot capacity</strong> (when enabled): manager alerts compare the next booking window’s live seat count (from counters) to active bookings so you see pressure before the grid fills.
+                </li>
+              </ol>
+            </details>
+            <section className="manager-section manager-tab-panel manager-dash-panel manager-dash-panel--flat">
           <h2 className="manager-subtitle">Capacity control (online % · slot length · weekly hours)</h2>
           <p className="muted small-print">
             Online % reserves booking capacity; the remainder is the walk-in buffer. Slot length drives how many customers fit per window per open counter.
@@ -592,9 +896,69 @@ export function ManagerCountersPage() {
             Save capacity, weekly hours &amp; adaptive rules
           </button>
         </section>
+          </>
+        ) : null}
 
-        {insights ? (
-          <section className="manager-section">
+        {managerTab === "queue" ? (
+          <>
+            {live && live.byService.length > 0 ? (
+              <section className="manager-section manager-tab-panel">
+                <h2 className="manager-subtitle">Live queue by service lane</h2>
+                <div className="manager-table-wrap">
+                  <table className="manager-table">
+                    <thead>
+                      <tr>
+                        <th>Lane</th>
+                        <th>Waiting</th>
+                        <th>ETA (est.)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {live.byService.map((row) => {
+                        const name = branch?.services.find((s) => s.id === row.serviceTypeId)?.name ?? row.serviceTypeId;
+                        return (
+                          <tr key={row.serviceTypeId}>
+                            <td>{name}</td>
+                            <td>{row.queueLength}</td>
+                            <td>{row.estimatedWaitMinutes == null ? "—" : `${row.estimatedWaitMinutes} min`}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            ) : null}
+            {(insights != null && insights.lanes.length > 0) || (live != null && live.byService.length > 0) ? (
+              <section className="manager-dash-panel manager-tab-panel">
+                <h2 className="manager-dash-panel-title">Visual summaries</h2>
+                <p className="muted small-print manager-dash-panel-sub">
+                  Mix and throughput use <strong>completed today per lane</strong> from insights; the wait strip uses the <strong>live</strong> estimate per lane. Intraday hourly curves (like classic branch monitors) need a time-series reporting feed — this is the same layout pattern with current API data.
+                </p>
+                <div className="mgr-chart-grid">
+                  {insights != null && insights.lanes.length > 0 ? (
+                    <div className="mgr-chart-cell mgr-chart-cell--panel">
+                      <ServiceCompletedMixChart lanes={insights.lanes} />
+                    </div>
+                  ) : null}
+                  {insights != null && insights.lanes.length > 0 ? (
+                    <div className="mgr-chart-cell mgr-chart-cell--panel">
+                      <LaneThroughputBars lanes={insights.lanes} />
+                    </div>
+                  ) : null}
+                  {live != null && live.byService.length > 0 ? (
+                    <div className="mgr-chart-cell mgr-chart-cell--panel mgr-chart-cell--wide">
+                      <SnapshotWaitBars
+                        byService={live.byService}
+                        resolveName={(id) => branch?.services.find((s) => s.id === id)?.name ?? id}
+                      />
+                    </div>
+                  ) : null}
+                </div>
+              </section>
+            ) : null}
+            {insights ? (
+          <section className="manager-section manager-tab-panel">
             <h2 className="manager-subtitle">Alerts, suggestions &amp; lane analytics</h2>
             <p className="muted small-print">
               No-shows today (UTC day): <strong>{insights.noShowsToday}</strong>
@@ -659,109 +1023,17 @@ export function ManagerCountersPage() {
               </table>
             </div>
             <p className="muted small-print">
-              *Counters that are <strong>Active</strong> and either <strong>General</strong> (no allowed lanes) or have that lane in their allowed set.
+              *Counters that are <strong>Active</strong> and have that lane in their allowed set.
             </p>
             <p className="muted small-print">
               **Next service window after “now” in branch timezone — capacities reflect adaptive rules and current counter layout.
             </p>
           </section>
+            ) : (
+              <p className="muted small-print manager-tab-panel">Lane-level analytics will appear when the API returns data.</p>
+            )}
+          </>
         ) : null}
-
-        <section className="manager-section">
-          <h2 className="manager-subtitle">Counter management · allowed lanes &amp; staff</h2>
-          <div className="manager-table-wrap">
-            <table className="manager-table manager-table-tall">
-                <thead>
-                <tr>
-                  <th>#</th>
-                  <th>Allowed lanes</th>
-                  <th>Primary lane (counter display)</th>
-                  <th>Staff</th>
-                  <th>Status</th>
-                  <th>Open / break / closed</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r) => (
-                  <tr key={r.id}>
-                    <td>{r.number}</td>
-                    <td>
-                      <p className="muted small-print manager-lane-summary" title={r.allowedLanesDisplay}>
-                        {r.allowedServiceTypeIds.length === 0 ? (
-                          <strong>General</strong>
-                        ) : (
-                          <>
-                            <strong>Limited:</strong> {r.allowedLanesDisplay}
-                          </>
-                        )}
-                      </p>
-                      <div className="manager-lane-picks">
-                        {(branch?.services ?? []).map((s) => (
-                          <label key={s.id} className="manager-lane-check">
-                            <input
-                              type="checkbox"
-                              checked={r.allowedServiceTypeIds.includes(s.id)}
-                              disabled={busy}
-                              onChange={(e) => void onAllowedLaneToggle(r.id, s.id, e.target.checked)}
-                            />
-                            <span>{s.name}</span>
-                          </label>
-                        ))}
-                      </div>
-                    </td>
-                    <td>
-                      <select
-                        className="manager-select"
-                        value={r.currentDedicatedServiceTypeId ?? ""}
-                        disabled={busy}
-                        onChange={(e) => void onDedicatedLaneChange(r.id, e.target.value)}
-                      >
-                        <option value="">— None —</option>
-                        {(branch?.services ?? []).map((s) => (
-                          <option key={s.id} value={s.id}>
-                            {s.name}
-                          </option>
-                        ))}
-                      </select>
-                      {r.currentDedicatedLaneName ? (
-                        <p className="muted small-print">Now: {r.currentDedicatedLaneName}</p>
-                      ) : null}
-                    </td>
-                    <td>
-                      <select
-                        className="manager-select"
-                        value={staffIdForRow(r)}
-                        disabled={busy}
-                        onChange={(e) => void onStaffChange(r.id, e.target.value)}
-                      >
-                        <option value="">— Unassigned —</option>
-                        {staffPickList.map((s) => (
-                          <option key={s.id} value={s.id}>
-                            {s.name} ({s.email})
-                          </option>
-                        ))}
-                      </select>
-                    </td>
-                    <td>
-                      <span className={`mode-pill mode-${r.mode.toLowerCase()}`}>{r.mode}</span>
-                    </td>
-                    <td className="manager-actions">
-                      <button type="button" className="btn-sm btn-open" disabled={busy} onClick={() => void setMode(r.id, "Active")}>
-                        Open
-                      </button>
-                      <button type="button" className="btn-sm btn-break" disabled={busy} onClick={() => void setMode(r.id, "Break")}>
-                        Break
-                      </button>
-                      <button type="button" className="btn-sm btn-close" disabled={busy} onClick={() => void setMode(r.id, "Closed")}>
-                        Closed
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
       </main>
     </div>
   );

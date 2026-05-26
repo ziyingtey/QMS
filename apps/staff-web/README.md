@@ -1,3 +1,26 @@
+# IH-QMS Staff Web
+
+The staff UI calls **QMS.Api** for login, branches, queue, and SignalR.
+
+## “Failed to fetch” on one laptop but not another
+
+The browser only runs `fetch` / SignalR on **that** machine. **`http://127.0.0.1:5154` is always “this laptop”**, not your Windows API host.
+
+**Recommended (dev): use the Vite proxy** so the browser only talks to the Vite dev server; Node forwards to the API (works even when the browser cannot reach the API IP directly).
+
+In `apps/staff-web/.env.local`:
+
+```env
+VITE_DEV_USE_PROXY=true
+VITE_DEV_API_PROXY_TARGET=http://<WINDOWS_LAN_IP>:5154
+```
+
+Then **restart** `npm run dev`. Open the site at the URL Vite prints (e.g. `http://localhost:5173`). Login calls go to `http://localhost:5173/api/...` and Vite proxies them to Windows.
+
+**Without proxy:** set `VITE_API_URL=http://<WINDOWS_LAN_IP>:5154` and ensure the **browser’s** machine can reach that IP (firewall, `dotnet run --urls "http://0.0.0.0:5154"`).
+
+---
+
 # React + TypeScript + Vite
 
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.

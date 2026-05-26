@@ -554,7 +554,7 @@ public sealed class QmsQueueService(
             ?? throw new InvalidOperationException("No counter assigned to this staff user.");
 
         var lane = c.AllowedServices.Count == 0
-            ? "General (all lanes)"
+            ? "No lanes assigned"
             : string.Join(", ", c.AllowedServices.Select(a => a.ServiceType.Name));
         var ids = c.AllowedServices.Select(a => a.ServiceTypeId).ToList();
         return new MyCounterDto(c.Number, c.Branch.Name, lane, c.Mode.ToString(), c.BranchId, ids);
@@ -625,7 +625,7 @@ public sealed class QmsQueueService(
             {
                 var ids = c.AllowedServices.Select(a => a.ServiceTypeId).ToList();
                 var display = c.AllowedServices.Count == 0
-                    ? "General (all lanes)"
+                    ? "— (assign lanes)"
                     : string.Join(", ", c.AllowedServices.Select(a => a.ServiceType.Name));
                 return new ManagerCounterRowDto(
                     c.Id,
@@ -646,10 +646,14 @@ public sealed class QmsQueueService(
         CounterMode mode,
         CancellationToken cancellationToken = default)
     {
-        var counter = await db.Counters.FirstOrDefaultAsync(
-                          c => c.Id == counterId && c.BranchId == branchId,
-                          cancellationToken)
+        var counter = await db.Counters
+                          .Include(c => c.AllowedServices)
+                          .FirstOrDefaultAsync(c => c.Id == counterId && c.BranchId == branchId, cancellationToken)
                       ?? throw new InvalidOperationException("Counter not found for this branch.");
+
+        if (mode == CounterMode.Active && counter.AllowedServices.Count == 0)
+            throw new InvalidOperationException(
+                "Assign at least one allowed lane on this counter before opening (Active). Counters with no lanes stay Closed until configured.");
 
         counter.Mode = mode;
         await db.SaveChangesAsync(cancellationToken);
@@ -704,6 +708,9 @@ public sealed class QmsQueueService(
                       ?? throw new InvalidOperationException("Counter not found for this branch.");
 
         var distinct = serviceTypeIds.Distinct().ToList();
+        if (distinct.Count == 0)
+            throw new InvalidOperationException("Each counter must have at least one allowed lane (General counters are disabled).");
+
         foreach (var sid in distinct)
         {
             var exists = await db.ServiceTypes.AnyAsync(
@@ -735,15 +742,18 @@ public sealed class QmsQueueService(
 
         if (dedicatedServiceTypeId is { } sid)
         {
+            if (counter.AllowedServices.Count == 0)
+                throw new InvalidOperationException("Assign at least one allowed lane on this counter before setting the primary lane.");
+
             var exists = await db.ServiceTypes.AnyAsync(
                 s => s.Id == sid && s.BranchId == branchId,
                 cancellationToken);
             if (!exists)
                 throw new InvalidOperationException("Service type is not valid for this branch.");
 
-            if (counter.AllowedServices.Count > 0 && counter.AllowedServices.All(a => a.ServiceTypeId != sid))
+            if (counter.AllowedServices.All(a => a.ServiceTypeId != sid))
                 throw new InvalidOperationException(
-                    "That lane is not in this counter’s allowed set. Add the lane under allowed lanes first, or clear lanes to use a General counter.");
+                    "That lane is not in this counter’s allowed set. Add it under allowed lanes first.");
         }
 
         counter.CurrentServiceTypeId = dedicatedServiceTypeId;
@@ -832,12 +842,20 @@ public sealed class QmsQueueService(
         await hubContext.Clients.Group(QueueHub.BranchGroup(branchId)).SendAsync("CountersUpdated", branchId, cancellationToken);
     }
 
-    public async Task<IReadOnlyList<AssignableStaffDto>> ListAssignableStaffAsync(CancellationToken cancellationToken = default) =>
-        await db.StaffMembers.AsNoTracking()
-            .Where(s => s.Role == StaffRoleKind.Staff || s.Role == StaffRoleKind.Manager)
+    public async Task<IReadOnlyList<AssignableStaffDto>> ListAssignableStaffForBranchAsync(
+        Guid branchId,
+        CancellationToken cancellationToken = default)
+    {
+        var exists = await db.Branches.AsNoTracking().AnyAsync(b => b.Id == branchId, cancellationToken);
+        if (!exists)
+            throw new InvalidOperationException("Branch not found.");
+
+        return await db.StaffMembers.AsNoTracking()
+            .Where(s => s.BranchId == branchId && (s.Role == StaffRoleKind.Staff || s.Role == StaffRoleKind.Manager))
             .OrderBy(s => s.Email)
             .Select(s => new AssignableStaffDto(s.Id, s.Email, s.Name, s.Role.ToString()))
             .ToListAsync(cancellationToken);
+    }
 
     public async Task<int> CountActiveLaneCountersAsync(Guid branchId, Guid laneServiceTypeId, CancellationToken cancellationToken)
     {
@@ -851,7 +869,7 @@ public sealed class QmsQueueService(
     private static bool CounterCanServeLane(Counter counter, Guid laneServiceTypeId)
     {
         if (counter.AllowedServices.Count == 0)
-            return true;
+            return false;
         return counter.AllowedServices.Any(a => a.ServiceTypeId == laneServiceTypeId);
     }
 
@@ -932,7 +950,7 @@ public sealed class QmsQueueService(
             if (w > 0 && ac == 0)
                 alerts.Add(new ManagerInsightAlertDto(
                     "warning",
-                    $"Lane «{svc.Name}» has {w} waiting but no counter open for that lane (open a General counter or add this lane to a counter’s allowed set)."));
+                    $"Lane «{svc.Name}» has {w} waiting but no counter open for that lane (assign this lane on an Active counter)."));
 
             if (!double.IsInfinity(eta) && eta > 30)
                 alerts.Add(new ManagerInsightAlertDto(
@@ -1000,7 +1018,7 @@ public sealed class QmsQueueService(
                         suggestions.Add(new ManagerSuggestionDto(
                             "add_lane_then_open",
                             $"Review counter #{closedOnly.Number}",
-                            $"Lane «{svc.Name}» has {w} waiting but no idle counter is configured for that lane. Add the lane to a counter’s allowed set (or use a General counter) then open it.",
+                            $"Lane «{svc.Name}» has {w} waiting but no idle counter is configured for that lane. Add the lane to a counter’s allowed set then open it.",
                             svc.Id,
                             closedOnly.Number,
                             closedOnly.Id));

@@ -25,6 +25,8 @@ export function useBranchRealtime(opts: Options): void {
     const conn = new signalR.HubConnectionBuilder()
       .withUrl(`${API_BASE}/hubs/queue${qs}`)
       .withAutomaticReconnect([0, 2000, 5000, 10000])
+      /* Default Error-level logs call console.error → RN LogBox red screen on timeouts / sleep / API restarts. */
+      .configureLogging(signalR.LogLevel.None)
       .build();
 
     const fire = () => cbRef.current();

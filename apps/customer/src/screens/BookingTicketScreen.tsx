@@ -5,13 +5,14 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { PrimaryButton } from "../components/PrimaryButton";
 import { useCustomer } from "../context/CustomerContext";
 import type { BookingStackParamList } from "../navigation/navigationRef";
+import { exitBookingFlow } from "../navigation/bookingExit";
 import { theme } from "../theme";
 import { formatBookingSlotDateTime, defaultBranchOffsetMinutes } from "../utils/dateFormat";
 
 type Props = NativeStackScreenProps<BookingStackParamList, "BookingTicket">;
 
 export function BookingTicketScreen({ navigation, route }: Props) {
-  const { created, branchId } = route.params;
+  const { created, branchId, returnTo } = route.params;
   const insets = useSafeAreaInsets();
   const topPad = Platform.OS === "android" ? (RNStatusBar.currentHeight ?? 0) + 8 : Math.max(insets.top, 12);
   const { checkIn, navigateToQueueTrack, branches, cancelBooking, busy } = useCustomer();
@@ -26,7 +27,7 @@ export function BookingTicketScreen({ navigation, route }: Props) {
       <Text style={styles.service}>{created.serviceName}</Text>
       <Text style={styles.ticket}>{created.ticketNumber}</Text>
       <Text style={styles.when}>{formatBookingSlotDateTime(created.slotStart, created.slotEnd, branchOffset)}</Text>
-      <PrimaryButton label="I've arrived — check in" icon="location-outline" onPress={() => void checkIn(created.bookingId)} />
+      <PrimaryButton label="I've arrived" icon="checkmark-circle-outline" onPress={() => void checkIn(created.bookingId)} />
       <PrimaryButton
         label="Live queue status"
         variant="ghost"
@@ -50,7 +51,7 @@ export function BookingTicketScreen({ navigation, route }: Props) {
                 onPress: () => {
                   void (async () => {
                     const ok = await cancelBooking(created.bookingId);
-                    if (ok) navigation.navigate("BookingBranches");
+                    if (ok) exitBookingFlow(navigation, returnTo);
                   })();
                 },
               },
@@ -58,7 +59,7 @@ export function BookingTicketScreen({ navigation, route }: Props) {
           )
         }
       />
-      <PrimaryButton label="Done" variant="ghost" onPress={() => navigation.navigate("BookingBranches")} />
+      <PrimaryButton label="Done" variant="ghost" onPress={() => exitBookingFlow(navigation, returnTo)} />
     </View>
   );
 }

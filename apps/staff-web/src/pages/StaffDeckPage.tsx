@@ -60,10 +60,11 @@ export function StaffDeckPage() {
           const list = br?.services ?? [];
           const filtered =
             !mc.allowedServiceTypeIds || mc.allowedServiceTypeIds.length === 0
-              ? list
+              ? []
               : list.filter((s) => mc.allowedServiceTypeIds.includes(s.id));
-          const pick = filtered[0] ?? list[0];
+          const pick = filtered[0] ?? undefined;
           if (pick) setServiceId(pick.id);
+          else setServiceId("");
         } catch {
           if (b.length > 0) {
             setBranchId(b[0].id);
@@ -101,6 +102,7 @@ export function StaffDeckPage() {
     const conn = new signalR.HubConnectionBuilder()
       .withUrl(`${API_BASE}/hubs/queue?access_token=${encodeURIComponent(token)}`)
       .withAutomaticReconnect()
+      .configureLogging(signalR.LogLevel.None)
       .build();
 
     conn.on("QueueUpdated", () => {
@@ -161,9 +163,10 @@ export function StaffDeckPage() {
 
   const selectableServices = useMemo(() => {
     const list = branch?.services ?? [];
-    if (!myCounter || myCounter.allowedServiceTypeIds.length === 0) return list;
+    if (!myCounter) return list;
+    if (!myCounter.allowedServiceTypeIds || myCounter.allowedServiceTypeIds.length === 0) return [];
     const filtered = list.filter((s) => myCounter.allowedServiceTypeIds.includes(s.id));
-    return filtered.length > 0 ? filtered : list;
+    return filtered.length > 0 ? filtered : [];
   }, [branch?.services, myCounter]);
 
   useEffect(() => {
@@ -180,9 +183,10 @@ export function StaffDeckPage() {
     navigate("/login");
   };
 
-  const onCallNext = async (e: FormEvent) => {
-    e.preventDefault();
+  const onCallNext = async (e?: FormEvent) => {
+    e?.preventDefault();
     if (!token || !branchId || !serviceId) return;
+    if (!myCounter?.allowedServiceTypeIds?.length) return;
     setBusy(true);
     try {
       const r = await apiCallNext(token, branchId, serviceId);
@@ -223,6 +227,24 @@ export function StaffDeckPage() {
     }
   };
 
+  const onSkip = async () => {
+    if (!token || !ticket) return;
+    if (!servingActive) return;
+    setBusy(true);
+    try {
+      await apiEndService(token, ticket);
+      push(`Skip / end ${ticket}`);
+      setTicket("");
+      setServingActive(false);
+      await refreshWaiting();
+      await refreshLive();
+    } catch (e) {
+      push(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const onComplete = async () => {
     if (!token || !ticket || !servingActive) return;
     setBusy(true);
@@ -241,35 +263,51 @@ export function StaffDeckPage() {
   };
 
   const displayName = email?.split("@")[0] ?? "Staff";
+  const staffIdDisplay = email?.replace(/@.+/, "") ?? "—";
+  const laneBadge =
+    myCounter?.serviceLaneName?.split(",")[0]?.trim() ||
+    branch?.services.find((s) => s.id === serviceId)?.name ||
+    "Service";
+  const showLanePicker = selectableServices.length > 1;
+  const lanesConfigured = (myCounter?.allowedServiceTypeIds?.length ?? 0) > 0;
+  const canCallNext = Boolean(lanesConfigured && serviceId);
+  const serviceNameForTicket = branch?.services.find((s) => s.id === serviceId)?.name ?? laneBadge;
 
   return (
-    <div className="deck-page">
-      <header className="deck-topbar">
-        <div className="brand-inline">
-          <span className="brand-mark" />
-          <span className="brand-text">IH-QMS</span>
+    <div className="deck-page deck-page--staff">
+      <header className="deck-topbar deck-topbar--bank">
+        <div className="brand-inline brand-inline--bank">
+          <span className="brand-mark brand-mark--pbb" title="Demo brand mark" />
+          <span className="brand-text brand-text--bank">IH-QMS</span>
         </div>
-        <div className="topbar-center">
-          <div className="staff-chip">
-            <div className="staff-chip-title">Counter {myCounter?.counterNumber ?? "—"}</div>
-            <div className="staff-chip-sub">{displayName}</div>
-          </div>
-        </div>
-        <div className="topbar-actions">
-          <span className="live-pill" title="SignalR live updates">
+        <div className="topbar-actions topbar-actions--spread">
+          <span className="live-pill" title="Live queue updates">
             <span className="live-dot" /> Live
           </span>
+          <div className="dash-user-block">
+            <span className="dash-staff-id">{staffIdDisplay}</span>
+            <span className="dash-avatar" aria-hidden title={email ?? ""}>
+              {(displayName[0] ?? "?").toUpperCase()}
+            </span>
+          </div>
           {role === "Manager" ? (
-            <Link to="/manager" className="link-muted">
-              Branch manager →
+            <Link to="/manager" className="link-muted" title="Assign tellers, lanes, and counter modes">
+              Manager console
             </Link>
           ) : null}
-          <span className="branch-pill">{myCounter?.branchName ?? branch?.name ?? "Branch"}</span>
           <button type="button" className="btn-ghost" onClick={() => void onLogout()}>
-            Logout
+            Log out
           </button>
         </div>
       </header>
+
+      <div className="dash-identity-card">
+        <div className="dash-identity-main">
+          <h1 className="dash-counter-title">Counter {myCounter?.counterNumber ?? "—"}</h1>
+          <p className="dash-counter-name">{displayName}</p>
+        </div>
+        <span className="dash-branch-badge">{myCounter?.branchName ?? branch?.name ?? "Branch"}</span>
+      </div>
 
       <div className="deck-kpi-row">
         <div className="kpi-card">
@@ -316,43 +354,56 @@ export function StaffDeckPage() {
               {ticket ? (
                 <>
                   <div className="ticket-hero">{ticket}</div>
-                  <div className="ticket-sub">{branch?.services.find((s) => s.id === serviceId)?.name ?? "Service"}</div>
+                  <div className="ticket-sub">{serviceNameForTicket}</div>
                   {servingActive ? (
-                    <p className="ticket-serving-badge">Serving — you can complete when finished</p>
+                    <p className="ticket-serving-badge">Serving — tap Complete when the visit is finished.</p>
                   ) : (
-                    <p className="ticket-serving-warn">Service not started — use Start service (sidebar) if the button did not run.</p>
+                    <p className="ticket-serving-warn">
+                      Service not started yet — use <strong>Start service</strong> in the sidebar if needed.
+                    </p>
                   )}
                 </>
               ) : (
-                <>
+                <div className="dash-empty-customer">
+                  <div className="dash-empty-icon-wrap">
+                    <span className="dash-empty-icon">👤</span>
+                  </div>
                   <div className="ticket-placeholder-title">No customer being served</div>
                   <div className="ticket-placeholder-sub">
-                    {waiting.length} customer{waiting.length === 1 ? "" : "s"} waiting in this lane
+                    {waiting.length} customer{waiting.length === 1 ? "" : "s"} waiting in your queue
                   </div>
-                </>
+                </div>
               )}
             </div>
-            <div className="current-actions">
-              <button
-                type="button"
-                className="btn-complete"
-                disabled={busy || !ticket || !servingActive}
-                title={ticket && !servingActive ? "Start service first (or wait for auto-start after Call next)" : undefined}
-                onClick={() => void onComplete()}
-              >
-                Complete service
-              </button>
-              <button type="button" className="btn-skip" disabled={busy || !ticket} onClick={() => push("Skip: use manager transfer in a full build")}>
-                Skip
-              </button>
-            </div>
+            {!ticket ? (
+              <div className="call-next-below-card">
+                <button
+                  type="button"
+                  className="btn-call-next btn-call-next--below"
+                  disabled={busy || !canCallNext}
+                  title={!lanesConfigured ? "Ask your manager to assign at least one lane to this counter, then Open it." : undefined}
+                  onClick={() => void onCallNext()}
+                >
+                  Call next customer
+                </button>
+              </div>
+            ) : (
+              <div className="current-actions">
+                <button type="button" className="btn-complete" disabled={busy || !servingActive} onClick={() => void onComplete()}>
+                  Complete service
+                </button>
+                <button
+                  type="button"
+                  className="btn-skip"
+                  disabled={busy || !servingActive}
+                  title={!servingActive ? "Start service first" : "End this visit (same as complete for now)"}
+                  onClick={() => void onSkip()}
+                >
+                  Skip
+                </button>
+              </div>
+            )}
           </div>
-
-          <form className="call-next-bar" onSubmit={(e) => void onCallNext(e)}>
-            <button type="submit" className="btn-call-next" disabled={busy}>
-              Call next customer
-            </button>
-          </form>
 
           <div className="panel queue-panel">
             <div className="queue-head">
@@ -366,7 +417,10 @@ export function StaffDeckPage() {
                   <span className="queue-idx">{w.position}</span>
                   <div className="queue-main">
                     <div className="queue-ticket">{w.ticketNumber}</div>
-                    <div className="queue-meta">{w.entryType}</div>
+                    <div className="queue-meta">
+                      <span className="queue-lane-badge">{laneBadge}</span>
+                      <span className="queue-entry-type">{w.entryType}</span>
+                    </div>
                   </div>
                   <div className="queue-eta">{w.estimatedWaitMinutes == null ? "—" : `${w.estimatedWaitMinutes} min`}</div>
                 </li>
@@ -374,27 +428,34 @@ export function StaffDeckPage() {
             </ul>
           </div>
 
-          <label className="lane-select">
-            Service lane (call next &amp; queue list)
-            <span className="field-hint">
-              {myCounter && myCounter.allowedServiceTypeIds.length > 0
-                ? "Showing lanes this counter may serve."
-                : "General counter: pick any branch lane."}
-            </span>
-            <select
-              value={serviceId}
-              onChange={(e) => {
-                setServiceId(e.target.value);
-                void refreshWaiting();
-              }}
-            >
-              {selectableServices.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
-                </option>
-              ))}
-            </select>
-          </label>
+          {myCounter && !lanesConfigured ? (
+            <p className="lane-assigned-note lane-assigned-note--warn">
+              No service lane is assigned to this counter yet. Your branch manager must tick at least one allowed lane and set the counter to{" "}
+              <strong>Open</strong> before you can call customers.
+            </p>
+          ) : showLanePicker ? (
+            <label className="lane-select">
+              Service lane (manager assigns allowed lanes for this counter)
+              <span className="field-hint">Call next and the list below use the lane you pick.</span>
+              <select
+                value={serviceId}
+                onChange={(e) => {
+                  setServiceId(e.target.value);
+                  void refreshWaiting();
+                }}
+              >
+                {selectableServices.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : myCounter && selectableServices.length === 1 ? (
+            <p className="lane-assigned-note">
+              Lane for this counter: <strong>{selectableServices[0]?.name}</strong> (set by branch manager).
+            </p>
+          ) : null}
         </section>
 
         <aside className="deck-side-col">
@@ -402,16 +463,48 @@ export function StaffDeckPage() {
             <h2 className="side-title">My counter status</h2>
             <div className="side-card">
               <div className="side-label">Counter number</div>
-              <div className="side-value-lg">{myCounter?.counterNumber ?? "—"}</div>
+              <div className="side-value-lg side-value--accent">{myCounter?.counterNumber ?? "—"}</div>
             </div>
             <div className="side-card">
-              <div className="side-label">Service type</div>
+              <div className="side-label">Service type / lane</div>
               <div className="side-value">{myCounter?.serviceLaneName ?? "—"}</div>
             </div>
             <div className="side-card">
-              <div className="side-label">Status (read only)</div>
+              <div className="side-label">Status</div>
               <div className="side-value">{myCounter?.mode ?? "—"}</div>
-              <p className="side-hint">Open / break / closed is controlled by a branch manager.</p>
+              <p className="side-hint">Managers set Open / Break / Closed and assign staff to counters (up to 8 per branch).</p>
+            </div>
+            <div className="side-counter-actions">
+              {role === "Manager" ? (
+                <Link to="/manager" className="btn-counter-mode btn-counter-mode--close">
+                  Close / Break (manager)
+                </Link>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    className="btn-counter-mode btn-counter-mode--close"
+                    onClick={() =>
+                      window.alert(
+                        "Ask your branch manager to set this counter to Closed or Break from the Manager screen.",
+                      )
+                    }
+                  >
+                    Close
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-counter-mode btn-counter-mode--break"
+                    onClick={() =>
+                      window.alert(
+                        "Ask your branch manager to set this counter to Break from the Manager screen.",
+                      )
+                    }
+                  >
+                    Break
+                  </button>
+                </>
+              )}
             </div>
             <div className="side-actions">
               <button
@@ -422,14 +515,14 @@ export function StaffDeckPage() {
               >
                 {servingActive ? "Service started" : "Start service"}
               </button>
-              <p className="side-hint">Call next auto-starts service; use this if auto-start failed.</p>
+              <p className="side-hint">Call next usually starts service automatically; use this if it did not.</p>
             </div>
           </div>
 
-          <div className="panel log-panel">
-            <h3>Live log</h3>
+          <details className="panel log-panel log-panel--details">
+            <summary>Technical log</summary>
             <pre className="log-pre">{log.join("\n")}</pre>
-          </div>
+          </details>
         </aside>
       </div>
     </div>

@@ -282,17 +282,11 @@ export function CustomerProvider({ children }: { children: React.ReactNode }) {
       if (!t) return;
       setBusy(true);
       try {
-        const { status: perm } = await Location.requestForegroundPermissionsAsync();
-        let coords: { latitude: number; longitude: number } | undefined;
-        if (perm === "granted") {
-          const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-          coords = { latitude: loc.coords.latitude, longitude: loc.coords.longitude };
-        }
-        await apiCheckIn(t, bookingId, coords);
-        Alert.alert("Checked in", coords ? "Location sent — server checks geofence when coordinates are provided." : "Checked in without GPS.");
+        await apiCheckIn(t, bookingId);
+        Alert.alert("Marked as arrived", "You can join the call queue for your slot. Pull down on Queue to refresh.");
         await refreshBookings();
       } catch (e) {
-        Alert.alert("Check-in", e instanceof Error ? e.message : String(e));
+        Alert.alert("Arrived", e instanceof Error ? e.message : String(e));
       } finally {
         setBusy(false);
       }

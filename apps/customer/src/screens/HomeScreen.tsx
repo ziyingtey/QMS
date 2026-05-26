@@ -189,48 +189,32 @@ export function HomeScreen({
   const recommend = sorted[0]?.branch;
 
   return (
-    <View style={[styles.screen, { paddingTop: topPad }]}>
+    <View style={styles.screen}>
       <StatusBar style="light" />
       <ScrollView
-        contentContainerStyle={{ paddingBottom: 110, paddingHorizontal: 18 }}
+        style={styles.scrollView}
+        contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl
             refreshing={homeRefreshing}
             onRefresh={() => void onHomeRefresh()}
-            tintColor={theme.accent}
-            colors={[theme.accent]}
-            progressBackgroundColor="#1e293b"
+            tintColor="#ffffff"
+            colors={["#ffffff"]}
+            progressBackgroundColor={theme.headerNavy}
           />
         }
       >
-        <View style={[styles.headerBlock, { marginHorizontal: -18, paddingHorizontal: 18 }]}>
+        <View style={[styles.headerBlock, { marginHorizontal: -18, paddingHorizontal: 18, paddingTop: topPad }]}>
           <View style={styles.headerRow}>
             <View style={styles.avatarCircle}>
               <Text style={styles.avatarLetter}>{helloName.charAt(0)}</Text>
             </View>
             <View style={{ flex: 1 }}>
               <Text style={styles.hello}>Hello {helloName}!</Text>
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                <Text style={[styles.addressLine, { flex: 1 }]} numberOfLines={3}>
-                  {locationBusy ? "Getting GPS…" : userLocationLabel ?? "Fetching your location…"}
-                </Text>
-                <Pressable
-                  onPress={() =>
-                    Alert.alert(
-                      "How distance works",
-                      "Distances use your phone’s latest GPS fix (Expo Location) vs each branch’s coordinates.\n\n" +
-                        "• Pull down on this screen to refresh lists and update your location.\n" +
-                        "• Real phone: turn on Location services.\n" +
-                        "• Android Emulator: open ⋯ (Extended controls) → Location, set Lat/Long to where you want to simulate, then pull to refresh.",
-                    )
-                  }
-                  hitSlop={6}
-                  style={({ pressed }) => [styles.gpsChip, { backgroundColor: "rgba(255,255,255,0.22)" }, pressed && { opacity: 0.85 }]}
-                >
-                  <Ionicons name="help-circle-outline" size={16} color="#fff" />
-                </Pressable>
-              </View>
+              <Text style={styles.addressLine} numberOfLines={3}>
+                {locationBusy ? "Getting GPS…" : userLocationLabel ?? "Fetching your location…"}
+              </Text>
               <Text style={styles.phoneLine}>{profile?.phone?.trim() || "Customer account"}</Text>
             </View>
             <View style={styles.headerIcons}>
@@ -241,6 +225,22 @@ export function HomeScreen({
                 hitSlop={8}
               >
                 <Ionicons name="notifications-outline" size={22} color="#fff" />
+              </Pressable>
+              <Pressable
+                accessibilityLabel="How distance works"
+                onPress={() =>
+                  Alert.alert(
+                    "How distance works",
+                    "Distances use your phone’s latest GPS fix (Expo Location) vs each branch’s coordinates.\n\n" +
+                      "• Pull down on this screen to refresh lists and update your location.\n" +
+                      "• Real phone: turn on Location services.\n" +
+                      "• Android Emulator: open ⋯ (Extended controls) → Location, set Lat/Long to where you want to simulate, then pull to refresh.",
+                  )
+                }
+                style={styles.iconBtn}
+                hitSlop={8}
+              >
+                <Ionicons name="help-circle-outline" size={22} color="#fff" />
               </Pressable>
             </View>
           </View>
@@ -301,23 +301,40 @@ export function HomeScreen({
           </Text>
         </View>
 
-        <View style={styles.sortRow}>
-          <Text style={styles.sortLabel}>Sort</Text>
-          {(
-            [
-              ["distance", "Distance"],
-              ["wait", "Wait"],
-              ["services", "Services"],
-              ["name", "A–Z"],
-            ] as const
-          ).map(([key, label]) => {
-            const on = sortMode === key;
-            return (
-              <Pressable key={key} onPress={() => setSortMode(key)} style={[styles.sortChip, on && styles.sortChipOn]}>
-                <Text style={[styles.sortChipText, on && styles.sortChipTextOn]}>{label}</Text>
-              </Pressable>
-            );
-          })}
+        <View style={styles.sortCard}>
+          <Text style={styles.sortCardTitle}>Sort branches</Text>
+          <View style={styles.sortSegmentTrack} accessibilityRole="tablist">
+            {(
+              [
+                ["distance", "Distance", "navigate-outline", "Closest branches first"] as const,
+                ["wait", "Wait time", "hourglass-outline", "Shortest estimated wait"] as const,
+                ["services", "Services", "layers-outline", "Branches with more service types first"] as const,
+                ["name", "A–Z", "text-outline", "Alphabetical by branch name"] as const,
+              ] as const
+            ).map(([key, label, icon, hint]) => {
+              const on = sortMode === key;
+              return (
+                <Pressable
+                  key={key}
+                  accessibilityRole="tab"
+                  accessibilityState={{ selected: on }}
+                  accessibilityHint={hint}
+                  onPress={() => setSortMode(key)}
+                  style={[styles.sortSegment, on && styles.sortSegmentOn]}
+                >
+                  <Ionicons name={icon} size={15} color={on ? "#fff" : theme.textMutedOnLight} />
+                  <Text
+                    style={[styles.sortSegmentLabel, on && styles.sortSegmentLabelOn]}
+                    numberOfLines={1}
+                    adjustsFontSizeToFit
+                    minimumFontScale={0.82}
+                  >
+                    {label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
         </View>
 
         {serviceFilterOptions.length > 0 ? (
@@ -364,7 +381,7 @@ export function HomeScreen({
                 "Booking" as never,
                 {
                   screen: "BookingServices",
-                  params: { branch: b },
+                  params: { branch: b, returnTo: "home" },
                 } as never,
               )
             }
@@ -469,7 +486,15 @@ function NearbyBranchCard({
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: theme.screenBg },
+  /** Pull-to-refresh overscroll on iOS shows this — must match header navy */
+  screen: { flex: 1, backgroundColor: theme.headerNavy },
+  scrollView: { flex: 1, backgroundColor: theme.headerNavy },
+  scrollContent: {
+    flexGrow: 1,
+    paddingBottom: 110,
+    paddingHorizontal: 18,
+    backgroundColor: theme.screenBg,
+  },
   headerBlock: {
     backgroundColor: theme.headerNavy,
     paddingBottom: 16,
@@ -491,16 +516,7 @@ const styles = StyleSheet.create({
   hello: { fontSize: 22, fontWeight: "800", color: "#fff" },
   addressLine: { fontSize: 13, color: "rgba(255,255,255,0.85)", marginTop: 6, lineHeight: 18 },
   phoneLine: { fontSize: 12, color: "rgba(255,255,255,0.7)", marginTop: 4 },
-  gpsChip: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    backgroundColor: "#e2e8f0",
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 12,
-  },
-  headerIcons: { alignItems: "flex-end", gap: 8 },
+  headerIcons: { flexDirection: "row", alignItems: "flex-start", gap: 8 },
   iconBtn: {
     width: 44,
     height: 44,
@@ -551,19 +567,59 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
   promoText: { flex: 1, color: "#f5f3ff", fontSize: 13 },
-  sortRow: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" },
-  sortLabel: { fontSize: 13, fontWeight: "800", color: theme.textMutedOnLight, marginRight: 4 },
-  sortChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 12,
+  sortCard: {
     backgroundColor: "#fff",
+    borderRadius: 16,
+    padding: 14,
+    marginBottom: 14,
     borderWidth: 1,
     borderColor: theme.borderLight,
+    shadowColor: "#0f172a",
+    shadowOpacity: 0.06,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
   },
-  sortChipOn: { backgroundColor: theme.primaryDark, borderColor: theme.primaryDark },
-  sortChipText: { fontSize: 12, fontWeight: "700", color: theme.textMutedOnLight },
-  sortChipTextOn: { color: "#fff" },
+  sortCardTitle: {
+    fontSize: 12,
+    fontWeight: "800",
+    color: theme.textMutedOnLight,
+    letterSpacing: 0.4,
+    textTransform: "uppercase",
+    marginBottom: 10,
+  },
+  sortSegmentTrack: {
+    flexDirection: "row",
+    backgroundColor: "#eef2f7",
+    borderRadius: 14,
+    padding: 4,
+    gap: 4,
+  },
+  sortSegment: {
+    flex: 1,
+    minWidth: 0,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 4,
+    paddingVertical: 10,
+    paddingHorizontal: 4,
+    borderRadius: 11,
+  },
+  sortSegmentOn: {
+    backgroundColor: theme.primaryDark,
+    shadowColor: "#04336b",
+    shadowOpacity: 0.25,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
+  },
+  sortSegmentLabel: {
+    fontSize: 11,
+    fontWeight: "800",
+    color: theme.textMutedOnLight,
+    textAlign: "center",
+  },
+  sortSegmentLabelOn: { color: "#fff" },
   filterScroll: { gap: 8, paddingBottom: 12, flexDirection: "row" },
   filterChip: {
     paddingHorizontal: 12,

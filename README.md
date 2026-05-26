@@ -84,19 +84,19 @@ There are **no** pre-seeded accounts like `customer@qms.demo` unless you insert 
 - `GET /api/queue/status?branchId=&ticket=` — Position + ETA, **now serving** for the lane, **“you are next…”** hint when applicable.
 - `POST /api/staff/call-next` — Hybrid dispatch to next ticket (staff or manager token).
 - `POST /api/staff/start-service` / `end-service` — Service timers + `ServiceSessionLogs` row.
-- `GET /api/staff/my-counter` — Assigned counter, branch, **allowed lane ids** (empty = general), display label, **current mode (read-only)**.
+- `GET /api/staff/my-counter` — Assigned counter, branch, **allowed lane ids** (must list every lane this counter may serve), display label, **current mode (read-only)**.
 - `GET /api/staff/branches/{branchId}/services/{serviceId}/waiting` — Ordered waiting tickets + rough ETA for the lane list UI.
 - `GET /api/branches/{branchId}/dashboard/live` — Live KPIs (includes **customersServedToday**, **priorityWaiting** checked-in online).
 - `GET /api/manager/branches/{branchId}/counters` — List counters (manager only).
-- `PATCH /api/manager/branches/{branchId}/counters/{counterId}/mode` — **Open / Break / Closed** (manager only).
+- `PATCH /api/manager/branches/{branchId}/counters/{counterId}/mode` — **Open / Break / Closed** (manager only). **Active** is rejected until the counter has **at least one** allowed lane.
 - `PATCH .../counters/{counterId}/staff` — Assign or clear `staffUserId` (staff/manager users only).
-- `PATCH .../counters/{counterId}/allowed-services` — Body `{ "serviceTypeIds": ["guid", ...] }`. **Empty list** = **General** counter (may call any lane). Non-empty = counter may only serve those lanes (manager crowd control).
-- `GET /api/manager/assignable-staff` — Staff/manager users for counter assignment.
+- `PATCH .../counters/{counterId}/allowed-services` — Body `{ "serviceTypeIds": ["guid", ...] }`. **At least one lane is required** (no “General / all lanes” counters). Counters may only call listed lanes.
+- `GET /api/manager/branches/{branchId}/assignable-staff` — Staff and manager users **for that branch only** (counter assignment dropdown).
 - `GET /api/manager/branches/{branchId}/operational-settings` — Online %, walk-in %, slot length, service hours, zone offset.
 - `PATCH /api/manager/branches/{branchId}/operational-settings` — Update capacity controls (pushes **SignalR** so apps refresh).
 - `GET /api/manager/branches/{branchId}/insights` — **Alerts** (overcrowding, long wait, lane with queue but no counter, understaffing) + **per-lane analytics** (avg observed service time, completed today) + **no-shows today**.
 
-**Customer → service queue → eligible counters → call (bank-style):** each ticket sits on a **service lane**. **Call next** only considers **Active** counters whose **allowed-service set is empty** (General) **or includes that lane**. Managers change mappings live via `allowed-services` to shift capacity (e.g. move a counter from account services to teller during a deposit rush).
+**Customer → service queue → eligible counters → call (bank-style):** each ticket sits on a **service lane**. **Call next** only considers **Active** counters that **include that lane** in their allowed-service set. Managers change mappings live via `allowed-services` to shift capacity (e.g. move a counter from account services to teller during a deposit rush).
 
 **Online booking position:** “People ahead” uses `EnqueueSequence` ordered by **appointment slot start** (earlier windows get lower numbers than later ones in the same lane), not the order you tapped “book”—so a 13:00–13:30 ticket stays **ahead** of a 13:30–14:00 ticket even if you booked the later window first.
 
@@ -104,7 +104,7 @@ There are **no** pre-seeded accounts like `customer@qms.demo` unless you insert 
 
 **Walk-in vs online at the counter (hybrid priority):** staff **Call next** uses a **2 : 1** weighting—up to **two** online-booked picks, then **one** walk-in, repeating (`HybridDispatch` + per-lane round state). **Checked-in** online customers are sorted ahead of not-yet-checked-in for the same lane. If walk-ins make up a **large fraction** of the waiting line, the next call can **boost** a walk-in to avoid starving walk-ins. This is **service discipline at the counter**; it is separate from **capacity accounting** (who is allowed to join the queue in each window).
 
-**Capacity / ETA** count only **Active** counters that can serve that lane (General or lane listed in `CounterAllowedServices`), so opening/closing counters or editing allowed lanes updates crowding immediately (**SignalR**).
+**Capacity / ETA** count only **Active** counters that list that lane in `CounterAllowedServices`, so opening/closing counters or editing allowed lanes updates crowding immediately (**SignalR**).
 
 **Walk-in QR:** print a static QR that encodes the HTTPS URL from `walk-in-link` (or a custom deep link with the same query params). The app opens the URL, reads `branchId` + `serviceTypeId`, and `POST`s `/api/queue/walk-in`.
 
@@ -124,7 +124,7 @@ A hosted service runs every **30s**: **confirmed** bookings that are **not check
 2. **Customer:** book a slot or take a **walk-in** ticket; open **Track** — numbers should update **live** when staff call the next ticket (SignalR), with a slow poll as backup.
 3. **Customer:** **Check-in** on a booking (optional GPS near branch coordinates from **your** branch data, or omit coords).
 4. **Staff:** **Call next** → **Start service** → **Complete** — KPIs and customer ETA update live.
-5. **Manager** (`/manager`): adjust **online % / slot length / hours**, set each counter to **General** or a **dedicated lane**, assign **staff**, open/break/close counters — watch **live lane table**, **KPIs**, and **alerts** update in real time.
+5. **Manager** (`/manager`): adjust **online % / slot length / hours**, tick **at least one allowed lane per counter** (and optional primary lane), assign **staff** from the same branch list, open/break/close counters — watch **live lane table**, **KPIs**, and **alerts** update in real time.
 
 ## Python ML
 

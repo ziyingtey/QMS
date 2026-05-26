@@ -1,25 +1,46 @@
+using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using QMS.Api.Dtos;
 using QMS.Api.Services;
+using QMS.Infrastructure.Persistence;
 
 namespace QMS.Api.Controllers;
 
 [ApiController]
 [Authorize(Policy = "Manager")]
 [Route("api/manager")]
-public sealed class ManagerOperationsController(QmsQueueService queue) : ControllerBase
+public sealed class ManagerOperationsController(QmsQueueService queue, QmsDbContext db) : ControllerBase
 {
-    [HttpGet("assignable-staff")]
-    public async Task<ActionResult<IReadOnlyList<AssignableStaffDto>>> AssignableStaff(CancellationToken cancellationToken)
+    private async Task<bool> OwnsBranch(Guid branchId, CancellationToken ct)
     {
-        var rows = await queue.ListAssignableStaffAsync(cancellationToken);
-        return Ok(rows);
+        var staffId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+        var staff = await db.StaffMembers.AsNoTracking().FirstOrDefaultAsync(s => s.Id == staffId, ct);
+        return staff is not null && staff.BranchId == branchId;
+    }
+
+    [HttpGet("branches/{branchId:guid}/assignable-staff")]
+    public async Task<ActionResult<IReadOnlyList<AssignableStaffDto>>> AssignableStaffForBranch(
+        Guid branchId,
+        CancellationToken cancellationToken)
+    {
+        if (!await OwnsBranch(branchId, cancellationToken)) return Forbid();
+        try
+        {
+            var rows = await queue.ListAssignableStaffForBranchAsync(branchId, cancellationToken);
+            return Ok(rows);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return NotFound(new { message = ex.Message });
+        }
     }
 
     [HttpGet("branches/{branchId:guid}/operational-settings")]
     public async Task<ActionResult<BranchOperationalSettingsDto>> GetSettings(Guid branchId, CancellationToken cancellationToken)
     {
+        if (!await OwnsBranch(branchId, cancellationToken)) return Forbid();
         try
         {
             return Ok(await queue.GetBranchOperationalSettingsAsync(branchId, cancellationToken));
@@ -36,6 +57,7 @@ public sealed class ManagerOperationsController(QmsQueueService queue) : Control
         [FromBody] ManagerBranchSettingsPatch body,
         CancellationToken cancellationToken)
     {
+        if (!await OwnsBranch(branchId, cancellationToken)) return Forbid();
         try
         {
             await queue.UpdateBranchOperationalSettingsAsync(
@@ -62,6 +84,7 @@ public sealed class ManagerOperationsController(QmsQueueService queue) : Control
     [HttpGet("branches/{branchId:guid}/insights")]
     public async Task<ActionResult<ManagerInsightsDto>> Insights(Guid branchId, CancellationToken cancellationToken)
     {
+        if (!await OwnsBranch(branchId, cancellationToken)) return Forbid();
         try
         {
             _ = await queue.GetBranchOperationalSettingsAsync(branchId, cancellationToken);

@@ -1,18 +1,29 @@
+using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using QMS.Api.Services;
 using QMS.Domain.Enums;
+using QMS.Infrastructure.Persistence;
 
 namespace QMS.Api.Controllers;
 
 [ApiController]
 [Authorize(Policy = "Manager")]
 [Route("api/manager/branches/{branchId:guid}/counters")]
-public sealed class ManagerCountersController(QmsQueueService queue) : ControllerBase
+public sealed class ManagerCountersController(QmsQueueService queue, QmsDbContext db) : ControllerBase
 {
+    private async Task<bool> OwnsBranch(Guid branchId, CancellationToken ct)
+    {
+        var staffId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+        var staff = await db.StaffMembers.AsNoTracking().FirstOrDefaultAsync(s => s.Id == staffId, ct);
+        return staff is not null && staff.BranchId == branchId;
+    }
+
     [HttpGet]
     public async Task<ActionResult<IReadOnlyList<ManagerCounterRowDto>>> List(Guid branchId, CancellationToken cancellationToken)
     {
+        if (!await OwnsBranch(branchId, cancellationToken)) return Forbid();
         var rows = await queue.ListCountersForManagerAsync(branchId, cancellationToken);
         return Ok(rows);
     }
@@ -24,6 +35,7 @@ public sealed class ManagerCountersController(QmsQueueService queue) : Controlle
         [FromBody] ManagerCounterModeRequest request,
         CancellationToken cancellationToken)
     {
+        if (!await OwnsBranch(branchId, cancellationToken)) return Forbid();
         try
         {
             await queue.SetCounterModeForManagerAsync(branchId, counterId, request.Mode, cancellationToken);
@@ -42,6 +54,7 @@ public sealed class ManagerCountersController(QmsQueueService queue) : Controlle
         [FromBody] ManagerCounterStaffRequest request,
         CancellationToken cancellationToken)
     {
+        if (!await OwnsBranch(branchId, cancellationToken)) return Forbid();
         try
         {
             await queue.SetCounterStaffForManagerAsync(branchId, counterId, request.StaffId, cancellationToken);
@@ -53,7 +66,7 @@ public sealed class ManagerCountersController(QmsQueueService queue) : Controlle
         }
     }
 
-    /// <summary>Replace allowed service lanes. Empty list = General counter (may serve all lanes).</summary>
+    /// <summary>Replace allowed service lanes. At least one lane is required (no General / all-lanes counters).</summary>
     [HttpPatch("{counterId:guid}/allowed-services")]
     public async Task<IActionResult> SetAllowedServices(
         Guid branchId,
@@ -61,6 +74,7 @@ public sealed class ManagerCountersController(QmsQueueService queue) : Controlle
         [FromBody] ManagerCounterAllowedServicesRequest request,
         CancellationToken cancellationToken)
     {
+        if (!await OwnsBranch(branchId, cancellationToken)) return Forbid();
         try
         {
             await queue.SetCounterAllowedServicesForManagerAsync(branchId, counterId, request.ServiceTypeIds ?? Array.Empty<Guid>(), cancellationToken);
@@ -72,7 +86,7 @@ public sealed class ManagerCountersController(QmsQueueService queue) : Controlle
         }
     }
 
-    /// <summary>Optional “primary lane” display for staff (must be in allowed set unless counter is General).</summary>
+    /// <summary>Optional "primary lane" display for staff (must be in the allowed set).</summary>
     [HttpPatch("{counterId:guid}/dedicated-lane")]
     public async Task<IActionResult> SetDedicatedLane(
         Guid branchId,
@@ -80,6 +94,7 @@ public sealed class ManagerCountersController(QmsQueueService queue) : Controlle
         [FromBody] ManagerCounterDedicatedLaneRequest request,
         CancellationToken cancellationToken)
     {
+        if (!await OwnsBranch(branchId, cancellationToken)) return Forbid();
         try
         {
             await queue.SetCounterDedicatedLaneForManagerAsync(branchId, counterId, request.ServiceTypeId, cancellationToken);

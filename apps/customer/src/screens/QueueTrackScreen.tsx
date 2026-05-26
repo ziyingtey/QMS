@@ -117,7 +117,12 @@ export function QueueTrackScreen({ route, navigation }: Props) {
         "Booking",
         {
           screen: "BookingSlots",
-          params: { branch: br, service: svc, rescheduleId: booking.id },
+          params: {
+            branch: br,
+            service: svc,
+            rescheduleId: booking.id,
+            rescheduleExitToQueue: true,
+          },
         } as never,
       );
     } catch (e) {
@@ -170,7 +175,7 @@ export function QueueTrackScreen({ route, navigation }: Props) {
         {booking ? (
           <View style={styles.confirmBanner}>
             <Text style={styles.confirmTitle}>Booking confirmed</Text>
-            <Text style={styles.confirmSub}>Your appointment is scheduled. Live updates refresh below.</Text>
+            <Text style={styles.confirmSub}>Your appointment is scheduled. Pull down to refresh; live data also updates every ~12s.</Text>
           </View>
         ) : (
           <View style={styles.walkBanner}>
@@ -237,17 +242,17 @@ export function QueueTrackScreen({ route, navigation }: Props) {
 
         {showCheckIn ? (
           <View style={styles.checkCard}>
-            <Text style={styles.checkTitle}>Check-in required</Text>
+            <Text style={styles.checkTitle}>Tap when you are at the branch</Text>
             <PrimaryButton
-              label="I've arrived — check in"
-              icon="qr-code-outline"
+              label="I've arrived"
+              icon="checkmark-circle-outline"
               disabled={busy}
               onPress={() => void checkIn(appointmentBookingId!)}
             />
           </View>
         ) : (
           <Text style={styles.walkInNote}>
-            Walk-in ticket: check in at the branch counter. Online check-in applies to booked appointments only.
+            Walk-in ticket: staff will serve you at the counter. The I&apos;ve arrived button is for online bookings only.
           </Text>
         )}
 
@@ -264,7 +269,6 @@ export function QueueTrackScreen({ route, navigation }: Props) {
           ) : null}
         </View>
 
-        <PrimaryButton label="Refresh now" variant="ghost" icon="refresh-outline" onPress={() => void refresh()} />
       </ScrollView>
     </View>
   );

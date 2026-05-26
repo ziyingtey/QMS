@@ -170,3 +170,11 @@ export function formatBookingDateMedium(slotStart: string, branchOffsetMinutes?:
   }
   return a.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 }
+
+/** Branch-local yyyy-MM-dd for the start of the booking slot (service zone offset). */
+export function bookingSlotStartYmdInBranchZone(slotStart: string, branchOffsetMinutes: number): string | null {
+  const d = parseApiDateTime(slotStart);
+  if (!d) return null;
+  const w = branchWallComponents(d, branchOffsetMinutes);
+  return toYmd(w.y, w.m0, w.d);
+}

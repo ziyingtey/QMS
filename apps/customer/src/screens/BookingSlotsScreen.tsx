@@ -15,9 +15,9 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { apiCreateBooking, apiRescheduleBooking, apiSlots, userFacingApiError, type SlotDto } from "../api";
 import { readToken } from "../authStorage";
-import { PrimaryButton } from "../components/PrimaryButton";
 import { useCustomer } from "../context/CustomerContext";
 import type { BookingStackParamList } from "../navigation/navigationRef";
+import { navigationRef } from "../navigation/navigationRef";
 import { theme } from "../theme";
 import {
   branchCalendarYmd,
@@ -40,7 +40,7 @@ function chunk<T>(arr: T[], size: number): T[][] {
 const weekdayLabels = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
 
 export function BookingSlotsScreen({ navigation, route }: Props) {
-  const { branch, service, rescheduleId } = route.params;
+  const { branch, service, rescheduleId, returnTo, rescheduleExitToQueue } = route.params;
   const { token: sessionToken } = useCustomer();
   const insets = useSafeAreaInsets();
   const topPad = Platform.OS === "android" ? (RNStatusBar.currentHeight ?? 0) + 8 : Math.max(insets.top, 12);
@@ -127,6 +127,28 @@ export function BookingSlotsScreen({ navigation, route }: Props) {
     setViewYmd({ y: d.getFullYear(), m0: d.getMonth(), d: 1 });
   };
 
+  /** Reschedule flow: reset Booking stack, then open Queue tab via root ref (avoids typing issues with tab parent). */
+  const exitRescheduleToQueue = useCallback(() => {
+    navigation.reset({ index: 0, routes: [{ name: "BookingBranches" }] });
+    if (navigationRef.isReady()) {
+      navigationRef.navigate("MainTabs", {
+        screen: "Queue",
+        params: { screen: "QueueHome" },
+      });
+    }
+  }, [navigation]);
+
+  const onCancelReschedule = () => {
+    Alert.alert(
+      "Cancel reschedule?",
+      "Your current appointment time will stay the same. Nothing will be saved.",
+      [
+        { text: "Keep choosing times", style: "cancel" },
+        { text: "Keep current booking", style: "default", onPress: () => exitRescheduleToQueue() },
+      ],
+    );
+  };
+
   const selectDay = (ymd: string, disabled: boolean) => {
     if (disabled || compareIsoYmd(ymd, minYmd) < 0) return;
     setSelectedYmd(ymd);
@@ -145,8 +167,14 @@ export function BookingSlotsScreen({ navigation, route }: Props) {
     try {
       if (rescheduleId) {
         await apiRescheduleBooking(tok, rescheduleId, slot.slotStart, slot.slotEnd);
-        Alert.alert("Rescheduled", "Your appointment time was updated.");
-        navigation.navigate("BookingBranches");
+        if (rescheduleExitToQueue) {
+          Alert.alert("Rescheduled", "Your appointment time was updated.", [
+            { text: "OK", onPress: () => exitRescheduleToQueue() },
+          ]);
+        } else {
+          Alert.alert("Rescheduled", "Your appointment time was updated.");
+          navigation.navigate("BookingBranches");
+        }
         return;
       }
       const created = await apiCreateBooking(tok, {
@@ -155,7 +183,7 @@ export function BookingSlotsScreen({ navigation, route }: Props) {
         slotStart: slot.slotStart,
         slotEnd: slot.slotEnd,
       });
-      navigation.navigate("BookingTicket", { created, branchId: branch.id });
+      navigation.navigate("BookingTicket", { created, branchId: branch.id, returnTo });
     } catch (e) {
       Alert.alert("Booking failed", userFacingApiError(e));
     } finally {
@@ -163,29 +191,50 @@ export function BookingSlotsScreen({ navigation, route }: Props) {
     }
   };
 
-  const onConfirm = () => {
-    if (!selectedSlot) {
-      Alert.alert("Select a time", "Choose an available slot first.");
-      return;
+  const isRescheduleOnly = Boolean(rescheduleId) && rescheduleExitToQueue === true;
+
+  const promptSlotAction = (slot: SlotDto) => {
+    if (busy) return;
+    const label = formatSlotRange(slot.slotStart, slot.slotEnd, offsetMin);
+    if (rescheduleId) {
+      Alert.alert("Reschedule?", `Change your appointment to ${label}?`, [
+        { text: "Not now", style: "cancel", onPress: () => setSelectedSlot(null) },
+        { text: "Reschedule", onPress: () => void bookSlot(slot) },
+      ]);
+    } else {
+      Alert.alert("Book this time?", `${label} at ${branch.name}?`, [
+        { text: "Not now", style: "cancel", onPress: () => setSelectedSlot(null) },
+        { text: "Book", onPress: () => void bookSlot(slot) },
+      ]);
     }
-    void bookSlot(selectedSlot);
   };
 
   return (
     <View style={styles.wrap}>
       <StatusBar style="light" />
       <View style={[styles.topBar, { paddingTop: topPad }]}>
-        <Pressable style={styles.back} onPress={() => navigation.navigate("BookingServices", { branch })}>
-          <Text style={styles.backText}>← Services</Text>
-        </Pressable>
+        {isRescheduleOnly ? (
+          <Pressable style={styles.back} onPress={() => onCancelReschedule()}>
+            <Text style={styles.backText}>Cancel reschedule</Text>
+          </Pressable>
+        ) : (
+          <Pressable style={styles.back} onPress={() => navigation.navigate("BookingServices", { branch, returnTo })}>
+            <Text style={styles.backText}>← Services</Text>
+          </Pressable>
+        )}
         <Text style={styles.heroTitle}>{rescheduleId ? "Reschedule" : "Book appointment"}</Text>
-        <Text style={styles.heroStep}>Pick date and time</Text>
-        <Text style={styles.heroSvc}>{service.name}</Text>
+        <Text style={styles.heroStep}>
+          {isRescheduleOnly
+            ? "Same branch & service — tap an open time slot to reschedule."
+            : "Pick a date, then tap an open time slot to book."}
+        </Text>
+        <Text style={styles.heroSvc}>{branch.name}</Text>
+        <Text style={styles.heroSvcSecondary}>{service.name}</Text>
       </View>
 
       <ScrollView
         style={styles.scroll}
-        contentContainerStyle={{ paddingBottom: 140, paddingHorizontal: 18 }}
+        contentContainerStyle={{ paddingBottom: 120, paddingHorizontal: 18 }}
         refreshControl={
           <RefreshControl
             refreshing={slotPullRefreshing}
@@ -270,10 +319,11 @@ export function BookingSlotsScreen({ navigation, route }: Props) {
           return (
             <Pressable
               key={slot.slotStart}
-              disabled={unavailable}
+              disabled={unavailable || busy}
               onPress={() => {
-                if (unavailable) return;
+                if (unavailable || busy) return;
                 setSelectedSlot(slot);
+                promptSlotAction(slot);
               }}
               style={[
                 styles.slotCard,
@@ -307,15 +357,6 @@ export function BookingSlotsScreen({ navigation, route }: Props) {
           );
         })}
       </ScrollView>
-
-      <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, 12) }]}>
-        <PrimaryButton label="CONFIRM" variant="success" disabled={!selectedSlot || busy} onPress={onConfirm} />
-        <PrimaryButton
-          label="Back to services"
-          variant="ghost"
-          onPress={() => navigation.navigate("BookingServices", { branch })}
-        />
-      </View>
     </View>
   );
 }
@@ -334,7 +375,8 @@ const styles = StyleSheet.create({
   backText: { color: theme.accent, fontWeight: "700", fontSize: 16 },
   heroTitle: { fontSize: 22, fontWeight: "900", color: "#fff" },
   heroStep: { fontSize: 16, fontWeight: "700", color: "rgba(255,255,255,0.92)", marginTop: 8 },
-  heroSvc: { fontSize: 14, color: "rgba(255,255,255,0.8)", marginTop: 4 },
+  heroSvc: { fontSize: 15, fontWeight: "800", color: "rgba(255,255,255,0.95)", marginTop: 6 },
+  heroSvcSecondary: { fontSize: 14, color: "rgba(255,255,255,0.78)", marginTop: 2 },
   calHeader: {
     flexDirection: "row",
     alignItems: "center",
@@ -421,16 +463,4 @@ const styles = StyleSheet.create({
   meta: { fontSize: 11, marginTop: 10, fontWeight: "600" },
   metaFull: { color: theme.textMutedOnLight },
   metaOpen: { color: "rgba(255,255,255,0.75)" },
-  footer: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    bottom: 0,
-    paddingHorizontal: 18,
-    paddingTop: 10,
-    backgroundColor: "#fff",
-    borderTopWidth: 1,
-    borderTopColor: theme.borderLight,
-    gap: 4,
-  },
 });

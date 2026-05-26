@@ -51,7 +51,6 @@ export function BookingBranchesScreen({ navigation }: Props) {
       <View style={[styles.header, { paddingTop: topPad }]}>
         <Text style={styles.title}>Branches</Text>
         <Text style={styles.sub}>Choose a branch · book a slot or walk-in ticket</Text>
-        <PrimaryButton label="Refresh branches" variant="ghost" icon="refresh-outline" onPress={() => void loadBranches()} />
       </View>
       <FlatList
         data={sorted}
@@ -122,7 +121,7 @@ const styles = StyleSheet.create({
     borderBottomRightRadius: 20,
   },
   title: { fontSize: 28, fontWeight: "900", color: "#fff" },
-  sub: { color: "rgba(255,255,255,0.85)", marginBottom: 10, marginTop: 6 },
+  sub: { color: "rgba(255,255,255,0.85)", marginTop: 6 },
   card: {
     flexDirection: "row",
     alignItems: "center",
