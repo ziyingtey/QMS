@@ -129,36 +129,53 @@ public sealed class QmsQueueService(
         if (onlineUsed >= onlineCap)
             throw new InvalidOperationException("Online capacity for this slot is full.");
 
-        var seq = await AllocateLaneEnqueueSequenceForSlotAsync(branchId, serviceTypeId, slotStart, cancellationToken);
-        var ticket = FormatTicket(branch.BranchCode, seq);
-
-        var booking = new Booking
+        // Retry loop handles concurrent duplicate key collisions.
+        const int maxRetries = 3;
+        Booking booking = null!;
+        QueueEntry entry = null!;
+        string ticket = null!;
+        for (var attempt = 0; attempt < maxRetries; attempt++)
         {
-            Id = Guid.NewGuid(),
-            CustomerId = userId,
-            BranchId = branchId,
-            ServiceTypeId = serviceTypeId,
-            SlotStart = slotStart,
-            SlotEnd = slotEnd,
-            Status = BookingStatus.Confirmed
-        };
+            var seq = await AllocateLaneEnqueueSequenceForSlotAsync(branchId, serviceTypeId, slotStart, cancellationToken);
+            ticket = FormatTicket(branch.BranchCode, seq);
 
-        var entry = new QueueEntry
-        {
-            Id = Guid.NewGuid(),
-            BranchId = branchId,
-            ServiceTypeId = serviceTypeId,
-            TicketNumber = ticket,
-            EntryType = QueueEntryType.OnlineBooked,
-            State = QueueEntryState.Waiting,
-            BookingId = booking.Id,
-            EnqueueSequence = seq
-        };
+            booking = new Booking
+            {
+                Id = Guid.NewGuid(),
+                CustomerId = userId,
+                BranchId = branchId,
+                ServiceTypeId = serviceTypeId,
+                SlotStart = slotStart,
+                SlotEnd = slotEnd,
+                Status = BookingStatus.Confirmed
+            };
 
-        booking.QueueEntry = entry;
+            entry = new QueueEntry
+            {
+                Id = Guid.NewGuid(),
+                BranchId = branchId,
+                ServiceTypeId = serviceTypeId,
+                TicketNumber = ticket,
+                EntryType = QueueEntryType.OnlineBooked,
+                State = QueueEntryState.Waiting,
+                BookingId = booking.Id,
+                EnqueueSequence = seq
+            };
 
-        db.Bookings.Add(booking);
-        await db.SaveChangesAsync(cancellationToken);
+            booking.QueueEntry = entry;
+
+            db.Bookings.Add(booking);
+            try
+            {
+                await db.SaveChangesAsync(cancellationToken);
+                break; // success
+            }
+            catch (Microsoft.EntityFrameworkCore.DbUpdateException) when (attempt < maxRetries - 1)
+            {
+                // Duplicate key — detach and retry with fresh sequence
+                db.ChangeTracker.Clear();
+            }
+        }
 
         await bds.OnTicketIssuedAsync(branch.BranchCode, ticket, entry.CreatedAt, service.Code, cancellationToken);
 
@@ -219,24 +236,39 @@ public sealed class QmsQueueService(
         // attach the walk-in to. Otherwise, if counters open and an earlier bucket gains space, a
         // later arrival could get a lower EnqueueSequence than people who arrived earlier but overflowed
         // into a later bucket — unfair wait for early walk-ins.
-        var seq = await AllocateLaneEnqueueSequenceForSlotAsync(branchId, serviceTypeId, firstBucket, cancellationToken);
-        var ticket = FormatTicket(branch.BranchCode, seq);
-
-        var entry = new QueueEntry
+        // Retry loop handles concurrent duplicate key collisions.
+        const int maxRetries = 3;
+        QueueEntry entry = null!;
+        string ticket = null!;
+        for (var attempt = 0; attempt < maxRetries; attempt++)
         {
-            Id = Guid.NewGuid(),
-            BranchId = branchId,
-            ServiceTypeId = serviceTypeId,
-            TicketNumber = ticket,
-            EntryType = QueueEntryType.WalkIn,
-            State = QueueEntryState.Waiting,
-            EnqueueSequence = seq,
-            WalkInCapacityBucketStart = chosenStart,
-            WalkInCapacityBucketEnd = chosenEnd
-        };
+            var seq = await AllocateLaneEnqueueSequenceForSlotAsync(branchId, serviceTypeId, firstBucket, cancellationToken);
+            ticket = FormatTicket(branch.BranchCode, seq);
 
-        db.QueueEntries.Add(entry);
-        await db.SaveChangesAsync(cancellationToken);
+            entry = new QueueEntry
+            {
+                Id = Guid.NewGuid(),
+                BranchId = branchId,
+                ServiceTypeId = serviceTypeId,
+                TicketNumber = ticket,
+                EntryType = QueueEntryType.WalkIn,
+                State = QueueEntryState.Waiting,
+                EnqueueSequence = seq,
+                WalkInCapacityBucketStart = chosenStart,
+                WalkInCapacityBucketEnd = chosenEnd
+            };
+
+            db.QueueEntries.Add(entry);
+            try
+            {
+                await db.SaveChangesAsync(cancellationToken);
+                break; // success
+            }
+            catch (Microsoft.EntityFrameworkCore.DbUpdateException) when (attempt < maxRetries - 1)
+            {
+                db.ChangeTracker.Clear();
+            }
+        }
 
         await bds.OnTicketIssuedAsync(branch.BranchCode, ticket, entry.CreatedAt, service.Code, cancellationToken);
 
@@ -1157,8 +1189,10 @@ public sealed class QmsQueueService(
         var floor = slotStart.ToUnixTimeSeconds() * bucket;
         var cap = floor + bucket - 1;
 
+        // Query across ALL service types for this branch to avoid duplicate ticket numbers
+        // (unique index is on BranchId + TicketNumber, not per service type).
         var maxInBucket = await db.QueueEntries
-            .Where(q => q.BranchId == branchId && q.ServiceTypeId == serviceTypeId)
+            .Where(q => q.BranchId == branchId)
             .Where(q => q.EnqueueSequence >= floor && q.EnqueueSequence <= cap)
             .MaxAsync(q => (long?)q.EnqueueSequence, cancellationToken);
 

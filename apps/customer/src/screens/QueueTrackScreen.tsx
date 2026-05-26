@@ -1,4 +1,5 @@
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
+import { Ionicons } from "@expo/vector-icons";
 import { StatusBar } from "expo-status-bar";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -170,7 +171,23 @@ export function QueueTrackScreen({ route, navigation }: Props) {
           />
         }
       >
-        <Text style={styles.pageTitle}>Queue status</Text>
+        <View style={styles.titleRow}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Back"
+            hitSlop={10}
+            style={({ pressed }) => [styles.backBtn, pressed && styles.backBtnPressed]}
+            onPress={() => {
+              if (navigation.canGoBack()) navigation.goBack();
+              else navigation.navigate("QueueHome");
+            }}
+          >
+            <Ionicons name="chevron-back" size={28} color={theme.primaryDark} />
+          </Pressable>
+          <Text style={styles.pageTitle} numberOfLines={1}>
+            Queue status
+          </Text>
+        </View>
 
         {booking ? (
           <View style={styles.confirmBanner}>
@@ -276,7 +293,20 @@ export function QueueTrackScreen({ route, navigation }: Props) {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.screenBg, paddingHorizontal: 18 },
-  pageTitle: { fontSize: 22, fontWeight: "900", color: theme.textOnLight, marginBottom: 12 },
+  titleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 12,
+  },
+  backBtn: {
+    marginLeft: -6,
+    marginRight: 4,
+    paddingVertical: 4,
+    paddingRight: 4,
+    borderRadius: 10,
+  },
+  backBtnPressed: { opacity: 0.65 },
+  pageTitle: { flex: 1, fontSize: 22, fontWeight: "900", color: theme.textOnLight },
   confirmBanner: {
     backgroundColor: "rgba(34,197,94,0.18)",
     borderRadius: 14,
