@@ -29,7 +29,7 @@ public sealed class DashboardController(QmsDbContext db, QmsQueueService queue) 
             cancellationToken);
 
         var avgWaitSeconds = await db.QueueEntries.AsNoTracking()
-            .Where(q => q.BranchId == branchId && q.State == QueueEntryState.Done && q.CalledAt != null)
+            .Where(q => q.BranchId == branchId && q.State == QueueEntryState.Completed && q.CalledAt != null)
             .Select(q => (double?)(q.CalledAt!.Value - q.CreatedAt).TotalSeconds)
             .AverageAsync(cancellationToken) ?? 0;
 
@@ -53,7 +53,7 @@ public sealed class DashboardController(QmsDbContext db, QmsQueueService queue) 
         var dayEnd = dayStart.AddDays(1);
         var customersServedToday = await db.QueueEntries.CountAsync(
             q => q.BranchId == branchId
-                 && q.State == QueueEntryState.Done
+                 && q.State == QueueEntryState.Completed
                  && q.ServingEndedAt != null
                  && q.ServingEndedAt >= dayStart
                  && q.ServingEndedAt < dayEnd,

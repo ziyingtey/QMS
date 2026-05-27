@@ -95,6 +95,11 @@ export function QueueTrackScreen({ route, navigation }: Props) {
     }
   }, [refresh, refreshBookings]);
 
+  /** Always return to the Queue tab list (all online + walk-in tickets), not arbitrary stack history. */
+  const goToQueueBookingList = useCallback(() => {
+    navigation.reset({ index: 0, routes: [{ name: "QueueHome" }] });
+  }, [navigation]);
+
   const displayService = status?.serviceName ?? serviceNameFromBooking ?? "—";
   /** Prefer list row; fall back to route id so actions work before /mine finishes loading. */
   const appointmentBookingId = booking?.id ?? bookingIdParam ?? null;
@@ -144,10 +149,7 @@ export function QueueTrackScreen({ route, navigation }: Props) {
           onPress: () => {
             void (async () => {
               const ok = await cancelBooking(appointmentBookingId);
-              if (ok) {
-                if (navigation.canGoBack()) navigation.goBack();
-                else navigation.navigate("QueueHome");
-              }
+              if (ok) goToQueueBookingList();
             })();
           },
         },
@@ -177,10 +179,7 @@ export function QueueTrackScreen({ route, navigation }: Props) {
             accessibilityLabel="Back"
             hitSlop={10}
             style={({ pressed }) => [styles.backBtn, pressed && styles.backBtnPressed]}
-            onPress={() => {
-              if (navigation.canGoBack()) navigation.goBack();
-              else navigation.navigate("QueueHome");
-            }}
+            onPress={goToQueueBookingList}
           >
             <Ionicons name="chevron-back" size={28} color={theme.primaryDark} />
           </Pressable>

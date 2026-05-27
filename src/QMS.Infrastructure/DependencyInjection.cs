@@ -3,7 +3,6 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using QMS.Infrastructure.Bds;
-using QMS.Infrastructure.Dispatch;
 using QMS.Infrastructure.Persistence;
 
 namespace QMS.Infrastructure;
@@ -20,8 +19,6 @@ public static class DependencyInjection
             else
                 options.UseSqlServer(connectionString);
         });
-
-        services.AddSingleton<IDispatchRoundStateStore, MemoryDispatchRoundStateStore>();
 
         services.AddScoped<IBdsReportingBridge>(sp =>
         {

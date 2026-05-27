@@ -4,6 +4,5 @@ namespace QMS.Domain.Enums;
 public enum QueueEntryType
 {
     OnlineBooked = 0,
-    WalkIn = 1,
-    LateDegraded = 2
+    WalkIn = 1
 }

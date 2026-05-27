@@ -104,13 +104,11 @@ public sealed class BranchQueueDayRolloverHostedService(
 
         foreach (var q in entries)
         {
-            q.State = QueueEntryState.Absent;
+            q.State = QueueEntryState.Missed;
             if (q.Booking is { } b)
             {
-                if (b.Status == BookingStatus.Pending)
+                if (b.Status is BookingStatus.Pending or BookingStatus.Confirmed or BookingStatus.CheckedIn)
                     b.Status = BookingStatus.Cancelled;
-                else if (b.Status == BookingStatus.Confirmed)
-                    b.Status = BookingStatus.NoShow;
             }
         }
     }

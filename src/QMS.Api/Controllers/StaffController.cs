@@ -56,6 +56,21 @@ public sealed class StaffController(QmsQueueService queue) : ControllerBase
         }
     }
 
+    [HttpPost("mark-missed")]
+    public async Task<IActionResult> MarkMissed([FromBody] TicketRequest request, CancellationToken cancellationToken)
+    {
+        var staffId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+        try
+        {
+            await queue.MarkMissedAsync(staffId, request.TicketNumber, cancellationToken);
+            return NoContent();
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
     [HttpGet("my-counter")]
     public async Task<ActionResult<MyCounterDto>> MyCounter(CancellationToken cancellationToken)
     {

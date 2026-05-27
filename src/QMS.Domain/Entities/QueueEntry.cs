@@ -20,11 +20,12 @@ public class QueueEntry
     public DateTimeOffset? ServingEndedAt { get; set; }
     public Guid? CounterId { get; set; }
     public Counter? Counter { get; set; }
+    /// <summary>Ordering within a slot: lower sequence = earlier in queue. Allocated per-slot.</summary>
     public long EnqueueSequence { get; set; }
-    /// <summary>
-    /// For walk-ins: which service time bucket’s <b>walk-in buffer</b> this ticket consumes.
-    /// When the arrival-time bucket is full, the next bucket is used (overflow) while <see cref="CreatedAt"/> stays real.
-    /// </summary>
-    public DateTimeOffset? WalkInCapacityBucketStart { get; set; }
-    public DateTimeOffset? WalkInCapacityBucketEnd { get; set; }
+    /// <summary>The assigned slot start time for this entry (online = booking slot, walk-in = assigned bucket).</summary>
+    public DateTimeOffset? AssignedSlotStart { get; set; }
+    /// <summary>The assigned slot end time for this entry.</summary>
+    public DateTimeOffset? AssignedSlotEnd { get; set; }
+    /// <summary>Whether the customer has physically arrived (check-in).</summary>
+    public bool CheckedIn { get; set; }
 }
