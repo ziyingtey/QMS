@@ -650,47 +650,53 @@ export function ManagerCountersPage() {
                             ))}
                           </select>
                         </label>
-                        <fieldset className="manager-fieldset">
-                          <legend>Allowed lanes</legend>
-                          <p className="manager-fieldset-hint muted small-print">
-                            {r.allowedServiceTypeIds.length === 0 ? (
-                              <strong>No lanes yet</strong>
-                            ) : (
-                              <>
-                                <strong>Allowed:</strong> {r.allowedLanesDisplay}
-                              </>
-                            )}
-                          </p>
-                          <div className="manager-lane-picks manager-lane-picks--card">
-                            {(branch?.services ?? []).map((s) => (
-                              <label key={s.id} className="manager-lane-check">
-                                <input
-                                  type="checkbox"
-                                  checked={r.allowedServiceTypeIds.includes(s.id)}
-                                  disabled={busy}
-                                  onChange={(e) => void onAllowedLaneToggle(r.id, s.id, e.target.checked)}
-                                />
-                                <span>{s.name}</span>
-                              </label>
-                            ))}
-                          </div>
-                        </fieldset>
-                        <label className="manager-field">
-                          <span className="manager-field-label">Primary lane (counter display)</span>
-                          <select
-                            className="manager-select"
-                            value={r.currentDedicatedServiceTypeId ?? ""}
-                            disabled={busy}
-                            onChange={(e) => void onDedicatedLaneChange(r.id, e.target.value)}
-                          >
-                            <option value="">None</option>
-                            {(branch?.services ?? []).map((s) => (
-                              <option key={s.id} value={s.id}>
-                                {s.name}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
+                        {r.mode !== "Closed" ? (
+                          <>
+                            <fieldset className="manager-fieldset">
+                              <legend>Allowed lanes</legend>
+                              <p className="manager-fieldset-hint muted small-print">
+                                {r.allowedServiceTypeIds.length === 0 ? (
+                                  <strong>No lanes yet</strong>
+                                ) : (
+                                  <>
+                                    <strong>Allowed:</strong> {r.allowedLanesDisplay}
+                                  </>
+                                )}
+                              </p>
+                              <div className="manager-lane-picks manager-lane-picks--card">
+                                {(branch?.services ?? []).map((s) => (
+                                  <label key={s.id} className="manager-lane-check">
+                                    <input
+                                      type="checkbox"
+                                      checked={r.allowedServiceTypeIds.includes(s.id)}
+                                      disabled={busy}
+                                      onChange={(e) => void onAllowedLaneToggle(r.id, s.id, e.target.checked)}
+                                    />
+                                    <span>{s.name}</span>
+                                  </label>
+                                ))}
+                              </div>
+                            </fieldset>
+                            <label className="manager-field">
+                              <span className="manager-field-label">Primary lane (counter display)</span>
+                              <select
+                                className="manager-select"
+                                value={r.currentDedicatedServiceTypeId ?? ""}
+                                disabled={busy}
+                                onChange={(e) => void onDedicatedLaneChange(r.id, e.target.value)}
+                              >
+                                <option value="">None</option>
+                                {(branch?.services ?? []).map((s) => (
+                                  <option key={s.id} value={s.id}>
+                                    {s.name}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                          </>
+                        ) : (
+                          <p className="muted small-print">Counter is closed — no lane assignment needed.</p>
+                        )}
                       </div>
                     ) : null}
                     <footer className="mgr-monitor-actions">

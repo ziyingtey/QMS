@@ -674,6 +674,12 @@ public sealed class QmsQueueService(
             foreach (var svc in services)
                 await PullForwardWalkInsAsync(branchId, svc.Id, cancellationToken);
         }
+
+        // When counter closes or goes on break, capacity drops — broadcast so dashboards refresh
+        if (mode == CounterMode.Closed || mode == CounterMode.Break)
+        {
+            await hubContext.Clients.Group(QueueHub.BranchGroup(branchId)).SendAsync("QueueUpdated", branchId, cancellationToken);
+        }
     }
 
     public async Task SetCounterStaffForManagerAsync(
