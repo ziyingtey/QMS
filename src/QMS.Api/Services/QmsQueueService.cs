@@ -185,7 +185,7 @@ public sealed class QmsQueueService(
         var activeCounters = await CountActiveLaneCountersAsync(branchId, serviceTypeId, cancellationToken);
 
         // Find current slot or first available slot with walk-in capacity
-        var firstBucket = AlignSlot(nowAtBranch, slotM);
+        var firstBucket = AlignSlot(nowAtBranch, slotM, windowStart);
         if (firstBucket < windowStart) firstBucket = windowStart;
 
         DateTimeOffset? chosenStart = null;
@@ -875,7 +875,7 @@ public sealed class QmsQueueService(
         {
             var windowStart = tw.Start;
             var windowEnd = tw.End;
-            nextStart = AlignSlot(nowAtBranch, slotMin);
+            nextStart = AlignSlot(nowAtBranch, slotMin, windowStart);
             if (nextStart < windowStart) nextStart = windowStart;
             while (nextStart <= nowAtBranch && nextStart < windowEnd)
                 nextStart = nextStart.AddMinutes(slotMin);
@@ -1033,7 +1033,7 @@ public sealed class QmsQueueService(
         if (walkIns.Count == 0) return;
 
         // Build slot capacity map from current time forward
-        var packStart = AlignSlot(nowAtBranch, slotM);
+        var packStart = AlignSlot(nowAtBranch, slotM, windowStart);
         if (packStart < windowStart) packStart = windowStart;
 
         var slotCaps = new List<(DateTimeOffset start, DateTimeOffset end, int available)>();
@@ -1150,11 +1150,20 @@ public sealed class QmsQueueService(
             dynamicPlan, branch.MinSlotTotalCapacity, branch.MaxCapacity, branch.OnlineQuotaPercent);
     }
 
-    private static DateTimeOffset AlignSlot(DateTimeOffset now, int slotMinutes)
+    private static DateTimeOffset AlignSlot(DateTimeOffset now, int slotMinutes, DateTimeOffset? anchor = null)
     {
+        if (anchor is { } a)
+        {
+            // Align relative to anchor (e.g. operating hours start)
+            var elapsed = (int)(now - a).TotalMinutes;
+            if (elapsed < 0) return a;
+            var aligned = elapsed / slotMinutes * slotMinutes;
+            return a.AddMinutes(aligned);
+        }
+        // Fallback: align from midnight
         var minutes = now.Hour * 60 + now.Minute;
-        var aligned = minutes / slotMinutes * slotMinutes;
-        return new DateTimeOffset(now.Year, now.Month, now.Day, 0, 0, 0, now.Offset).AddMinutes(aligned);
+        var alignedMin = minutes / slotMinutes * slotMinutes;
+        return new DateTimeOffset(now.Year, now.Month, now.Day, 0, 0, 0, now.Offset).AddMinutes(alignedMin);
     }
 
     private static string FormatTicket(int branchCode, long seq) => $"{branchCode}-{seq:0000}";
