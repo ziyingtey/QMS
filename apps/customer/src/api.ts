@@ -88,6 +88,8 @@ export type QueueStatus = {
   serviceName: string;
   currentServingTicketNumber?: string | null;
   nextEstimatedMessage?: string | null;
+  counterNumber?: number | null;
+  servedAt?: string | null;
 };
 
 export type BookingSummary = {

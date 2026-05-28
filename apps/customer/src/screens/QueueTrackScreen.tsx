@@ -103,9 +103,11 @@ export function QueueTrackScreen({ route, navigation }: Props) {
   const displayService = status?.serviceName ?? serviceNameFromBooking ?? "—";
   /** Prefer list row; fall back to route id so actions work before /mine finishes loading. */
   const appointmentBookingId = booking?.id ?? bookingIdParam ?? null;
+  const entryIsTerminal = status?.state === "Completed" || status?.state === "Missed";
   const bookingIsActive =
-    !booking ||
-    (booking.status !== "Cancelled" && booking.status !== "Completed" && booking.status !== "NoShow");
+    !entryIsTerminal &&
+    (!booking ||
+      (booking.status !== "Cancelled" && booking.status !== "Completed" && booking.status !== "NoShow"));
   const showCheckIn = Boolean(appointmentBookingId) && bookingIsActive;
   const showReschedule = Boolean(booking) && bookingIsActive;
   const showCancel = Boolean(appointmentBookingId) && bookingIsActive;
@@ -188,7 +190,7 @@ export function QueueTrackScreen({ route, navigation }: Props) {
           </Text>
         </View>
 
-        {booking ? (
+        {status?.state === "Completed" || status?.state === "Missed" ? null : booking ? (
           <View style={styles.confirmBanner}>
             <Text style={styles.confirmTitle}>Booking confirmed</Text>
             <Text style={styles.confirmSub}>Your appointment is scheduled. Pull down to refresh; live data also updates every ~12s.</Text>
@@ -226,34 +228,117 @@ export function QueueTrackScreen({ route, navigation }: Props) {
         </View>
 
         <View style={styles.liveCard}>
-          <Text style={styles.liveTitle}>Live status</Text>
-          <View style={styles.liveGrid}>
-            <View style={styles.liveCell}>
-              <Text style={styles.liveLab}>Now serving</Text>
-              <Text style={styles.liveVal}>{status?.currentServingTicketNumber ?? "—"}</Text>
+          {/* ── Waiting: position > 1 ── */}
+          {status?.state === "Waiting" && status.peopleAhead > 1 && (
+            <>
+              <Text style={styles.liveTitle}>Live status</Text>
+              <View style={styles.liveGrid}>
+                <View style={styles.liveCell}>
+                  <Text style={styles.liveLab}>Now serving</Text>
+                  <Text style={styles.liveVal}>{status.currentServingTicketNumber ?? "—"}</Text>
+                </View>
+                <View style={styles.liveCell}>
+                  <Text style={styles.liveLab}>People ahead</Text>
+                  <Text style={styles.liveVal}>{status.peopleAhead}</Text>
+                </View>
+                <View style={styles.liveCell}>
+                  <Text style={styles.liveLab}>Est. wait</Text>
+                  <Text style={[styles.liveVal, styles.liveWait]}>
+                    {status.estimatedWaitMinutes == null ? "—" : `~${status.estimatedWaitMinutes}m`}
+                  </Text>
+                </View>
+              </View>
+              {status.estimatedWaitMinutes != null && (
+                <View style={styles.infoBox}>
+                  <Text style={styles.infoText}>
+                    You will be called in approximately {status.estimatedWaitMinutes} minutes.
+                  </Text>
+                </View>
+              )}
+            </>
+          )}
+
+          {/* ── Waiting: position = 1 (next in line) ── */}
+          {status?.state === "Waiting" && status.peopleAhead === 1 && (
+            <>
+              <Text style={styles.liveTitle}>Live status</Text>
+              <View style={styles.liveGrid}>
+                <View style={styles.liveCell}>
+                  <Text style={styles.liveLab}>Now serving</Text>
+                  <Text style={styles.liveVal}>{status.currentServingTicketNumber ?? "—"}</Text>
+                </View>
+                <View style={styles.liveCell}>
+                  <Text style={styles.liveLab}>People ahead</Text>
+                  <Text style={styles.liveVal}>1</Text>
+                </View>
+                <View style={styles.liveCell}>
+                  <Text style={styles.liveLab}>Est. wait</Text>
+                  <Text style={[styles.liveVal, styles.liveWait]}>
+                    {status.estimatedWaitMinutes == null ? "—" : `~${status.estimatedWaitMinutes}m`}
+                  </Text>
+                </View>
+              </View>
+              <View style={styles.infoBox}>
+                <Text style={styles.infoText}>Almost there! You will be called very soon.</Text>
+              </View>
+            </>
+          )}
+
+          {/* ── Waiting: position = 0 (you are next) ── */}
+          {status?.state === "Waiting" && status.peopleAhead === 0 && (
+            <View style={styles.statusHighlight}>
+              <Text style={styles.statusEmoji}>{"\uD83D\uDFE1"}</Text>
+              <Text style={styles.statusHeadline}>You are next in line</Text>
+              <Text style={styles.statusSub}>Please be ready. You will be called shortly.</Text>
             </View>
-            <View style={styles.liveCell}>
-              <Text style={styles.liveLab}>People ahead</Text>
-              <Text style={styles.liveVal}>{status?.peopleAhead ?? "—"}</Text>
+          )}
+
+          {/* ── Called / Serving: it's your turn ── */}
+          {(status?.state === "Called" || status?.state === "Serving") && (
+            <View style={[styles.statusHighlight, styles.statusHighlightGreen]}>
+              <Text style={styles.statusEmoji}>{"\uD83D\uDFE2"}</Text>
+              <Text style={[styles.statusHeadline, styles.statusHeadlineGreen]}>It's your turn now</Text>
+              {status.counterNumber != null ? (
+                <Text style={styles.statusSub}>Please proceed to Counter {status.counterNumber}.</Text>
+              ) : (
+                <Text style={styles.statusSub}>Please proceed to the counter.</Text>
+              )}
             </View>
-            <View style={styles.liveCell}>
-              <Text style={styles.liveLab}>Est. wait</Text>
-              <Text style={[styles.liveVal, styles.liveWait]}>
-                {status?.estimatedWaitMinutes == null ? "—" : `~${status.estimatedWaitMinutes}m`}
-              </Text>
+          )}
+
+          {/* ── Completed ── */}
+          {status?.state === "Completed" && (
+            <View style={[styles.statusHighlight, styles.statusHighlightDone]}>
+              <Text style={styles.statusEmoji}>{"\u2705"}</Text>
+              <Text style={styles.statusHeadline}>Service completed</Text>
+              {status.counterNumber != null && (
+                <Text style={styles.statusSub}>Served at Counter {status.counterNumber}</Text>
+              )}
+              {status.servedAt && (
+                <Text style={styles.statusSub}>
+                  Completed at {new Date(status.servedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                </Text>
+              )}
+              <Text style={[styles.statusSub, { marginTop: 8 }]}>Thank you for visiting.</Text>
             </View>
-          </View>
-          {status?.nextEstimatedMessage ? (
-            <View style={styles.infoBox}>
-              <Text style={styles.infoText}>{status.nextEstimatedMessage}</Text>
+          )}
+
+          {/* ── Missed / Skipped ── */}
+          {status?.state === "Missed" && (
+            <View style={[styles.statusHighlight, styles.statusHighlightDanger]}>
+              <Text style={styles.statusEmoji}>{"\uD83D\uDD34"}</Text>
+              <Text style={[styles.statusHeadline, styles.statusHeadlineDanger]}>You missed your turn</Text>
+              <Text style={styles.statusSub}>Please approach the counter or take a new ticket.</Text>
             </View>
-          ) : status?.estimatedWaitMinutes != null ? (
-            <View style={styles.infoBox}>
-              <Text style={styles.infoText}>
-                You will be called in approximately {status.estimatedWaitMinutes} minutes.
-              </Text>
-            </View>
-          ) : null}
+          )}
+
+          {/* ── Fallback: loading or unknown state ── */}
+          {!status && (
+            <>
+              <Text style={styles.liveTitle}>Live status</Text>
+              <Text style={styles.statusSub}>Loading queue information...</Text>
+            </>
+          )}
         </View>
 
         {showCheckIn ? (
@@ -374,6 +459,19 @@ const styles = StyleSheet.create({
     borderColor: "rgba(56,189,248,0.25)",
   },
   infoText: { fontSize: 13, color: theme.primaryDark, fontWeight: "600", lineHeight: 18 },
+  statusHighlight: {
+    alignItems: "center",
+    paddingVertical: 20,
+    paddingHorizontal: 16,
+  },
+  statusHighlightGreen: {},
+  statusHighlightDone: {},
+  statusHighlightDanger: {},
+  statusEmoji: { fontSize: 32, marginBottom: 8 },
+  statusHeadline: { fontSize: 18, fontWeight: "900", color: theme.textOnLight, textAlign: "center" },
+  statusHeadlineGreen: { color: "#15803d" },
+  statusHeadlineDanger: { color: theme.danger },
+  statusSub: { fontSize: 14, color: theme.textMutedOnLight, marginTop: 4, textAlign: "center", lineHeight: 20 },
   checkCard: {
     backgroundColor: "#fff",
     borderRadius: 16,

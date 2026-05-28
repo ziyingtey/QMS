@@ -351,6 +351,7 @@ public sealed class QmsQueueService(
     {
         var entry = await db.QueueEntries.AsNoTracking()
             .Include(q => q.ServiceType)
+            .Include(q => q.Counter)
             .FirstOrDefaultAsync(q => q.BranchId == branchId && q.TicketNumber == ticketNumber, cancellationToken);
         if (entry is null) return null;
 
@@ -388,6 +389,8 @@ public sealed class QmsQueueService(
         if (entry.State == QueueEntryState.Waiting && totalAhead == 0)
             nextMsg = "You are next";
 
+        int? counterNumber = entry.Counter?.Number;
+
         return new QueueStatusDto(
             entry.TicketNumber,
             entry.State.ToString(),
@@ -397,7 +400,9 @@ public sealed class QmsQueueService(
             currentServing,
             nextMsg,
             entry.AssignedSlotStart.HasValue ? FormatIsoOffset(entry.AssignedSlotStart.Value) : null,
-            entry.AssignedSlotEnd.HasValue ? FormatIsoOffset(entry.AssignedSlotEnd.Value) : null);
+            entry.AssignedSlotEnd.HasValue ? FormatIsoOffset(entry.AssignedSlotEnd.Value) : null,
+            counterNumber,
+            entry.ServingEndedAt.HasValue ? FormatIsoOffset(entry.ServingEndedAt.Value) : null);
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -1263,7 +1268,8 @@ public sealed record WalkInCreatedDto(
 public sealed record QueueStatusDto(
     string TicketNumber, string State, int PeopleAhead, double? EstimatedWaitMinutes,
     string ServiceName, string? CurrentServingTicketNumber, string? NextEstimatedMessage,
-    string? AssignedSlotStart, string? AssignedSlotEnd);
+    string? AssignedSlotStart, string? AssignedSlotEnd,
+    int? CounterNumber, string? ServedAt);
 
 public sealed record ServiceLaneSummaryDto(
     Guid ServiceTypeId, string ServiceName, int WaitingCount, double? EstimatedWaitMinutes, string CrowdLevel);
