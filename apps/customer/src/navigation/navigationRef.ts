@@ -33,6 +33,7 @@ export type RootStackParamList = {
   MainTabs: NavigatorScreenParams<MainTabParamList> | undefined;
   MapBranches: undefined;
   BranchDetail: { branch: BranchDto };
+  Notifications: undefined;
 };
 
 export const navigationRef = createNavigationContainerRef<RootStackParamList>();

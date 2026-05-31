@@ -214,7 +214,6 @@ export function CustomerProvider({ children }: { children: React.ReactNode }) {
       });
       const coords = { latitude: loc.coords.latitude, longitude: loc.coords.longitude };
       setUserCoords(coords);
-      const coordSuffix = ` (${coords.latitude.toFixed(5)}, ${coords.longitude.toFixed(5)})`;
       try {
         const places = await Location.reverseGeocodeAsync(coords);
         const p = places[0];
@@ -224,14 +223,12 @@ export function CustomerProvider({ children }: { children: React.ReactNode }) {
           const city = p.city ?? p.district ?? p.subregion ?? "";
           const region = p.region ?? "";
           const parts = [street, city, region].filter((x) => x && x.length > 0);
-          setUserLocationLabel(
-            parts.length > 0 ? `${parts.join(", ")}${coordSuffix}` : `GPS fix${coordSuffix}`,
-          );
+          setUserLocationLabel(parts.length > 0 ? parts.join(", ") : "Location found");
         } else {
-          setUserLocationLabel(`GPS fix${coordSuffix}`);
+          setUserLocationLabel("Location found");
         }
       } catch {
-        setUserLocationLabel(`GPS fix${coordSuffix}`);
+        setUserLocationLabel("Location found");
       }
     } catch (e) {
       setUserCoords(null);

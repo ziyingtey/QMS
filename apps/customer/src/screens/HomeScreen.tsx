@@ -215,12 +215,12 @@ export function HomeScreen({
               <Text style={styles.addressLine} numberOfLines={3}>
                 {locationBusy ? "Getting GPS…" : userLocationLabel ?? "Fetching your location…"}
               </Text>
-              <Text style={styles.phoneLine}>{profile?.phone?.trim() || "Customer account"}</Text>
+              {profile?.phone?.trim() ? <Text style={styles.phoneLine}>{profile.phone.trim()}</Text> : null}
             </View>
             <View style={styles.headerIcons}>
               <Pressable
                 accessibilityLabel="Notifications"
-                onPress={() => Alert.alert("Notifications", "Ticket reminders can be wired to push in a later iteration.")}
+                onPress={() => navigation.navigate("Notifications" as never)}
                 style={styles.iconBtn}
                 hitSlop={8}
               >
@@ -254,9 +254,6 @@ export function HomeScreen({
               value={search}
               onChangeText={setSearch}
             />
-            <Pressable accessibilityLabel="Voice search" onPress={() => Alert.alert("Voice search", "Not enabled in this build.")} hitSlop={8}>
-              <Ionicons name="mic-outline" size={22} color="#64748b" />
-            </Pressable>
             <Pressable accessibilityLabel="Locate on map" onPress={openBranchMap} hitSlop={8}>
               <Ionicons name="location-outline" size={22} color={theme.primaryDark} />
             </Pressable>

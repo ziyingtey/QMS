@@ -10,6 +10,7 @@ import { BookingSlotsScreen } from "../screens/BookingSlotsScreen";
 import { BranchDetailScreen } from "../screens/BranchDetailScreen";
 import { HomeScreen } from "../screens/HomeScreen";
 import { MapBranchesScreen } from "../screens/MapBranchesScreen";
+import { NotificationsScreen } from "../screens/NotificationsScreen";
 import { ProfileScreen } from "../screens/ProfileScreen";
 import { QueueHomeScreen } from "../screens/QueueHomeScreen";
 import { QueueTrackScreen } from "../screens/QueueTrackScreen";
@@ -124,6 +125,7 @@ export function AppNavigator() {
         />
         <RootStack.Screen name="MapBranches" component={MapBranchesScreen} options={{ presentation: "modal" }} />
         <RootStack.Screen name="BranchDetail" component={BranchDetailScreen} options={{ presentation: "card" }} />
+        <RootStack.Screen name="Notifications" component={NotificationsScreen} options={{ presentation: "card" }} />
       </RootStack.Navigator>
     </NavigationContainer>
   );

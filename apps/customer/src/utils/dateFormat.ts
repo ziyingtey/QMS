@@ -152,11 +152,15 @@ export function formatBookingSlotDateTime(slotStart: string, slotEnd: string, br
     const bc = branchWallComponents(b, branchOffsetMinutes);
     const da = new Date(Date.UTC(ac.y, ac.m0, ac.d, ac.h, ac.mi));
     const db = new Date(Date.UTC(bc.y, bc.m0, bc.d, bc.h, bc.mi));
-    const opts: Intl.DateTimeFormatOptions = { dateStyle: "medium", timeStyle: "short", timeZone: "UTC" };
-    return `${da.toLocaleString([], opts)} – ${db.toLocaleString([], opts)}`;
+    const dateStr = da.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
+    const timeA = da.toLocaleTimeString([], { hour: "numeric", minute: "2-digit", timeZone: "UTC" });
+    const timeB = db.toLocaleTimeString([], { hour: "numeric", minute: "2-digit", timeZone: "UTC" });
+    return `${dateStr} · ${timeA} – ${timeB}`;
   }
-  const opts: Intl.DateTimeFormatOptions = { dateStyle: "medium", timeStyle: "short" };
-  return `${a.toLocaleString([], opts)} – ${b.toLocaleString([], opts)}`;
+  const dateStr = a.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" });
+  const timeA = a.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const timeB = b.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return `${dateStr} · ${timeA} – ${timeB}`;
 }
 
 /** e.g. May 5, 2026 — branch wall date when offset passed */
