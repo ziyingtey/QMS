@@ -1029,8 +1029,16 @@ public sealed class QmsQueueService(
                       s => s.Id == serviceTypeId && s.BranchId == branchId, cancellationToken)
                   ?? throw new InvalidOperationException("Service not found.");
 
-        var waiting = await db.QueueEntries.CountAsync(
-            q => q.BranchId == branchId && q.ServiceTypeId == serviceTypeId && q.State == QueueEntryState.Waiting, cancellationToken);
+        var branch = await db.Branches.AsNoTracking().FirstAsync(b => b.Id == branchId, cancellationToken);
+        var zone = TimeSpan.FromMinutes(branch.ServiceZoneOffsetMinutes);
+        var nowAtBranch = DateTimeOffset.UtcNow.ToOffset(zone);
+        var todayDate = nowAtBranch.Date;
+
+        var allWaiting = await db.QueueEntries.AsNoTracking()
+            .Where(q => q.BranchId == branchId && q.ServiceTypeId == serviceTypeId && q.State == QueueEntryState.Waiting)
+            .ToListAsync(cancellationToken);
+        var waiting = allWaiting.Count(q => q.AssignedSlotStart.HasValue && q.AssignedSlotStart.Value.ToOffset(zone).Date == todayDate);
+
         var serving = await db.QueueEntries.CountAsync(
             q => q.BranchId == branchId && q.ServiceTypeId == serviceTypeId && q.State == QueueEntryState.Serving, cancellationToken);
         var active = await CountActiveLaneCountersAsync(branchId, serviceTypeId, cancellationToken);
