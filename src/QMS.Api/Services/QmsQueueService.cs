@@ -491,9 +491,10 @@ public sealed class QmsQueueService(
 
         var entry = await db.QueueEntries.Include(q => q.Booking)
             .FirstOrDefaultAsync(
-                q => q.BranchId == counter.BranchId && q.TicketNumber == ticketNumber && q.State == QueueEntryState.Called,
+                q => q.BranchId == counter.BranchId && q.TicketNumber == ticketNumber
+                     && (q.State == QueueEntryState.Called || q.State == QueueEntryState.Serving),
                 cancellationToken)
-            ?? throw new InvalidOperationException("Ticket not found or not in Called state.");
+            ?? throw new InvalidOperationException("Ticket not found or not in Called/Serving state.");
 
         entry.State = QueueEntryState.Missed;
         entry.CounterId = null;

@@ -222,6 +222,15 @@ export async function apiEndService(token: string, ticketNumber: string): Promis
   if (!res.ok) throw new Error(await parseError(res));
 }
 
+export async function apiMarkMissed(token: string, ticketNumber: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/staff/mark-missed`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ ticketNumber }),
+  });
+  if (!res.ok) throw new Error(await parseError(res));
+}
+
 export async function apiLiveDashboard(token: string, branchId: string): Promise<LiveDashboard> {
   const res = await fetch(`${API_BASE}/api/branches/${branchId}/dashboard/live`, {
     headers: { Authorization: `Bearer ${token}` },

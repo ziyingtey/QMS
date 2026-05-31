@@ -6,6 +6,7 @@ import {
   apiBranches,
   apiCallNext,
   apiEndService,
+  apiMarkMissed,
   apiLiveDashboard,
   apiMyCounter,
   apiStartService,
@@ -227,13 +228,12 @@ export function StaffDeckPage() {
     }
   };
 
-  const onSkip = async () => {
+  const onNoShow = async () => {
     if (!token || !ticket) return;
-    if (!servingActive) return;
     setBusy(true);
     try {
-      await apiEndService(token, ticket);
-      push(`Skip / end ${ticket}`);
+      await apiMarkMissed(token, ticket);
+      push(`No show: ${ticket}`);
       setTicket("");
       setServingActive(false);
       await refreshWaiting();
@@ -395,11 +395,11 @@ export function StaffDeckPage() {
                 <button
                   type="button"
                   className="btn-skip"
-                  disabled={busy || !servingActive}
-                  title={!servingActive ? "Start service first" : "End this visit (same as complete for now)"}
-                  onClick={() => void onSkip()}
+                  disabled={busy || !ticket}
+                  title="Mark customer as no show (missed their turn)"
+                  onClick={() => void onNoShow()}
                 >
-                  Skip
+                  No Show
                 </button>
               </div>
             )}
