@@ -508,8 +508,8 @@ public sealed class QmsQueueService(
 
         await db.SaveChangesAsync(cancellationToken);
 
-        // Pull forward: a slot opened up, try to move walk-ins from later slots
-        await PullForwardWalkInsAsync(entry.BranchId, entry.ServiceTypeId, cancellationToken);
+        // Pull forward: a no-show freed a seat — use total capacity for the current slot
+        await PullForwardWalkInsAsync(entry.BranchId, entry.ServiceTypeId, cancellationToken, noShowInCurrentSlot: true);
 
         await hubContext.Clients.Group(QueueHub.BranchGroup(counter.BranchId)).SendAsync("QueueUpdated", counter.BranchId, cancellationToken);
     }
@@ -587,6 +587,13 @@ public sealed class QmsQueueService(
             entry.ServingStartedAt!.Value,
             end,
             cancellationToken);
+
+        // Event 3: Slot finished early — pull one walk-in from the next slot
+        if (entry.AssignedSlotStart.HasValue && entry.AssignedSlotEnd.HasValue)
+        {
+            await TryPullForwardOnSlotEarlyFinishAsync(
+                entry.BranchId, entry.ServiceTypeId, entry.AssignedSlotStart.Value, entry.AssignedSlotEnd.Value, cancellationToken);
+        }
 
         await hubContext.Clients.Group(QueueHub.BranchGroup(counter.BranchId)).SendAsync("QueueUpdated", counter.BranchId, cancellationToken);
     }
@@ -1058,7 +1065,7 @@ public sealed class QmsQueueService(
     // PULL FORWARD (walk-in slot rebalance when capacity opens)
     // ─────────────────────────────────────────────────────────────────────
 
-    private async Task PullForwardWalkInsAsync(Guid branchId, Guid serviceTypeId, CancellationToken cancellationToken)
+    private async Task PullForwardWalkInsAsync(Guid branchId, Guid serviceTypeId, CancellationToken cancellationToken, bool noShowInCurrentSlot = false)
     {
         var branch = await db.Branches.AsNoTracking().FirstOrDefaultAsync(b => b.Id == branchId, cancellationToken);
         if (branch is null) return;
@@ -1089,16 +1096,30 @@ public sealed class QmsQueueService(
         if (walkIns.Count == 0) return;
 
         // Build slot capacity map from current time forward
+        // Current active slot: use TOTAL capacity (online + walk-in) — a miss frees a seat regardless of type
+        // Subsequent slots: use WALK-IN capacity only — backfill is about refilling the walk-in pool
         var packStart = AlignSlot(nowAtBranch, slotM, windowStart);
         if (packStart < windowStart) packStart = windowStart;
+        var currentSlotEnd = packStart.AddMinutes(slotM);
 
         var slotCaps = new List<(DateTimeOffset start, DateTimeOffset end, int available)>();
         for (var b = packStart; b < windowEnd; b = b.AddMinutes(slotM))
         {
             var be = b.AddMinutes(slotM);
             var eff = ComputeEffectiveSlotCapacity(branch, service, activeCounters);
-            var currentUsed = await CountWalkInsInSlotAsync(branchId, serviceTypeId, b, be, cancellationToken);
-            var available = eff.WalkInBufferCapacity - currentUsed;
+            int available;
+            if (noShowInCurrentSlot && b < currentSlotEnd)
+            {
+                // No-show in current slot: use total capacity (the empty seat can be any type)
+                var totalUsed = await CountAllEntriesInSlotAsync(branchId, serviceTypeId, b, be, cancellationToken);
+                available = (eff.OnlineCapacity + eff.WalkInBufferCapacity) - totalUsed;
+            }
+            else
+            {
+                // All other cases: use walk-in capacity only
+                var walkInUsed = await CountWalkInsInSlotAsync(branchId, serviceTypeId, b, be, cancellationToken);
+                available = eff.WalkInBufferCapacity - walkInUsed;
+            }
             if (available > 0)
                 slotCaps.Add((b, be, available));
         }
@@ -1129,6 +1150,95 @@ public sealed class QmsQueueService(
         {
             await db.SaveChangesAsync(cancellationToken);
             await hubContext.Clients.Group(QueueHub.BranchGroup(branchId)).SendAsync("QueueUpdated", branchId, cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// Event 3: When a slot finishes early (all customers done, at least 5 min before slot end),
+    /// pull ONE walk-in from the next slot into the current slot. Then re-check recursively.
+    /// </summary>
+    private async Task TryPullForwardOnSlotEarlyFinishAsync(
+        Guid branchId, Guid serviceTypeId,
+        DateTimeOffset slotStart, DateTimeOffset slotEnd,
+        CancellationToken cancellationToken)
+    {
+        var branch = await db.Branches.AsNoTracking().FirstAsync(b => b.Id == branchId, cancellationToken);
+        var zone = TimeSpan.FromMinutes(branch.ServiceZoneOffsetMinutes);
+        var nowAtBranch = DateTimeOffset.UtcNow.ToOffset(zone);
+
+        // Must be at least 5 minutes before slot end to count as "early finish"
+        if (nowAtBranch >= slotEnd.AddMinutes(-5)) return;
+
+        // Check no one is still active in this slot
+        var slotStillActive = await db.QueueEntries.AnyAsync(
+            q => q.BranchId == branchId
+                 && q.ServiceTypeId == serviceTypeId
+                 && q.AssignedSlotStart == slotStart
+                 && (q.State == QueueEntryState.Waiting || q.State == QueueEntryState.Called || q.State == QueueEntryState.Serving),
+            cancellationToken);
+
+        if (slotStillActive) return;
+
+        // Find the next slot's first waiting walk-in
+        var nextWalkIn = await db.QueueEntries
+            .Where(q => q.BranchId == branchId
+                        && q.ServiceTypeId == serviceTypeId
+                        && q.State == QueueEntryState.Waiting
+                        && q.EntryType == QueueEntryType.WalkIn
+                        && q.AssignedSlotStart > slotStart)
+            .OrderBy(q => q.AssignedSlotStart)
+            .ThenBy(q => q.EnqueueSequence)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (nextWalkIn is null) return;
+
+        // Pull this one walk-in into the current slot
+        nextWalkIn.AssignedSlotStart = slotStart;
+        nextWalkIn.AssignedSlotEnd = slotEnd;
+        nextWalkIn.EnqueueSequence = await AllocateSlotSequenceAsync(branchId, slotStart, cancellationToken);
+
+        await db.SaveChangesAsync(cancellationToken);
+        await hubContext.Clients.Group(QueueHub.BranchGroup(branchId)).SendAsync("QueueUpdated", branchId, cancellationToken);
+
+        // Now the next slot lost one person — check if THAT slot also needs to backfill from the slot after it
+        // (using normal PullForward capacity logic for the next slot)
+        var nextSlotStart = nextWalkIn.AssignedSlotStart; // this is now slotStart (current slot), we need original
+        // Actually we need to backfill the slot the walk-in came FROM
+        var service = await db.ServiceTypes.AsNoTracking().FirstAsync(s => s.Id == serviceTypeId, cancellationToken);
+        var slotM = branch.SlotDurationMinutes < 1 ? 30 : branch.SlotDurationMinutes;
+        var activeCounters = await CountActiveLaneCountersAsync(branchId, serviceTypeId, cancellationToken);
+        var eff = ComputeEffectiveSlotCapacity(branch, service, activeCounters);
+
+        // Find original slot of the pulled walk-in (the next slot after current)
+        var origSlotStart = slotEnd; // next slot starts where current slot ends
+        var origSlotEnd = origSlotStart.AddMinutes(slotM);
+
+        // Check walk-in entries in the next slot vs walk-in capacity
+        // (downstream backfill uses walk-in cap — the vacancy is in the walk-in pool)
+        var remainingWalkIns = await CountWalkInsInSlotAsync(branchId, serviceTypeId, origSlotStart, origSlotEnd, cancellationToken);
+        var nextSlotWalkInCap = eff.WalkInBufferCapacity;
+
+        // If the next slot lost a walk-in and has room in its walk-in pool, backfill from the slot after
+        if (remainingWalkIns < nextSlotWalkInCap)
+        {
+            var backfill = await db.QueueEntries
+                .Where(q => q.BranchId == branchId
+                            && q.ServiceTypeId == serviceTypeId
+                            && q.State == QueueEntryState.Waiting
+                            && q.EntryType == QueueEntryType.WalkIn
+                            && q.AssignedSlotStart > origSlotStart)
+                .OrderBy(q => q.AssignedSlotStart)
+                .ThenBy(q => q.EnqueueSequence)
+                .FirstOrDefaultAsync(cancellationToken);
+
+            if (backfill is not null)
+            {
+                backfill.AssignedSlotStart = origSlotStart;
+                backfill.AssignedSlotEnd = origSlotEnd;
+                backfill.EnqueueSequence = await AllocateSlotSequenceAsync(branchId, origSlotStart, cancellationToken);
+                await db.SaveChangesAsync(cancellationToken);
+                await hubContext.Clients.Group(QueueHub.BranchGroup(branchId)).SendAsync("QueueUpdated", branchId, cancellationToken);
+            }
         }
     }
 
@@ -1167,11 +1277,26 @@ public sealed class QmsQueueService(
         Guid branchId, Guid serviceTypeId, DateTimeOffset slotStart, DateTimeOffset slotEnd,
         CancellationToken cancellationToken)
     {
+        // Count all walk-ins that have been allocated to this slot (excluding Missed/NoShow)
         return await db.QueueEntries.CountAsync(
             q => q.BranchId == branchId
                  && q.ServiceTypeId == serviceTypeId
                  && q.EntryType == QueueEntryType.WalkIn
-                 && q.State == QueueEntryState.Waiting
+                 && q.State != QueueEntryState.Missed
+                 && q.AssignedSlotStart == slotStart
+                 && q.AssignedSlotEnd == slotEnd,
+            cancellationToken);
+    }
+
+    /// <summary>Count ALL entries (online + walk-in) in a slot that are not Missed.</summary>
+    private async Task<int> CountAllEntriesInSlotAsync(
+        Guid branchId, Guid serviceTypeId, DateTimeOffset slotStart, DateTimeOffset slotEnd,
+        CancellationToken cancellationToken)
+    {
+        return await db.QueueEntries.CountAsync(
+            q => q.BranchId == branchId
+                 && q.ServiceTypeId == serviceTypeId
+                 && q.State != QueueEntryState.Missed
                  && q.AssignedSlotStart == slotStart
                  && q.AssignedSlotEnd == slotEnd,
             cancellationToken);
