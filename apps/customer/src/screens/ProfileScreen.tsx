@@ -3,7 +3,19 @@ import { useNavigation } from "@react-navigation/native";
 import type { BottomTabNavigationProp } from "@react-navigation/bottom-tabs";
 import { StatusBar } from "expo-status-bar";
 import { useCallback, useMemo, useState } from "react";
-import { Alert, Platform, Pressable, RefreshControl, ScrollView, StatusBar as RNStatusBar, StyleSheet, Text, View } from "react-native";
+import {
+  Alert,
+  Modal,
+  Platform,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  StatusBar as RNStatusBar,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { API_BASE } from "../config";
 import { useCustomer } from "../context/CustomerContext";
@@ -45,7 +57,7 @@ function MenuRow({ icon, title, subtitle, onPress, danger, chevron = true }: Men
       accessibilityRole="button"
     >
       <View style={[styles.menuIconWrap, danger && styles.menuIconWrapDanger]}>
-        <Ionicons name={icon} size={22} color={danger ? theme.danger : theme.primaryDark} />
+        <Ionicons name={icon} size={20} color={danger ? theme.danger : theme.primaryDark} />
       </View>
       <View style={styles.menuTextCol}>
         <Text style={[styles.menuTitle, danger && styles.menuTitleDanger]} numberOfLines={1}>
@@ -57,7 +69,7 @@ function MenuRow({ icon, title, subtitle, onPress, danger, chevron = true }: Men
           </Text>
         ) : null}
       </View>
-      {chevron ? <Ionicons name="chevron-forward" size={20} color={theme.textMutedOnLight} /> : null}
+      {chevron ? <Ionicons name="chevron-forward" size={18} color="#cbd5e1" /> : null}
     </Pressable>
   );
 }
@@ -66,10 +78,14 @@ export function ProfileScreen() {
   const insets = useSafeAreaInsets();
   const topPad = Platform.OS === "android" ? (RNStatusBar.currentHeight ?? 0) + 8 : Math.max(insets.top, 12);
   const tabNav = useNavigation<BottomTabNavigationProp<MainTabParamList>>();
-  const { userEmail, onLogout, requestLocation, profile, branches, loadBranches, refreshProfile, locationBusy, bookings } =
+  const { userEmail, onLogout, requestLocation, profile, branches, loadBranches, refreshProfile, locationBusy, bookings, updateProfile } =
     useCustomer();
   const favoriteIds = profile?.favoriteBranchIds ?? [];
   const [refreshing, setRefreshing] = useState(false);
+  const [editVisible, setEditVisible] = useState(false);
+  const [editName, setEditName] = useState("");
+  const [editPhone, setEditPhone] = useState("");
+  const [saving, setSaving] = useState(false);
 
   const displayName = useMemo(() => {
     const n = profile?.name?.trim();
@@ -88,6 +104,24 @@ export function ProfileScreen() {
     }
   }, [loadBranches, refreshProfile]);
 
+  const openEdit = () => {
+    setEditName(profile?.name ?? "");
+    setEditPhone(profile?.phone ?? "");
+    setEditVisible(true);
+  };
+
+  const saveEdit = async () => {
+    setSaving(true);
+    try {
+      await updateProfile({ name: editName, phone: editPhone });
+      setEditVisible(false);
+    } catch (e: any) {
+      Alert.alert("Error", e.message || "Failed to update profile.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const openBranchDetail = (branchId: string) => {
     const b = branches.find((x) => x.id === branchId);
     if (!b) {
@@ -104,11 +138,11 @@ export function ProfileScreen() {
     ]);
   };
 
-  const upcomingBookings = bookings.filter((b) => b.status !== "Cancelled" && b.status !== "Completed" && b.status !== "NoShow").length;
+  const completedCount = bookings.filter((b) => b.status === "Completed").length;
 
   return (
     <View style={styles.screen}>
-      <StatusBar style="light" />
+      <StatusBar style="dark" />
       <ScrollView
         style={styles.scrollView}
         contentContainerStyle={styles.scrollContent}
@@ -117,217 +151,283 @@ export function ProfileScreen() {
           <RefreshControl
             refreshing={refreshing}
             onRefresh={() => void onRefresh()}
-            tintColor="#ffffff"
-            colors={["#ffffff"]}
-            progressBackgroundColor={theme.headerNavy}
+            tintColor={theme.primary}
+            colors={[theme.primary]}
+            progressBackgroundColor={theme.screenBg}
           />
         }
       >
-        <View style={[styles.hero, { paddingTop: topPad }]}>
-          <View style={styles.avatarRing}>
-            <View style={styles.avatar}>
-              <Text style={styles.avatarInitials}>{initials}</Text>
+        {/* Light blue bg — extends to half of profile card */}
+        <View style={[styles.headerBg, { height: topPad + 16 + 36 + 16 + 44 }]} />
+
+        {/* Profile card — overlaps header */}
+        <View style={[styles.profileCardWrap, { marginTop: topPad + 16 }]}>
+          <Text style={styles.pageTitle}>Profile</Text>
+          <View style={styles.profileCard}>
+            <View style={styles.profileTop}>
+              <View style={styles.avatar}>
+                <Text style={styles.avatarText}>{initials}</Text>
+              </View>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={styles.profileName}>{displayName}</Text>
+                <Text style={styles.profileEmail} numberOfLines={1}>{profile?.email || userEmail || "—"}</Text>
+              </View>
+              <Pressable style={styles.editBtn} onPress={openEdit}>
+                <Text style={styles.editBtnText}>Edit</Text>
+              </Pressable>
             </View>
+            {profile?.phone?.trim() ? (
+              <View style={styles.phoneRow}>
+                <Ionicons name="call-outline" size={14} color={theme.textMutedOnLight} />
+                <Text style={styles.phoneText}>{profile.phone.trim()}</Text>
+              </View>
+            ) : null}
           </View>
-          <Text style={styles.heroName}>{displayName}</Text>
-          <View style={styles.memberPill}>
-            <Ionicons name="shield-checkmark" size={14} color="rgba(255,255,255,0.95)" />
-            <Text style={styles.memberPillText}>Customer account</Text>
-          </View>
-          <View style={styles.idCard}>
-            <View style={styles.idRow}>
-              <Ionicons name="mail-outline" size={18} color={theme.textMutedOnLight} />
-              <Text style={styles.idValue} numberOfLines={1}>
-                {profile?.email?.trim() || userEmail || "—"}
-              </Text>
+
+          {/* Stats */}
+          <View style={styles.statsRow}>
+            <View style={styles.statCard}>
+              <Text style={styles.statNumber}>{favoriteIds.length}</Text>
+              <Text style={styles.statLabel}>Favourites</Text>
             </View>
-            <View style={styles.idDivider} />
-            <View style={styles.idRow}>
-              <Ionicons name="call-outline" size={18} color={theme.textMutedOnLight} />
-              <Text style={styles.idValue}>{profile?.phone?.trim() || "No phone on file"}</Text>
+            <View style={styles.statCard}>
+              <Text style={styles.statNumber}>{completedCount}</Text>
+              <Text style={styles.statLabel}>Completed</Text>
+            </View>
+            <View style={styles.statCard}>
+              <Text style={styles.statNumber}>{bookings.length}</Text>
+              <Text style={styles.statLabel}>Bookings</Text>
             </View>
           </View>
         </View>
 
-        <View style={styles.sheet}>
-          <SectionTitle>Shortcuts</SectionTitle>
+        {/* Content */}
+        <View style={styles.content}>
+          <SectionTitle>Quick Actions</SectionTitle>
           <View style={styles.card}>
             <MenuRow
               icon="ticket-outline"
-              title="My queue & bookings"
-              subtitle={upcomingBookings > 0 ? `${upcomingBookings} active booking(s)` : "View tickets and live status"}
+              title="My Queue & Bookings"
               onPress={() => tabNav.navigate("Queue")}
             />
             <View style={styles.menuDivider} />
             <MenuRow
               icon="calendar-outline"
-              title="Book a visit"
-              subtitle="Choose branch, service, and time"
+              title="Book a Visit"
               onPress={() => tabNav.navigate("Booking", { screen: "BookingBranches" })}
             />
             <View style={styles.menuDivider} />
             <MenuRow
+              icon="notifications-outline"
+              title="Notifications"
+              onPress={() => {
+                if (navigationRef.isReady()) navigationRef.navigate("Notifications" as never);
+              }}
+            />
+            <View style={styles.menuDivider} />
+            <MenuRow
               icon="map-outline"
-              title="Map & branch locator"
-              subtitle="Browse locations on a map"
+              title="Map & Branch Locator"
               onPress={() => {
                 if (navigationRef.isReady()) navigationRef.navigate("MapBranches");
               }}
             />
           </View>
 
-          <SectionTitle>Saved branches</SectionTitle>
-          <View style={styles.card}>
-            {favoriteIds.length === 0 ? (
-              <Text style={styles.emptyFav}>
-                Heart a branch from Home or branch details — your favorites will show here.
-              </Text>
-            ) : (
-              favoriteIds.map((id, i) => {
-                const n = branches.find((b) => b.id === id)?.name ?? "Branch";
-                return (
-                  <View key={id}>
-                    {i > 0 ? <View style={styles.menuDivider} /> : null}
-                    <MenuRow
-                      icon="heart"
-                      title={n}
-                      subtitle="Open branch details"
-                      onPress={() => openBranchDetail(id)}
-                      chevron
-                    />
-                  </View>
-                );
-              })
-            )}
-          </View>
+          {favoriteIds.length > 0 && (
+            <>
+              <SectionTitle>Favourite Branches</SectionTitle>
+              <View style={styles.card}>
+                {favoriteIds.map((id, i) => {
+                  const n = branches.find((b) => b.id === id)?.name ?? "Branch";
+                  return (
+                    <View key={id}>
+                      {i > 0 ? <View style={styles.menuDivider} /> : null}
+                      <MenuRow
+                        icon="heart"
+                        title={n}
+                        onPress={() => openBranchDetail(id)}
+                      />
+                    </View>
+                  );
+                })}
+              </View>
+            </>
+          )}
 
-          <SectionTitle>Account & device</SectionTitle>
+          <SectionTitle>Settings</SectionTitle>
           <View style={styles.card}>
             <MenuRow
               icon="location-outline"
-              title="Refresh device location"
-              subtitle={locationBusy ? "Getting GPS…" : "Used for branch distance sorting on Home"}
+              title="Refresh Location"
+              subtitle={locationBusy ? "Getting GPS…" : undefined}
               onPress={() => void requestLocation()}
               chevron={false}
             />
             <View style={styles.menuDivider} />
             <MenuRow
-              icon="notifications-outline"
-              title="Notifications"
-              subtitle="Reminders can be enabled in a future update"
-              onPress={() => Alert.alert("Notifications", "Push reminders for your ticket and booking times can be wired in a later release.")}
-            />
-            <View style={styles.menuDivider} />
-            <MenuRow
               icon="help-circle-outline"
-              title="Help & support"
-              subtitle="How booking, queue, and check-in work"
+              title="Help & Support"
               onPress={() =>
                 Alert.alert(
                   "Help",
-                  "• Home: browse branches, book, and see your active ticket.\n• Booking: pick a branch, service, then a time slot.\n• Queue: live status for your tickets; pull down to refresh.\n• Tap I've arrived on a booking when you reach the branch (no GPS required).",
+                  "• Home: browse branches, book, and see your active ticket.\n• Booking: pick a branch, service, then a time slot.\n• Queue: live status for your tickets; pull down to refresh.",
                 )
               }
             />
-          </View>
-
-          <SectionTitle>About</SectionTitle>
-          <View style={styles.card}>
-            <View style={styles.aboutRow}>
-              <Text style={styles.aboutLabel}>App</Text>
-              <Text style={styles.aboutVal}>IH-QMS Customer</Text>
-            </View>
-            <View style={styles.aboutDivider} />
-            <View style={styles.aboutRow}>
-              <Text style={styles.aboutLabel}>Connected to</Text>
-              <Text style={styles.aboutMono} numberOfLines={2} selectable>
-                {API_BASE}
-              </Text>
-            </View>
-            {__DEV__ ? (
-              <>
-                <View style={styles.aboutDivider} />
-                <Text style={styles.devNote}>
-                  Dev: set EXPO_PUBLIC_API_URL in apps/customer/.env. Simulators may use a fixed GPS — use a real device for
-                  accurate distances.
-                </Text>
-              </>
-            ) : null}
+            <View style={styles.menuDivider} />
+            <MenuRow
+              icon="information-circle-outline"
+              title="About"
+              subtitle={`IH-QMS Customer · ${API_BASE}`}
+              onPress={() => {}}
+              chevron={false}
+            />
           </View>
 
           <Pressable style={styles.signOutBtn} onPress={confirmSignOut} accessibilityRole="button">
-            <Ionicons name="log-out-outline" size={22} color={theme.danger} />
-            <Text style={styles.signOutText}>Sign out</Text>
+            <Ionicons name="log-out-outline" size={20} color={theme.danger} />
+            <Text style={styles.signOutText}>Sign Out</Text>
           </Pressable>
-
-          <Text style={styles.footerLegal}>Use only on your own device. Do not share your sign-in.</Text>
         </View>
       </ScrollView>
+
+      {/* Edit Profile Modal */}
+      <Modal visible={editVisible} transparent animationType="slide" onRequestClose={() => setEditVisible(false)}>
+        <Pressable style={styles.modalOverlay} onPress={() => setEditVisible(false)}>
+          <View style={styles.modalContent} onStartShouldSetResponder={() => true}>
+            <View style={styles.modalHandle} />
+            <Text style={styles.modalTitle}>Edit Profile</Text>
+
+            <Text style={styles.inputLabel}>Name</Text>
+            <TextInput
+              style={styles.input}
+              value={editName}
+              onChangeText={setEditName}
+              placeholder="Your name"
+              placeholderTextColor="#94a3b8"
+            />
+
+            <Text style={styles.inputLabel}>Phone</Text>
+            <TextInput
+              style={styles.input}
+              value={editPhone}
+              onChangeText={setEditPhone}
+              placeholder="+60 12-345 6789"
+              placeholderTextColor="#94a3b8"
+              keyboardType="phone-pad"
+            />
+
+            <Pressable
+              style={[styles.saveBtn, saving && { opacity: 0.6 }]}
+              onPress={() => void saveEdit()}
+              disabled={saving}
+            >
+              <Text style={styles.saveBtnText}>{saving ? "Saving…" : "Save Changes"}</Text>
+            </Pressable>
+
+            <Pressable style={styles.cancelBtn} onPress={() => setEditVisible(false)}>
+              <Text style={styles.cancelBtnText}>Cancel</Text>
+            </Pressable>
+          </View>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  /** Match Home: overscroll / refresh strip uses header navy */
-  screen: { flex: 1, backgroundColor: theme.headerNavy },
-  scrollView: { flex: 1, backgroundColor: theme.headerNavy },
-  scrollContent: { flexGrow: 1, paddingBottom: 120, backgroundColor: theme.screenBg },
-  hero: {
-    backgroundColor: theme.headerNavy,
-    paddingHorizontal: 22,
-    paddingBottom: 28,
-    alignItems: "center",
+  screen: { flex: 1, backgroundColor: theme.screenBg },
+  scrollView: { flex: 1 },
+  scrollContent: { flexGrow: 1, paddingBottom: 120 },
+  // Light blue background — positioned absolute, covers top half of profile card
+  headerBg: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: "#e8f4f8",
   },
-  avatarRing: {
-    padding: 3,
-    borderRadius: 56,
-    borderWidth: 2,
-    borderColor: "rgba(255,255,255,0.35)",
-    marginBottom: 12,
+  profileCardWrap: {
+    paddingHorizontal: 18,
+    paddingBottom: 20,
   },
-  avatar: {
-    width: 88,
-    height: 88,
-    borderRadius: 44,
-    backgroundColor: "rgba(255,255,255,0.12)",
-    alignItems: "center",
-    justifyContent: "center",
+  pageTitle: {
+    fontSize: 28,
+    fontWeight: "900",
+    color: theme.textOnLight,
+    marginBottom: 16,
+    marginLeft: 4,
   },
-  avatarInitials: { fontSize: 32, fontWeight: "900", color: "#fff", letterSpacing: 1 },
-  heroName: { fontSize: 22, fontWeight: "900", color: "#fff", textAlign: "center" },
-  memberPill: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    marginTop: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 20,
-    backgroundColor: "rgba(255,255,255,0.12)",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.2)",
-  },
-  memberPillText: { fontSize: 12, fontWeight: "700", color: "rgba(255,255,255,0.95)" },
-  idCard: {
-    alignSelf: "stretch",
-    marginTop: 18,
+  profileCard: {
     backgroundColor: "#fff",
     borderRadius: 16,
-    paddingVertical: 14,
-    paddingHorizontal: 16,
+    padding: 16,
     shadowColor: "#000",
-    shadowOpacity: 0.12,
-    shadowRadius: 12,
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
     shadowOffset: { width: 0, height: 4 },
     elevation: 4,
   },
-  idRow: { flexDirection: "row", alignItems: "center", gap: 12 },
-  idDivider: { height: 1, backgroundColor: theme.borderLight, marginVertical: 12 },
-  idValue: { flex: 1, fontSize: 15, fontWeight: "600", color: theme.textOnLight, minWidth: 0 },
-  sheet: {
+  profileTop: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  avatar: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: theme.primaryDark,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  avatarText: { fontSize: 20, fontWeight: "900", color: "#fff" },
+  profileName: { fontSize: 18, fontWeight: "800", color: theme.textOnLight },
+  profileEmail: { fontSize: 13, color: theme.textMutedOnLight, marginTop: 2 },
+  editBtn: {
+    paddingHorizontal: 18,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1.5,
+    borderColor: "#d1d5db",
+    backgroundColor: "#fff",
+  },
+  editBtnText: { fontSize: 13, fontWeight: "700", color: theme.textOnLight },
+  phoneRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: "#f1f5f9",
+  },
+  phoneText: { fontSize: 14, color: theme.textMutedOnLight, fontWeight: "600" },
+  // Stats
+  statsRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 16,
+  },
+  statCard: {
+    flex: 1,
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: "center",
+    shadowColor: "#000",
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 1,
+  },
+  statNumber: { fontSize: 22, fontWeight: "900", color: theme.primaryDark },
+  statLabel: { fontSize: 11, fontWeight: "700", color: theme.textMutedOnLight, marginTop: 2 },
+  // Content
+  content: {
     paddingHorizontal: 18,
     paddingTop: 20,
-    gap: 6,
   },
   sectionTitle: {
     fontSize: 11,
@@ -335,21 +435,19 @@ const styles = StyleSheet.create({
     color: theme.textMutedOnLight,
     letterSpacing: 0.6,
     textTransform: "uppercase",
-    marginTop: 14,
+    marginTop: 16,
     marginBottom: 8,
     marginLeft: 4,
   },
   card: {
     backgroundColor: "#fff",
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: theme.borderLight,
+    borderRadius: 14,
     overflow: "hidden",
-    shadowColor: "#0f172a",
-    shadowOpacity: 0.05,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 3 },
-    elevation: 2,
+    shadowColor: "#000",
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 1,
   },
   menuRow: {
     flexDirection: "row",
@@ -357,68 +455,82 @@ const styles = StyleSheet.create({
     gap: 12,
     paddingVertical: 14,
     paddingHorizontal: 14,
-    backgroundColor: "#fff",
   },
   menuRowPressed: { backgroundColor: "#f8fafc" },
   menuIconWrap: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
-    backgroundColor: "#e8eef9",
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    backgroundColor: "#f1f5f9",
     alignItems: "center",
     justifyContent: "center",
   },
-  menuIconWrapDanger: { backgroundColor: "rgba(239,68,68,0.12)" },
+  menuIconWrapDanger: { backgroundColor: "rgba(239,68,68,0.1)" },
   menuTextCol: { flex: 1, minWidth: 0 },
-  menuTitle: { fontSize: 16, fontWeight: "800", color: theme.textOnLight },
+  menuTitle: { fontSize: 15, fontWeight: "600", color: theme.textOnLight },
   menuTitleDanger: { color: theme.danger },
-  menuSubtitle: { fontSize: 12, color: theme.textMutedOnLight, marginTop: 3, lineHeight: 16 },
-  menuDivider: { height: StyleSheet.hairlineWidth, backgroundColor: theme.borderLight, marginLeft: 70 },
-  emptyFav: {
-    padding: 18,
-    fontSize: 14,
-    color: theme.textMutedOnLight,
-    lineHeight: 20,
-    fontWeight: "500",
-  },
-  aboutRow: { paddingHorizontal: 16, paddingVertical: 12 },
-  aboutLabel: { fontSize: 12, fontWeight: "700", color: theme.textMutedOnLight, marginBottom: 4 },
-  aboutVal: { fontSize: 15, fontWeight: "700", color: theme.textOnLight },
-  aboutMono: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: theme.primaryDark,
-    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
-    lineHeight: 18,
-  },
-  aboutDivider: { height: StyleSheet.hairlineWidth, backgroundColor: theme.borderLight },
-  devNote: {
-    paddingHorizontal: 16,
-    paddingBottom: 14,
-    paddingTop: 4,
-    fontSize: 11,
-    color: theme.textMutedOnLight,
-    lineHeight: 16,
-  },
+  menuSubtitle: { fontSize: 12, color: theme.textMutedOnLight, marginTop: 2 },
+  menuDivider: { height: StyleSheet.hairlineWidth, backgroundColor: "#f1f5f9", marginLeft: 64 },
+  // Sign out
   signOutBtn: {
-    marginTop: 20,
+    marginTop: 24,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 10,
-    paddingVertical: 16,
-    borderRadius: 14,
-    borderWidth: 1.5,
-    borderColor: "rgba(239,68,68,0.45)",
+    gap: 8,
+    paddingVertical: 14,
+    borderRadius: 12,
     backgroundColor: "rgba(239,68,68,0.06)",
+    borderWidth: 1,
+    borderColor: "rgba(239,68,68,0.2)",
   },
-  signOutText: { fontSize: 16, fontWeight: "800", color: theme.danger },
-  footerLegal: {
-    textAlign: "center",
-    fontSize: 11,
-    color: theme.textMutedOnLight,
-    marginTop: 16,
-    paddingHorizontal: 12,
-    lineHeight: 16,
+  signOutText: { fontSize: 15, fontWeight: "700", color: theme.danger },
+  // Modal
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.4)",
+    justifyContent: "flex-end",
   },
+  modalContent: {
+    backgroundColor: "#fff",
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingHorizontal: 24,
+    paddingBottom: 40,
+    paddingTop: 12,
+  },
+  modalHandle: {
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: "#d1d5db",
+    alignSelf: "center",
+    marginBottom: 20,
+  },
+  modalTitle: { fontSize: 20, fontWeight: "800", color: theme.textOnLight, marginBottom: 20 },
+  inputLabel: { fontSize: 13, fontWeight: "700", color: theme.textMutedOnLight, marginBottom: 6, marginTop: 12 },
+  input: {
+    backgroundColor: "#f8fafc",
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 15,
+    color: theme.textOnLight,
+  },
+  saveBtn: {
+    marginTop: 24,
+    backgroundColor: theme.primaryDark,
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: "center",
+  },
+  saveBtnText: { fontSize: 15, fontWeight: "700", color: "#fff" },
+  cancelBtn: {
+    marginTop: 12,
+    paddingVertical: 12,
+    alignItems: "center",
+  },
+  cancelBtnText: { fontSize: 15, fontWeight: "600", color: theme.textMutedOnLight },
 });

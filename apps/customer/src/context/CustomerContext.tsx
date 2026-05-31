@@ -44,6 +44,7 @@ type CustomerContextValue = {
   loadBranches: () => Promise<void>;
   refreshBookings: () => Promise<void>;
   refreshProfile: () => Promise<void>;
+  updateProfile: (data: { name?: string; phone?: string }) => Promise<void>;
   /** Add or remove this branch from favorites (server toggle). */
   toggleFavoriteBranch: (branchId: string) => Promise<void>;
   /** Branch id currently waiting on toggle, or null. */
@@ -159,6 +160,13 @@ export function CustomerProvider({ children }: { children: React.ReactNode }) {
     } catch {
       setProfile(null);
     }
+  }, []);
+
+  const updateProfile = useCallback(async (data: { name?: string; phone?: string }) => {
+    const t = await readToken();
+    if (!t) return;
+    const { apiUpdateProfile } = await import("../api");
+    setProfile(await apiUpdateProfile(t, data));
   }, []);
 
   const toggleFavoriteBranch = useCallback(async (branchId: string) => {
@@ -336,6 +344,7 @@ export function CustomerProvider({ children }: { children: React.ReactNode }) {
         loadBranches,
         refreshBookings,
         refreshProfile,
+        updateProfile,
         toggleFavoriteBranch,
         togglingFavoriteBranchId,
         requestLocation,
@@ -363,6 +372,7 @@ export function CustomerProvider({ children }: { children: React.ReactNode }) {
       loadBranches,
       refreshBookings,
       refreshProfile,
+      updateProfile,
       toggleFavoriteBranch,
       togglingFavoriteBranchId,
       requestLocation,

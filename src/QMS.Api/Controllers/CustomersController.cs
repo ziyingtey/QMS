@@ -27,6 +27,29 @@ public sealed class CustomersController(QmsDbContext db) : ControllerBase
         return row is null ? Unauthorized() : Ok(row);
     }
 
+    [HttpPut("me")]
+    public async Task<ActionResult<CustomerMeDto>> UpdateProfile(
+        [FromBody] UpdateProfileRequest body,
+        CancellationToken cancellationToken)
+    {
+        var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+        var customer = await db.Customers
+            .Include(c => c.FavoriteBranches)
+            .FirstOrDefaultAsync(c => c.Id == userId, cancellationToken);
+        if (customer is null) return Unauthorized();
+
+        if (body.Name is not null) customer.Name = body.Name.Trim();
+        if (body.Phone is not null) customer.Phone = body.Phone.Trim();
+
+        await db.SaveChangesAsync(cancellationToken);
+
+        return Ok(new CustomerMeDto(
+            customer.Email,
+            customer.Name,
+            customer.Phone,
+            customer.FavoriteBranches.Select(f => f.BranchId).ToArray()));
+    }
+
     [HttpPost("me/favorite-branches/toggle")]
     public async Task<ActionResult<CustomerMeDto>> ToggleFavoriteBranch(
         [FromBody] ToggleFavoriteBranchRequest body,
@@ -58,5 +81,7 @@ public sealed class CustomersController(QmsDbContext db) : ControllerBase
 }
 
 public sealed record CustomerMeDto(string Email, string Name, string? Phone, IReadOnlyList<Guid> FavoriteBranchIds);
+
+public sealed record UpdateProfileRequest(string? Name, string? Phone);
 
 public sealed record ToggleFavoriteBranchRequest(Guid BranchId);

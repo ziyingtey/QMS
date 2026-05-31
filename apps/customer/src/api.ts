@@ -250,6 +250,17 @@ export async function apiCustomerMe(token: string): Promise<CustomerProfile> {
   return parseCustomerProfile(o);
 }
 
+export async function apiUpdateProfile(token: string, data: { name?: string; phone?: string }): Promise<CustomerProfile> {
+  const res = await fetch(`${API_BASE}/api/customers/me`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...bearerHeaders(token) },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error(await parseError(res));
+  const o = (await res.json()) as Record<string, unknown>;
+  return parseCustomerProfile(o);
+}
+
 export async function apiToggleFavoriteBranch(token: string, branchId: string): Promise<CustomerProfile> {
   const res = await fetch(`${API_BASE}/api/customers/me/favorite-branches/toggle`, {
     method: "POST",
