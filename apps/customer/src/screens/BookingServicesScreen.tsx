@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { StatusBar } from "expo-status-bar";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, FlatList, Platform, Pressable, RefreshControl, StatusBar as RNStatusBar, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { apiServiceLaneSummary, apiWalkIn, type ServiceLaneSummary } from "../api";
@@ -9,6 +9,7 @@ import { PrimaryButton } from "../components/PrimaryButton";
 import type { BookingStackParamList } from "../navigation/navigationRef";
 import { exitBookingFlow } from "../navigation/bookingExit";
 import { useCustomer } from "../context/CustomerContext";
+import { useBranchRealtime } from "../useBranchRealtime";
 import { theme } from "../theme";
 import { formatSlotRange } from "../utils/dateFormat";
 
@@ -18,7 +19,7 @@ export function BookingServicesScreen({ navigation, route }: Props) {
   const { branch, returnTo } = route.params;
   const insets = useSafeAreaInsets();
   const topPad = Platform.OS === "android" ? (RNStatusBar.currentHeight ?? 0) + 8 : Math.max(insets.top, 12);
-  const { navigateToQueueTrack } = useCustomer();
+  const { navigateToQueueTrack, token } = useCustomer();
   const [laneByService, setLaneByService] = useState<Record<string, ServiceLaneSummary>>({});
   const [listRefreshing, setListRefreshing] = useState(false);
 
@@ -36,7 +37,16 @@ export function BookingServicesScreen({ navigation, route }: Props) {
 
   useEffect(() => {
     void loadLanes();
+    const id = setInterval(() => void loadLanes(), 10000);
+    return () => clearInterval(id);
   }, [loadLanes]);
+
+  useBranchRealtime({
+    branchIds: useMemo(() => [branch.id], [branch.id]),
+    enabled: true,
+    accessToken: token,
+    onEvent: loadLanes,
+  });
 
   const onListRefresh = async () => {
     setListRefreshing(true);

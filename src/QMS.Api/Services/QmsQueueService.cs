@@ -446,18 +446,22 @@ public sealed class QmsQueueService(
             throw new InvalidOperationException(
                 "This counter is not enabled for this service lane.");
 
-        // Get next waiting customer: ordered by assigned slot, then sequence
+        // Get next waiting customer: only entries whose slot has already started
+        var zone = TimeSpan.FromMinutes(counter.Branch.ServiceZoneOffsetMinutes);
+        var nowAtBranch = DateTimeOffset.UtcNow.ToOffset(zone);
+
         var next = await db.QueueEntries
             .Include(q => q.Booking)
             .Where(q => q.BranchId == branchId
                         && q.ServiceTypeId == serviceTypeId
-                        && q.State == QueueEntryState.Waiting)
+                        && q.State == QueueEntryState.Waiting
+                        && q.AssignedSlotStart <= nowAtBranch)
             .OrderBy(q => q.AssignedSlotStart)
             .ThenBy(q => q.EnqueueSequence)
             .FirstOrDefaultAsync(cancellationToken);
 
         if (next is null)
-            return new CallNextDto(null, null, "No waiting customers.");
+            return new CallNextDto(null, null, "No waiting customers (or next customer's slot has not started yet).");
 
         // Mark as Called
         next.State = QueueEntryState.Called;

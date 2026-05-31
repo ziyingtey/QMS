@@ -1,6 +1,6 @@
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { StatusBar } from "expo-status-bar";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Platform,
@@ -16,6 +16,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { apiCreateBooking, apiRescheduleBooking, apiSlots, userFacingApiError, type SlotDto } from "../api";
 import { readToken } from "../authStorage";
 import { useCustomer } from "../context/CustomerContext";
+import { useBranchRealtime } from "../useBranchRealtime";
 import type { BookingStackParamList } from "../navigation/navigationRef";
 import { navigationRef } from "../navigation/navigationRef";
 import { theme } from "../theme";
@@ -111,7 +112,19 @@ export function BookingSlotsScreen({ navigation, route }: Props) {
 
   useEffect(() => {
     void reload();
+    const id = setInterval(() => void reload(), 10000);
+    return () => clearInterval(id);
   }, [reload]);
+
+  const reloadRef = useRef(reload);
+  reloadRef.current = reload;
+
+  useBranchRealtime({
+    branchIds: useMemo(() => [branch.id], [branch.id]),
+    enabled: true,
+    accessToken: sessionToken,
+    onEvent: useCallback(() => { void reloadRef.current(); }, []),
+  });
 
   const onSlotPullRefresh = async () => {
     setSlotPullRefreshing(true);
