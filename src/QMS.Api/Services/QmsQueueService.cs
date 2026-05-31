@@ -287,6 +287,10 @@ public sealed class QmsQueueService(
 
         var zone = TimeSpan.FromMinutes(branch.ServiceZoneOffsetMinutes);
         var nowAtBranch = DateTimeOffset.UtcNow.ToOffset(zone);
+
+        if (booking.SlotStart - nowAtBranch < TimeSpan.FromHours(1))
+            throw new InvalidOperationException("Rescheduling is only allowed up to 1 hour before the scheduled appointment.");
+
         if (newSlotEnd <= nowAtBranch)
             throw new InvalidOperationException("This time slot is no longer available (it is in the past).");
 
@@ -366,18 +370,29 @@ public sealed class QmsQueueService(
                  && q.EnqueueSequence < entry.EnqueueSequence,
             cancellationToken);
 
-        // Also count everyone in earlier slots still waiting
+        // Also count everyone in earlier slots on the same day still waiting
+        var entryDate = entry.AssignedSlotStart!.Value.Date;
         var earlierSlotWaiting = await db.QueueEntries.AsNoTracking().CountAsync(
             q => q.BranchId == branchId
                  && q.ServiceTypeId == entry.ServiceTypeId
                  && q.State == QueueEntryState.Waiting
+                 && q.AssignedSlotStart.HasValue
+                 && q.AssignedSlotStart.Value.Date == entryDate
                  && q.AssignedSlotStart < entry.AssignedSlotStart,
             cancellationToken);
 
         var totalAhead = earlierSlotWaiting + waitingAhead;
 
+        var currentlyServing = await db.QueueEntries.AsNoTracking().CountAsync(
+            q => q.BranchId == branchId
+                 && q.ServiceTypeId == entry.ServiceTypeId
+                 && q.State == QueueEntryState.Serving
+                 && q.AssignedSlotStart.HasValue
+                 && q.AssignedSlotStart.Value.Date == entryDate,
+            cancellationToken);
+
         var avg = entry.ServiceType.DefaultAvgServiceMinutes;
-        var eta = WaitTimeEstimator.EstimateMinutes(totalAhead, avg, Math.Max(1, activeCounters));
+        var eta = WaitTimeEstimator.EstimateMinutes(totalAhead + currentlyServing, avg, Math.Max(1, activeCounters));
 
         var currentServing = await db.QueueEntries.AsNoTracking()
             .Where(q => q.BranchId == branchId && q.ServiceTypeId == entry.ServiceTypeId && q.State == QueueEntryState.Serving)
@@ -599,6 +614,10 @@ public sealed class QmsQueueService(
                       s => s.Id == serviceTypeId && s.BranchId == branchId, cancellationToken)
                   ?? throw new InvalidOperationException("Service not found.");
 
+        var currentlyServing = await db.QueueEntries.AsNoTracking().CountAsync(
+            q => q.BranchId == branchId && q.ServiceTypeId == serviceTypeId && q.State == QueueEntryState.Serving,
+            cancellationToken);
+
         var list = await db.QueueEntries.AsNoTracking()
             .Where(q => q.BranchId == branchId && q.ServiceTypeId == serviceTypeId && q.State == QueueEntryState.Waiting)
             .OrderBy(q => q.AssignedSlotStart)
@@ -610,7 +629,7 @@ public sealed class QmsQueueService(
         foreach (var q in list)
         {
             var ahead = position - 1;
-            var eta = WaitTimeEstimator.EstimateMinutes(ahead, svc.DefaultAvgServiceMinutes, n);
+            var eta = WaitTimeEstimator.EstimateMinutes(ahead + currentlyServing, svc.DefaultAvgServiceMinutes, n);
             result.Add(new WaitingTicketDto(
                 q.TicketNumber,
                 q.EntryType.ToString(),
@@ -919,8 +938,10 @@ public sealed class QmsQueueService(
         {
             var w = await db.QueueEntries.CountAsync(
                 q => q.BranchId == branchId && q.ServiceTypeId == svc.Id && q.State == QueueEntryState.Waiting, cancellationToken);
+            var serving = await db.QueueEntries.CountAsync(
+                q => q.BranchId == branchId && q.ServiceTypeId == svc.Id && q.State == QueueEntryState.Serving, cancellationToken);
             var ac = await CountActiveLaneCountersAsync(branchId, svc.Id, cancellationToken);
-            var eta = WaitTimeEstimator.EstimateMinutes(w, svc.DefaultAvgServiceMinutes, Math.Max(1, ac));
+            var eta = WaitTimeEstimator.EstimateMinutes(w + serving, svc.DefaultAvgServiceMinutes, Math.Max(1, ac));
 
             if (w > 0 && ac == 0)
                 alerts.Add(new ManagerInsightAlertDto("warning",
@@ -995,8 +1016,10 @@ public sealed class QmsQueueService(
 
         var waiting = await db.QueueEntries.CountAsync(
             q => q.BranchId == branchId && q.ServiceTypeId == serviceTypeId && q.State == QueueEntryState.Waiting, cancellationToken);
+        var serving = await db.QueueEntries.CountAsync(
+            q => q.BranchId == branchId && q.ServiceTypeId == serviceTypeId && q.State == QueueEntryState.Serving, cancellationToken);
         var active = await CountActiveLaneCountersAsync(branchId, serviceTypeId, cancellationToken);
-        var eta = WaitTimeEstimator.EstimateMinutes(waiting, svc.DefaultAvgServiceMinutes, Math.Max(1, active));
+        var eta = WaitTimeEstimator.EstimateMinutes(waiting + serving, svc.DefaultAvgServiceMinutes, Math.Max(1, active));
 
         var crowd = waiting switch { < 5 => "Low", < 15 => "Medium", _ => "High" };
         return new ServiceLaneSummaryDto(serviceTypeId, svc.Name, waiting,

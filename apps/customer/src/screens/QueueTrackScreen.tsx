@@ -109,7 +109,10 @@ export function QueueTrackScreen({ route, navigation }: Props) {
     (!booking ||
       (booking.status !== "Cancelled" && booking.status !== "Completed" && booking.status !== "NoShow"));
   const showCheckIn = Boolean(appointmentBookingId) && bookingIsActive;
-  const showReschedule = Boolean(booking) && bookingIsActive;
+  const canRescheduleByTime = booking?.slotStart
+    ? new Date(booking.slotStart).getTime() - Date.now() >= 60 * 60 * 1000
+    : false;
+  const showReschedule = Boolean(booking) && bookingIsActive && canRescheduleByTime;
   const showCancel = Boolean(appointmentBookingId) && bookingIsActive;
 
   const openReschedule = async () => {
