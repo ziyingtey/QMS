@@ -1,5 +1,5 @@
 import { createNavigationContainerRef, type NavigatorScreenParams } from "@react-navigation/native";
-import type { BookingCreated, BranchDto, ServiceDto } from "../api";
+import type { BranchDto, ServiceDto } from "../api";
 
 /** When set to `home`, back / Done returns to the Home tab (e.g. booked from Home). */
 export type BookingReturnTo = "home" | "branches";
@@ -12,10 +12,9 @@ export type BookingStackParamList = {
     service: ServiceDto;
     rescheduleId?: string;
     returnTo?: BookingReturnTo;
-    /** When true, user came from Queue reschedule — no “back to services”, exit returns to Queue. */
+    /** When true, user came from Queue reschedule — no "back to services", exit returns to Queue. */
     rescheduleExitToQueue?: boolean;
   };
-  BookingTicket: { created: BookingCreated; branchId: string; returnTo?: BookingReturnTo };
 };
 
 export type QueueStackParamList = {

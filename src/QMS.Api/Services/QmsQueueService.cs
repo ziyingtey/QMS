@@ -332,9 +332,14 @@ public sealed class QmsQueueService(
 
     public async Task CancelBookingAsync(Guid userId, Guid bookingId, CancellationToken cancellationToken = default)
     {
-        var booking = await db.Bookings.Include(b => b.QueueEntry)
+        var booking = await db.Bookings.Include(b => b.QueueEntry).Include(b => b.Branch)
             .FirstOrDefaultAsync(b => b.Id == bookingId && b.CustomerId == userId, cancellationToken)
             ?? throw new InvalidOperationException("Booking not found");
+
+        var zone = TimeSpan.FromMinutes(booking.Branch.ServiceZoneOffsetMinutes);
+        var nowAtBranch = DateTimeOffset.UtcNow.ToOffset(zone);
+        if (booking.SlotStart - nowAtBranch < TimeSpan.FromHours(1))
+            throw new InvalidOperationException("Cancellation is only allowed up to 1 hour before the scheduled appointment.");
 
         booking.Status = BookingStatus.Cancelled;
         if (booking.QueueEntry is not null)
@@ -614,15 +619,25 @@ public sealed class QmsQueueService(
                       s => s.Id == serviceTypeId && s.BranchId == branchId, cancellationToken)
                   ?? throw new InvalidOperationException("Service not found.");
 
+        var branch = await db.Branches.AsNoTracking().FirstAsync(b => b.Id == branchId, cancellationToken);
+        var zone = TimeSpan.FromMinutes(branch.ServiceZoneOffsetMinutes);
+        var nowAtBranch = DateTimeOffset.UtcNow.ToOffset(zone);
+        var todayDate = nowAtBranch.Date;
+
         var currentlyServing = await db.QueueEntries.AsNoTracking().CountAsync(
             q => q.BranchId == branchId && q.ServiceTypeId == serviceTypeId && q.State == QueueEntryState.Serving,
             cancellationToken);
 
-        var list = await db.QueueEntries.AsNoTracking()
+        var allWaiting = await db.QueueEntries.AsNoTracking()
             .Where(q => q.BranchId == branchId && q.ServiceTypeId == serviceTypeId && q.State == QueueEntryState.Waiting)
             .OrderBy(q => q.AssignedSlotStart)
             .ThenBy(q => q.EnqueueSequence)
             .ToListAsync(cancellationToken);
+
+        // Only show today's entries to staff
+        var list = allWaiting
+            .Where(q => q.AssignedSlotStart.HasValue && q.AssignedSlotStart.Value.ToOffset(zone).Date == todayDate)
+            .ToList();
 
         var result = new List<WaitingTicketDto>();
         var position = 1;

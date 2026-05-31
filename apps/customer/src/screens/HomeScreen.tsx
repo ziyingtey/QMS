@@ -498,8 +498,6 @@ const styles = StyleSheet.create({
   headerBlock: {
     backgroundColor: theme.headerNavy,
     paddingBottom: 16,
-    borderBottomLeftRadius: 22,
-    borderBottomRightRadius: 22,
   },
   headerRow: { flexDirection: "row", alignItems: "flex-start", marginBottom: 16, gap: 12 },
   avatarCircle: {

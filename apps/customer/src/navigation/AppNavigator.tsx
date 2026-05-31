@@ -7,7 +7,6 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { BookingBranchesScreen } from "../screens/BookingBranchesScreen";
 import { BookingServicesScreen } from "../screens/BookingServicesScreen";
 import { BookingSlotsScreen } from "../screens/BookingSlotsScreen";
-import { BookingTicketScreen } from "../screens/BookingTicketScreen";
 import { BranchDetailScreen } from "../screens/BranchDetailScreen";
 import { HomeScreen } from "../screens/HomeScreen";
 import { MapBranchesScreen } from "../screens/MapBranchesScreen";
@@ -29,7 +28,6 @@ function BookingNavigator() {
       <BookingStackNav.Screen name="BookingBranches" component={BookingBranchesScreen} />
       <BookingStackNav.Screen name="BookingServices" component={BookingServicesScreen} />
       <BookingStackNav.Screen name="BookingSlots" component={BookingSlotsScreen} />
-      <BookingStackNav.Screen name="BookingTicket" component={BookingTicketScreen} />
     </BookingStackNav.Navigator>
   );
 }

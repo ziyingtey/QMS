@@ -24,6 +24,17 @@ import { useBranchRealtime } from "../useBranchRealtime";
 
 type Props = NativeStackScreenProps<QueueStackParamList, "QueueTrack">;
 
+type Phase =
+  | "future"        // Status 0: booking is for a future day
+  | "today-await"   // Status 0.5: today but slot not started
+  | "waiting"       // Status 1: peopleAhead > 1
+  | "almost"        // Status 2: peopleAhead = 1
+  | "next"          // Status 3: peopleAhead = 0
+  | "serving"       // Status 4: called/serving
+  | "completed"     // Status 5
+  | "missed"        // Status 6
+  | "loading";
+
 export function QueueTrackScreen({ route, navigation }: Props) {
   const { branchId, ticket, bookingId: bookingIdParam } = route.params;
   const insets = useSafeAreaInsets();
@@ -95,25 +106,52 @@ export function QueueTrackScreen({ route, navigation }: Props) {
     }
   }, [refresh, refreshBookings]);
 
-  /** Always return to the Queue tab list (all online + walk-in tickets), not arbitrary stack history. */
   const goToQueueBookingList = useCallback(() => {
     navigation.reset({ index: 0, routes: [{ name: "QueueHome" }] });
   }, [navigation]);
 
-  const displayService = status?.serviceName ?? serviceNameFromBooking ?? "—";
-  /** Prefer list row; fall back to route id so actions work before /mine finishes loading. */
+  const displayService = status?.serviceName ?? serviceNameFromBooking ?? "\u2014";
   const appointmentBookingId = booking?.id ?? bookingIdParam ?? null;
   const entryIsTerminal = status?.state === "Completed" || status?.state === "Missed";
   const bookingIsActive =
     !entryIsTerminal &&
     (!booking ||
       (booking.status !== "Cancelled" && booking.status !== "Completed" && booking.status !== "NoShow"));
-  const showCheckIn = Boolean(appointmentBookingId) && bookingIsActive;
-  const canRescheduleByTime = booking?.slotStart
+  const canModifyByTime = booking?.slotStart
     ? new Date(booking.slotStart).getTime() - Date.now() >= 60 * 60 * 1000
     : false;
-  const showReschedule = Boolean(booking) && bookingIsActive && canRescheduleByTime;
-  const showCancel = Boolean(appointmentBookingId) && bookingIsActive;
+  const showReschedule = Boolean(booking) && bookingIsActive && canModifyByTime;
+  const showCancel = Boolean(appointmentBookingId) && bookingIsActive && canModifyByTime;
+
+  // Determine phase
+  const phase: Phase = useMemo(() => {
+    if (!status) return "loading";
+    if (status.state === "Completed") return "completed";
+    if (status.state === "Missed") return "missed";
+    if (status.state === "Called" || status.state === "Serving") return "serving";
+
+    // For waiting state, check if it's a future booking or today-await
+    if (status.state === "Waiting" && booking?.slotStart) {
+      const now = new Date();
+      const slotDate = new Date(booking.slotStart);
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const slotDay = new Date(slotDate.getFullYear(), slotDate.getMonth(), slotDate.getDate());
+
+      if (slotDay > today) return "future";
+
+      // Today but slot hasn't started yet
+      if (slotDate > now) return "today-await";
+    }
+
+    if (status.state === "Waiting") {
+      if (status.peopleAhead === 0) return "next";
+      if (status.peopleAhead === 1) return "almost";
+      return "waiting";
+    }
+    return "loading";
+  }, [status, booking]);
+
+  const showCheckIn = Boolean(appointmentBookingId) && bookingIsActive && phase !== "future";
 
   const openReschedule = async () => {
     if (!booking) return;
@@ -162,6 +200,14 @@ export function QueueTrackScreen({ route, navigation }: Props) {
     );
   };
 
+  // Progress tracker steps
+  const progressSteps = ["Waiting", "Next", "Called", "Completed"];
+  const activeStep = phase === "waiting" || phase === "almost" ? 0
+    : phase === "next" ? 1
+    : phase === "serving" ? 2
+    : phase === "completed" ? 3
+    : -1;
+
   return (
     <View style={[styles.screen, { paddingTop: topPad }]}>
       <StatusBar style="dark" />
@@ -178,6 +224,7 @@ export function QueueTrackScreen({ route, navigation }: Props) {
           />
         }
       >
+        {/* Header */}
         <View style={styles.titleRow}>
           <Pressable
             accessibilityRole="button"
@@ -189,190 +236,277 @@ export function QueueTrackScreen({ route, navigation }: Props) {
             <Ionicons name="chevron-back" size={28} color={theme.primaryDark} />
           </Pressable>
           <Text style={styles.pageTitle} numberOfLines={1}>
-            Queue status
+            Queue Status
           </Text>
         </View>
 
-        {status?.state === "Completed" || status?.state === "Missed" ? null : booking ? (
-          <View style={styles.confirmBanner}>
-            <Text style={styles.confirmTitle}>Booking confirmed</Text>
-            <Text style={styles.confirmSub}>Your appointment is scheduled. Pull down to refresh; live data also updates every ~12s.</Text>
-          </View>
-        ) : (
-          <View style={styles.walkBanner}>
-            <Text style={styles.walkBannerTitle}>Walk-in ticket</Text>
-            <Text style={styles.walkBannerSub}>You are in the queue. Live position updates below.</Text>
-          </View>
-        )}
-
+        {/* Blue Ticket Card */}
         <View style={styles.ticketCard}>
-          <Text style={styles.ticketLabel}>Your queue number</Text>
+          <Text style={styles.ticketLabel}>Your Queue Number</Text>
           <Text style={styles.ticketBig}>{ticket}</Text>
-          <View style={styles.detailRow}>
-            <Text style={styles.dl}>Service</Text>
-            <Text style={styles.dv}>{displayService}</Text>
-          </View>
-          <View style={styles.detailRow}>
-            <Text style={styles.dl}>Branch</Text>
-            <Text style={styles.dv}>{branchName}</Text>
-          </View>
+          <Text style={styles.ticketService}>{displayService}</Text>
+          <Text style={styles.ticketBranch}>{branchName}</Text>
           {booking ? (
-            <>
-              <View style={styles.detailRow}>
-                <Text style={styles.dl}>Time slot</Text>
-                <Text style={styles.dv}>{formatSlotRange(booking.slotStart, booking.slotEnd, branchOffset)}</Text>
+            <View style={styles.ticketDateRow}>
+              <View style={styles.ticketDateCol}>
+                <Text style={styles.ticketDateLabel}>Date</Text>
+                <Text style={styles.ticketDateValue}>{formatBookingDateMedium(booking.slotStart, branchOffset)}</Text>
               </View>
-              <View style={styles.detailRow}>
-                <Text style={styles.dl}>Date</Text>
-                <Text style={styles.dv}>{formatBookingDateMedium(booking.slotStart, branchOffset)}</Text>
+              <View style={styles.ticketDateDivider} />
+              <View style={styles.ticketDateCol}>
+                <Text style={styles.ticketDateLabel}>Time Slot</Text>
+                <Text style={styles.ticketDateValue}>{formatSlotRange(booking.slotStart, booking.slotEnd, branchOffset)}</Text>
               </View>
-            </>
+            </View>
           ) : null}
         </View>
 
-        <View style={styles.liveCard}>
-          {/* ── Waiting: position > 1 ── */}
-          {status?.state === "Waiting" && status.peopleAhead > 1 && (
-            <>
-              <Text style={styles.liveTitle}>Live status</Text>
+        {/* ═══════ Phase: Future Booking ═══════ */}
+        {phase === "future" && (
+          <View style={styles.reminderCard}>
+            <View style={styles.reminderIconRow}>
+              <Ionicons name="calendar-outline" size={22} color={theme.primary} />
+              <Text style={styles.reminderTitle}>Booking Confirmed</Text>
+            </View>
+            <Text style={styles.reminderText}>
+              Please arrive 10 minutes before your appointment time.
+            </Text>
+          </View>
+        )}
+
+        {/* ═══════ Phase: Today Awaiting ═══════ */}
+        {phase === "today-await" && (
+          <>
+            <View style={[styles.reminderCard, styles.reminderCardBlue]}>
+              <View style={styles.reminderIconRow}>
+                <Ionicons name="time-outline" size={22} color={theme.primary} />
+                <Text style={styles.reminderTitle}>Appointment Today</Text>
+              </View>
+              <Text style={styles.reminderText}>
+                Please arrive 10 minutes before your appointment time.
+              </Text>
+            </View>
+            {showCheckIn && (
+              <View style={styles.actionCard}>
+                <PrimaryButton
+                  label="I've arrived"
+                  icon="checkmark-circle-outline"
+                  disabled={busy}
+                  onPress={() => void checkIn(appointmentBookingId!)}
+                />
+              </View>
+            )}
+          </>
+        )}
+
+        {/* ═══════ Phase: Waiting / Almost ═══════ */}
+        {(phase === "waiting" || phase === "almost") && status && (
+          <>
+            {/* Progress Tracker */}
+            <View style={styles.progressCard}>
+              <View style={styles.progressRow}>
+                {progressSteps.map((step, i) => (
+                  <View key={step} style={styles.progressStep}>
+                    <View style={[styles.progressDot, i <= activeStep && styles.progressDotActive]} />
+                    <Text style={[styles.progressLabel, i <= activeStep && styles.progressLabelActive]}>{step}</Text>
+                  </View>
+                ))}
+              </View>
+            </View>
+
+            {/* Live Status */}
+            <View style={styles.liveCard}>
               <View style={styles.liveGrid}>
                 <View style={styles.liveCell}>
-                  <Text style={styles.liveLab}>Now serving</Text>
-                  <Text style={styles.liveVal}>{status.currentServingTicketNumber ?? "—"}</Text>
+                  <Text style={styles.liveLab}>Now Serving</Text>
+                  <Text style={styles.liveVal}>{status.currentServingTicketNumber ?? "\u2014"}</Text>
                 </View>
                 <View style={styles.liveCell}>
-                  <Text style={styles.liveLab}>People ahead</Text>
+                  <Text style={styles.liveLab}>People Ahead</Text>
                   <Text style={styles.liveVal}>{status.peopleAhead}</Text>
                 </View>
                 <View style={styles.liveCell}>
-                  <Text style={styles.liveLab}>Est. wait</Text>
+                  <Text style={styles.liveLab}>Est. Wait</Text>
                   <Text style={[styles.liveVal, styles.liveWait]}>
-                    {status.estimatedWaitMinutes == null ? "—" : `~${status.estimatedWaitMinutes}m`}
+                    {status.estimatedWaitMinutes == null ? "\u2014" : `${status.estimatedWaitMinutes}m`}
                   </Text>
                 </View>
               </View>
-              {status.estimatedWaitMinutes != null && (
-                <View style={styles.infoBox}>
-                  <Text style={styles.infoText}>
+
+              {phase === "waiting" && status.estimatedWaitMinutes != null && (
+                <View style={styles.messageBox}>
+                  <Ionicons name="time-outline" size={16} color={theme.primary} />
+                  <Text style={styles.messageText}>
                     You will be called in approximately {status.estimatedWaitMinutes} minutes.
                   </Text>
                 </View>
               )}
-            </>
-          )}
-
-          {/* ── Waiting: position = 1 (next in line) ── */}
-          {status?.state === "Waiting" && status.peopleAhead === 1 && (
-            <>
-              <Text style={styles.liveTitle}>Live status</Text>
-              <View style={styles.liveGrid}>
-                <View style={styles.liveCell}>
-                  <Text style={styles.liveLab}>Now serving</Text>
-                  <Text style={styles.liveVal}>{status.currentServingTicketNumber ?? "—"}</Text>
-                </View>
-                <View style={styles.liveCell}>
-                  <Text style={styles.liveLab}>People ahead</Text>
-                  <Text style={styles.liveVal}>1</Text>
-                </View>
-                <View style={styles.liveCell}>
-                  <Text style={styles.liveLab}>Est. wait</Text>
-                  <Text style={[styles.liveVal, styles.liveWait]}>
-                    {status.estimatedWaitMinutes == null ? "—" : `~${status.estimatedWaitMinutes}m`}
+              {phase === "almost" && (
+                <View style={[styles.messageBox, styles.messageBoxAmber]}>
+                  <Ionicons name="alert-circle-outline" size={16} color="#d97706" />
+                  <Text style={[styles.messageText, styles.messageTextAmber]}>
+                    Almost there! You will be called very soon.
                   </Text>
                 </View>
-              </View>
-              <View style={styles.infoBox}>
-                <Text style={styles.infoText}>Almost there! You will be called very soon.</Text>
-              </View>
-            </>
-          )}
+              )}
+            </View>
 
-          {/* ── Waiting: position = 0 (you are next) ── */}
-          {status?.state === "Waiting" && status.peopleAhead === 0 && (
-            <View style={styles.statusHighlight}>
-              <Text style={styles.statusEmoji}>{"\uD83D\uDFE1"}</Text>
-              <Text style={styles.statusHeadline}>You are next in line</Text>
+            {showCheckIn && (
+              <View style={styles.actionCard}>
+                <PrimaryButton
+                  label="I've arrived"
+                  icon="checkmark-circle-outline"
+                  disabled={busy}
+                  onPress={() => void checkIn(appointmentBookingId!)}
+                />
+              </View>
+            )}
+          </>
+        )}
+
+        {/* ═══════ Phase: Next In Line ═══════ */}
+        {phase === "next" && (
+          <>
+            <View style={styles.progressCard}>
+              <View style={styles.progressRow}>
+                {progressSteps.map((step, i) => (
+                  <View key={step} style={styles.progressStep}>
+                    <View style={[styles.progressDot, i <= 1 && styles.progressDotActive]} />
+                    <Text style={[styles.progressLabel, i <= 1 && styles.progressLabelActive]}>{step}</Text>
+                  </View>
+                ))}
+              </View>
+            </View>
+
+            <View style={styles.statusCard}>
+              <View style={[styles.statusIcon, styles.statusIconYellow]}>
+                <Ionicons name="notifications" size={32} color="#d97706" />
+              </View>
+              <Text style={styles.statusTitle}>You are next in line</Text>
               <Text style={styles.statusSub}>Please be ready. You will be called shortly.</Text>
             </View>
-          )}
 
-          {/* ── Called / Serving: it's your turn ── */}
-          {(status?.state === "Called" || status?.state === "Serving") && (
-            <View style={[styles.statusHighlight, styles.statusHighlightGreen]}>
-              <Text style={styles.statusEmoji}>{"\uD83D\uDFE2"}</Text>
-              <Text style={[styles.statusHeadline, styles.statusHeadlineGreen]}>It's your turn now</Text>
+            {showCheckIn && (
+              <View style={styles.actionCard}>
+                <PrimaryButton
+                  label="I've arrived"
+                  icon="checkmark-circle-outline"
+                  disabled={busy}
+                  onPress={() => void checkIn(appointmentBookingId!)}
+                />
+              </View>
+            )}
+          </>
+        )}
+
+        {/* ═══════ Phase: Serving / Called ═══════ */}
+        {phase === "serving" && status && (
+          <>
+            <View style={styles.progressCard}>
+              <View style={styles.progressRow}>
+                {progressSteps.map((step, i) => (
+                  <View key={step} style={styles.progressStep}>
+                    <View style={[styles.progressDot, i <= 2 && styles.progressDotActive]} />
+                    <Text style={[styles.progressLabel, i <= 2 && styles.progressLabelActive]}>{step}</Text>
+                  </View>
+                ))}
+              </View>
+            </View>
+
+            <View style={styles.statusCard}>
+              <View style={[styles.statusIcon, styles.statusIconGreen]}>
+                <Ionicons name="checkmark-circle" size={32} color="#15803d" />
+              </View>
+              <Text style={[styles.statusTitle, { color: "#15803d" }]}>It's your turn now</Text>
               {status.counterNumber != null ? (
-                <Text style={styles.statusSub}>Please proceed to Counter {status.counterNumber}.</Text>
+                <>
+                  <Text style={styles.statusSub}>Please proceed to</Text>
+                  <View style={styles.counterBadge}>
+                    <Text style={styles.counterBadgeText}>Counter {status.counterNumber}</Text>
+                  </View>
+                </>
               ) : (
                 <Text style={styles.statusSub}>Please proceed to the counter.</Text>
               )}
             </View>
-          )}
+          </>
+        )}
 
-          {/* ── Completed ── */}
-          {status?.state === "Completed" && (
-            <View style={[styles.statusHighlight, styles.statusHighlightDone]}>
-              <Text style={styles.statusEmoji}>{"\u2705"}</Text>
-              <Text style={styles.statusHeadline}>Service completed</Text>
-              {status.counterNumber != null && (
-                <Text style={styles.statusSub}>Served at Counter {status.counterNumber}</Text>
-              )}
-              {status.servedAt && (
-                <Text style={styles.statusSub}>
-                  Completed at {new Date(status.servedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+        {/* ═══════ Phase: Completed ═══════ */}
+        {phase === "completed" && status && (
+          <View style={styles.statusCard}>
+            <View style={[styles.statusIcon, styles.statusIconGreen]}>
+              <Ionicons name="checkmark-circle" size={40} color="#15803d" />
+            </View>
+            <Text style={[styles.statusTitle, { color: "#15803d" }]}>Service completed</Text>
+            {status.counterNumber != null && (
+              <View style={styles.completedRow}>
+                <Text style={styles.completedLabel}>Served at</Text>
+                <Text style={styles.completedValue}>Counter {status.counterNumber}</Text>
+              </View>
+            )}
+            {status.servedAt && (
+              <View style={styles.completedRow}>
+                <Text style={styles.completedLabel}>Completed at</Text>
+                <Text style={styles.completedValue}>
+                  {new Date(status.servedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                 </Text>
-              )}
-              <Text style={[styles.statusSub, { marginTop: 8 }]}>Thank you for visiting.</Text>
-            </View>
-          )}
-
-          {/* ── Missed / Skipped ── */}
-          {status?.state === "Missed" && (
-            <View style={[styles.statusHighlight, styles.statusHighlightDanger]}>
-              <Text style={styles.statusEmoji}>{"\uD83D\uDD34"}</Text>
-              <Text style={[styles.statusHeadline, styles.statusHeadlineDanger]}>You missed your turn</Text>
-              <Text style={styles.statusSub}>Please approach the counter or take a new ticket.</Text>
-            </View>
-          )}
-
-          {/* ── Fallback: loading or unknown state ── */}
-          {!status && (
-            <>
-              <Text style={styles.liveTitle}>Live status</Text>
-              <Text style={styles.statusSub}>Loading queue information...</Text>
-            </>
-          )}
-        </View>
-
-        {showCheckIn ? (
-          <View style={styles.checkCard}>
-            <Text style={styles.checkTitle}>Tap when you are at the branch</Text>
-            <PrimaryButton
-              label="I've arrived"
-              icon="checkmark-circle-outline"
-              disabled={busy}
-              onPress={() => void checkIn(appointmentBookingId!)}
-            />
+              </View>
+            )}
+            <Text style={[styles.statusSub, { marginTop: 16 }]}>Thank you for visiting.</Text>
           </View>
-        ) : (
+        )}
+
+        {/* ═══════ Phase: Missed ═══════ */}
+        {phase === "missed" && (
+          <View style={styles.statusCard}>
+            <View style={[styles.statusIcon, styles.statusIconRed]}>
+              <Ionicons name="alert-circle" size={40} color="#dc2626" />
+            </View>
+            <Text style={[styles.statusTitle, { color: "#dc2626" }]}>You missed your turn</Text>
+            <Text style={styles.statusSub}>Please approach the counter or take a new ticket.</Text>
+          </View>
+        )}
+
+        {/* ═══════ Phase: Loading ═══════ */}
+        {phase === "loading" && (
+          <View style={styles.statusCard}>
+            <Text style={styles.statusSub}>Loading queue information...</Text>
+          </View>
+        )}
+
+        {/* Walk-in note (no booking) */}
+        {!booking && !entryIsTerminal && (
           <Text style={styles.walkInNote}>
-            Walk-in ticket: staff will serve you at the counter. The I&apos;ve arrived button is for online bookings only.
+            Walk-in ticket: staff will serve you at the counter.
           </Text>
         )}
 
-        <View style={styles.rowBtns}>
-          {showReschedule ? (
-            <Pressable style={styles.btnGhost} disabled={busy} onPress={() => void openReschedule()}>
-              <Text style={styles.btnGhostText}>Reschedule</Text>
-            </Pressable>
-          ) : null}
-          {showCancel ? (
-            <Pressable style={styles.btnDangerGhost} disabled={busy} onPress={confirmCancelBooking}>
-              <Text style={styles.btnDangerGhostText}>Cancel</Text>
-            </Pressable>
-          ) : null}
-        </View>
-
+        {/* Action buttons */}
+        {(showReschedule || showCancel) && (
+          <>
+            <View style={styles.rowBtns}>
+              {showReschedule && (
+                <Pressable style={styles.btnGhost} disabled={busy} onPress={() => void openReschedule()}>
+                  <Text style={styles.btnGhostText}>Reschedule</Text>
+                </Pressable>
+              )}
+              {showCancel && (
+                <Pressable style={styles.btnDangerGhost} disabled={busy} onPress={confirmCancelBooking}>
+                  <Text style={styles.btnDangerGhostText}>Cancel</Text>
+                </Pressable>
+              )}
+            </View>
+            <Text style={styles.modifyNote}>
+              Reschedule or cancel is only available up to 1 hour before your appointment time.
+            </Text>
+          </>
+        )}
+        {Boolean(booking) && bookingIsActive && !canModifyByTime && (
+          <Text style={styles.modifyNoteDisabled}>
+            Reschedule and cancel are no longer available (less than 1 hour before appointment).
+          </Text>
+        )}
       </ScrollView>
     </View>
   );
@@ -380,110 +514,164 @@ export function QueueTrackScreen({ route, navigation }: Props) {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.screenBg, paddingHorizontal: 18 },
-  titleRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 12,
-  },
-  backBtn: {
-    marginLeft: -6,
-    marginRight: 4,
-    paddingVertical: 4,
-    paddingRight: 4,
-    borderRadius: 10,
-  },
+  titleRow: { flexDirection: "row", alignItems: "center", marginBottom: 16 },
+  backBtn: { marginLeft: -6, marginRight: 4, paddingVertical: 4, paddingRight: 4, borderRadius: 10 },
   backBtnPressed: { opacity: 0.65 },
   pageTitle: { flex: 1, fontSize: 22, fontWeight: "900", color: theme.textOnLight },
-  confirmBanner: {
-    backgroundColor: "rgba(34,197,94,0.18)",
-    borderRadius: 14,
-    padding: 14,
-    marginBottom: 14,
-    borderWidth: 1,
-    borderColor: "rgba(34,197,94,0.35)",
-  },
-  confirmTitle: { fontSize: 16, fontWeight: "900", color: "#14532d" },
-  confirmSub: { fontSize: 13, color: "#166534", marginTop: 4, lineHeight: 18 },
-  walkBanner: {
-    backgroundColor: "rgba(56,189,248,0.15)",
-    borderRadius: 14,
-    padding: 14,
-    marginBottom: 14,
-    borderWidth: 1,
-    borderColor: "rgba(56,189,248,0.35)",
-  },
-  walkBannerTitle: { fontSize: 16, fontWeight: "900", color: theme.primaryDark },
-  walkBannerSub: { fontSize: 13, color: theme.textOnLight, marginTop: 4, lineHeight: 18 },
+
+  // Blue ticket card
   ticketCard: {
+    backgroundColor: theme.primary,
+    borderRadius: 18,
+    padding: 20,
+    marginBottom: 16,
+  },
+  ticketLabel: { fontSize: 12, color: "rgba(255,255,255,0.75)", fontWeight: "600" },
+  ticketBig: {
+    fontSize: 42,
+    fontWeight: "900",
+    color: "#fff",
+    letterSpacing: 2,
+    marginVertical: 6,
+  },
+  ticketService: { fontSize: 15, fontWeight: "700", color: "#fff" },
+  ticketBranch: { fontSize: 13, color: "rgba(255,255,255,0.8)", marginTop: 2 },
+  ticketDateRow: {
+    flexDirection: "row",
+    marginTop: 16,
+    borderTopWidth: 1,
+    borderTopColor: "rgba(255,255,255,0.25)",
+    paddingTop: 12,
+  },
+  ticketDateCol: { flex: 1 },
+  ticketDateDivider: { width: 1, backgroundColor: "rgba(255,255,255,0.25)", marginHorizontal: 12 },
+  ticketDateLabel: { fontSize: 11, color: "rgba(255,255,255,0.7)", fontWeight: "600" },
+  ticketDateValue: { fontSize: 14, color: "#fff", fontWeight: "700", marginTop: 2 },
+
+  // Reminder card (green for future, blue for today)
+  reminderCard: {
+    backgroundColor: "rgba(34,197,94,0.12)",
+    borderRadius: 14,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: "rgba(34,197,94,0.3)",
+  },
+  reminderCardBlue: {
+    backgroundColor: "rgba(59,130,246,0.1)",
+    borderColor: "rgba(59,130,246,0.25)",
+  },
+  reminderIconRow: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 },
+  reminderTitle: { fontSize: 16, fontWeight: "800", color: theme.textOnLight },
+  reminderText: { fontSize: 14, color: theme.textMutedOnLight, lineHeight: 20 },
+
+  // Progress tracker
+  progressCard: {
     backgroundColor: "#fff",
-    borderRadius: 16,
-    padding: 18,
-    marginBottom: 14,
+    borderRadius: 14,
+    padding: 16,
+    marginBottom: 16,
     borderWidth: 1,
     borderColor: theme.borderLight,
   },
-  ticketLabel: { fontSize: 13, color: theme.textMutedOnLight, fontWeight: "600" },
-  ticketBig: {
-    fontSize: 40,
-    fontWeight: "900",
-    color: theme.primaryDark,
-    letterSpacing: 2,
-    marginVertical: 8,
+  progressRow: { flexDirection: "row", justifyContent: "space-between" },
+  progressStep: { alignItems: "center", flex: 1 },
+  progressDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: "#e2e8f0",
+    marginBottom: 6,
   },
-  detailRow: { marginTop: 10 },
-  dl: { fontSize: 12, color: theme.textMutedOnLight, fontWeight: "600" },
-  dv: { fontSize: 15, color: theme.textOnLight, fontWeight: "700", marginTop: 2 },
+  progressDotActive: { backgroundColor: theme.primary },
+  progressLabel: { fontSize: 11, color: "#94a3b8", fontWeight: "600" },
+  progressLabelActive: { color: theme.primary, fontWeight: "700" },
+
+  // Live status card
   liveCard: {
     backgroundColor: "#fff",
-    borderRadius: 16,
+    borderRadius: 14,
     padding: 16,
-    marginBottom: 14,
+    marginBottom: 16,
     borderWidth: 1,
     borderColor: theme.borderLight,
   },
-  liveTitle: { fontSize: 15, fontWeight: "800", color: theme.textOnLight, marginBottom: 12 },
-  liveGrid: { flexDirection: "row", gap: 8, justifyContent: "space-between" },
+  liveGrid: { flexDirection: "row", gap: 8 },
   liveCell: {
     flex: 1,
     backgroundColor: "#f1f5f9",
     borderRadius: 12,
-    padding: 10,
+    padding: 12,
     alignItems: "center",
   },
   liveLab: { fontSize: 10, fontWeight: "700", color: theme.textMutedOnLight, textAlign: "center" },
-  liveVal: { fontSize: 16, fontWeight: "900", color: theme.textOnLight, marginTop: 6, textAlign: "center" },
-  liveWait: { color: theme.success },
-  infoBox: {
+  liveVal: { fontSize: 18, fontWeight: "900", color: theme.textOnLight, marginTop: 4, textAlign: "center" },
+  liveWait: { color: theme.primary },
+  messageBox: {
     marginTop: 12,
-    backgroundColor: "rgba(56,189,248,0.12)",
-    borderRadius: 12,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: "rgba(56,189,248,0.25)",
-  },
-  infoText: { fontSize: 13, color: theme.primaryDark, fontWeight: "600", lineHeight: 18 },
-  statusHighlight: {
+    flexDirection: "row",
     alignItems: "center",
-    paddingVertical: 20,
-    paddingHorizontal: 16,
+    gap: 8,
+    backgroundColor: "rgba(59,130,246,0.08)",
+    borderRadius: 10,
+    padding: 12,
   },
-  statusHighlightGreen: {},
-  statusHighlightDone: {},
-  statusHighlightDanger: {},
-  statusEmoji: { fontSize: 32, marginBottom: 8 },
-  statusHeadline: { fontSize: 18, fontWeight: "900", color: theme.textOnLight, textAlign: "center" },
-  statusHeadlineGreen: { color: "#15803d" },
-  statusHeadlineDanger: { color: theme.danger },
-  statusSub: { fontSize: 14, color: theme.textMutedOnLight, marginTop: 4, textAlign: "center", lineHeight: 20 },
-  checkCard: {
+  messageBoxAmber: { backgroundColor: "rgba(217,119,6,0.08)" },
+  messageText: { fontSize: 13, color: theme.primary, fontWeight: "600", flex: 1, lineHeight: 18 },
+  messageTextAmber: { color: "#d97706" },
+
+  // Status card (next, serving, completed, missed)
+  statusCard: {
     backgroundColor: "#fff",
-    borderRadius: 16,
+    borderRadius: 14,
+    padding: 24,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: theme.borderLight,
+    alignItems: "center",
+  },
+  statusIcon: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 16,
+  },
+  statusIconYellow: { backgroundColor: "rgba(217,119,6,0.12)" },
+  statusIconGreen: { backgroundColor: "rgba(21,128,61,0.1)" },
+  statusIconRed: { backgroundColor: "rgba(220,38,38,0.1)" },
+  statusTitle: { fontSize: 20, fontWeight: "900", color: theme.textOnLight, textAlign: "center" },
+  statusSub: { fontSize: 14, color: theme.textMutedOnLight, marginTop: 6, textAlign: "center", lineHeight: 20 },
+  counterBadge: {
+    marginTop: 12,
+    backgroundColor: "#15803d",
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 12,
+  },
+  counterBadgeText: { fontSize: 18, fontWeight: "900", color: "#fff" },
+  completedRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    width: "100%",
+    marginTop: 10,
+    paddingHorizontal: 8,
+  },
+  completedLabel: { fontSize: 14, color: theme.textMutedOnLight },
+  completedValue: { fontSize: 14, fontWeight: "700", color: theme.textOnLight },
+
+  // Action card
+  actionCard: {
+    backgroundColor: "#fff",
+    borderRadius: 14,
     padding: 16,
-    marginBottom: 14,
+    marginBottom: 16,
     borderWidth: 1,
     borderColor: theme.borderLight,
   },
-  checkTitle: { fontSize: 15, fontWeight: "800", color: theme.textOnLight, marginBottom: 10 },
+
+  // Walk-in note
   walkInNote: {
     fontSize: 13,
     color: theme.textMutedOnLight,
@@ -491,12 +679,14 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     paddingHorizontal: 4,
   },
+
+  // Bottom action buttons
   rowBtns: { flexDirection: "row", gap: 10, marginBottom: 12, flexWrap: "wrap" },
   btnGhost: {
     flex: 1,
     minWidth: 120,
     backgroundColor: "#e2e8f0",
-    paddingVertical: 12,
+    paddingVertical: 14,
     borderRadius: 12,
     alignItems: "center",
   },
@@ -504,10 +694,25 @@ const styles = StyleSheet.create({
   btnDangerGhost: {
     flex: 1,
     minWidth: 120,
-    backgroundColor: "rgba(239,68,68,0.12)",
-    paddingVertical: 12,
+    backgroundColor: "rgba(239,68,68,0.1)",
+    paddingVertical: 14,
     borderRadius: 12,
     alignItems: "center",
   },
-  btnDangerGhostText: { fontWeight: "800", color: theme.danger },
+  btnDangerGhostText: { fontWeight: "800", color: "#dc2626" },
+  modifyNote: {
+    fontSize: 12,
+    color: theme.textMutedOnLight,
+    textAlign: "center",
+    marginBottom: 14,
+    lineHeight: 16,
+  },
+  modifyNoteDisabled: {
+    fontSize: 12,
+    color: "#94a3b8",
+    textAlign: "center",
+    marginBottom: 14,
+    lineHeight: 16,
+    fontStyle: "italic",
+  },
 });

@@ -117,8 +117,6 @@ const styles = StyleSheet.create({
     backgroundColor: theme.headerNavy,
     paddingHorizontal: 18,
     paddingBottom: 14,
-    borderBottomLeftRadius: 20,
-    borderBottomRightRadius: 20,
   },
   title: { fontSize: 28, fontWeight: "900", color: "#fff" },
   sub: { color: "rgba(255,255,255,0.85)", marginTop: 6 },

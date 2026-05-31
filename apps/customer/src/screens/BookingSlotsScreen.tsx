@@ -41,7 +41,7 @@ const weekdayLabels = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
 
 export function BookingSlotsScreen({ navigation, route }: Props) {
   const { branch, service, rescheduleId, returnTo, rescheduleExitToQueue } = route.params;
-  const { token: sessionToken } = useCustomer();
+  const { token: sessionToken, navigateToQueueTrack } = useCustomer();
   const insets = useSafeAreaInsets();
   const topPad = Platform.OS === "android" ? (RNStatusBar.currentHeight ?? 0) + 8 : Math.max(insets.top, 12);
   const offsetMin = branch.serviceZoneOffsetMinutes ?? 8 * 60;
@@ -183,7 +183,7 @@ export function BookingSlotsScreen({ navigation, route }: Props) {
         slotStart: slot.slotStart,
         slotEnd: slot.slotEnd,
       });
-      navigation.navigate("BookingTicket", { created, branchId: branch.id, returnTo });
+      navigateToQueueTrack(branch.id, created.ticketNumber, created.bookingId);
     } catch (e) {
       Alert.alert("Booking failed", userFacingApiError(e));
     } finally {
@@ -367,8 +367,6 @@ const styles = StyleSheet.create({
     backgroundColor: theme.headerNavy,
     paddingHorizontal: 18,
     paddingBottom: 16,
-    borderBottomLeftRadius: 18,
-    borderBottomRightRadius: 18,
   },
   scroll: { flex: 1 },
   back: { marginBottom: 6, alignSelf: "flex-start" },

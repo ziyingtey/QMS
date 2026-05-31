@@ -276,8 +276,6 @@ const styles = StyleSheet.create({
     backgroundColor: theme.headerNavy,
     paddingHorizontal: 22,
     paddingBottom: 28,
-    borderBottomLeftRadius: 24,
-    borderBottomRightRadius: 24,
     alignItems: "center",
   },
   avatarRing: {

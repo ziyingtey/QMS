@@ -149,8 +149,6 @@ const styles = StyleSheet.create({
     backgroundColor: theme.headerNavy,
     paddingHorizontal: 18,
     paddingBottom: 16,
-    borderBottomLeftRadius: 20,
-    borderBottomRightRadius: 20,
   },
   back: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 },
   backText: { color: theme.accent, fontWeight: "700", fontSize: 16 },
