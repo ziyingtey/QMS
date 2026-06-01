@@ -1,3 +1,4 @@
+import { Ionicons } from "@expo/vector-icons";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { StatusBar } from "expo-status-bar";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -226,23 +227,17 @@ export function BookingSlotsScreen({ navigation, route }: Props) {
     <View style={styles.wrap}>
       <StatusBar style="light" />
       <View style={[styles.topBar, { paddingTop: topPad }]}>
-        {isRescheduleOnly ? (
-          <Pressable style={styles.back} onPress={() => onCancelReschedule()}>
-            <Text style={styles.backText}>Cancel reschedule</Text>
+        <View style={styles.titleRow}>
+          <Pressable
+            onPress={() => isRescheduleOnly ? onCancelReschedule() : navigation.navigate("BookingServices", { branch, returnTo })}
+            hitSlop={8}
+          >
+            <Ionicons name="chevron-back" size={24} color="#fff" />
           </Pressable>
-        ) : (
-          <Pressable style={styles.back} onPress={() => navigation.navigate("BookingServices", { branch, returnTo })}>
-            <Text style={styles.backText}>← Services</Text>
-          </Pressable>
-        )}
-        <Text style={styles.heroTitle}>{rescheduleId ? "Reschedule" : "Book appointment"}</Text>
-        <Text style={styles.heroStep}>
-          {isRescheduleOnly
-            ? "Same branch & service — tap an open time slot to reschedule."
-            : "Pick a date, then tap an open time slot to book."}
-        </Text>
-        <Text style={styles.heroSvc}>{branch.name}</Text>
-        <Text style={styles.heroSvcSecondary}>{service.name}</Text>
+          <Text style={styles.heroTitle}>{rescheduleId ? "Reschedule" : "Book appointment"}</Text>
+        </View>
+        <Text style={styles.heroSub}>Pick a date and time</Text>
+        <Text style={styles.heroMeta}>{branch.name} · {service.name}</Text>
       </View>
 
       <ScrollView
@@ -305,9 +300,6 @@ export function BookingSlotsScreen({ navigation, route }: Props) {
             })}
           </View>
         ))}
-        <Text style={styles.hintMuted}>
-          Grey = unavailable (before {minYmd} in branch time zone). Today is {minYmd}.
-        </Text>
 
         <Text style={styles.slotsHeading}>
           Times for {selectedYmd}
@@ -382,12 +374,10 @@ const styles = StyleSheet.create({
     paddingBottom: 16,
   },
   scroll: { flex: 1 },
-  back: { marginBottom: 6, alignSelf: "flex-start" },
-  backText: { color: theme.accent, fontWeight: "700", fontSize: 16 },
-  heroTitle: { fontSize: 22, fontWeight: "900", color: "#fff" },
-  heroStep: { fontSize: 16, fontWeight: "700", color: "rgba(255,255,255,0.92)", marginTop: 8 },
-  heroSvc: { fontSize: 15, fontWeight: "800", color: "rgba(255,255,255,0.95)", marginTop: 6 },
-  heroSvcSecondary: { fontSize: 14, color: "rgba(255,255,255,0.78)", marginTop: 2 },
+  titleRow: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 4 },
+  heroTitle: { fontSize: 24, fontWeight: "800", color: "#fff" },
+  heroSub: { color: "rgba(255,255,255,0.65)", marginTop: 4, fontSize: 13 },
+  heroMeta: { color: "rgba(255,255,255,0.85)", marginTop: 2, fontSize: 13, fontWeight: "600" },
   calHeader: {
     flexDirection: "row",
     alignItems: "center",

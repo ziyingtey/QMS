@@ -2,10 +2,9 @@ import { Ionicons } from "@expo/vector-icons";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { StatusBar } from "expo-status-bar";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Alert, FlatList, Platform, Pressable, RefreshControl, StatusBar as RNStatusBar, StyleSheet, Text, View } from "react-native";
+import { Alert, FlatList, Platform, Pressable, RefreshControl, StatusBar as RNStatusBar, StyleSheet, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { apiServiceLaneSummary, apiWalkIn, type ServiceLaneSummary } from "../api";
-import { PrimaryButton } from "../components/PrimaryButton";
 import type { BookingStackParamList } from "../navigation/navigationRef";
 import { exitBookingFlow } from "../navigation/bookingExit";
 import { useCustomer } from "../context/CustomerContext";
@@ -22,15 +21,20 @@ export function BookingServicesScreen({ navigation, route }: Props) {
   const { navigateToQueueTrack, token } = useCustomer();
   const [laneByService, setLaneByService] = useState<Record<string, ServiceLaneSummary>>({});
   const [listRefreshing, setListRefreshing] = useState(false);
+  const [search, setSearch] = useState("");
+
+  const filteredServices = useMemo(
+    () => branch.services.filter((s) => s.name.toLowerCase().includes(search.toLowerCase())),
+    [branch.services, search],
+  );
 
   const loadLanes = useCallback(async () => {
+    const results = await Promise.allSettled(
+      branch.services.map((s) => apiServiceLaneSummary(branch.id, s.id).then((r) => [s.id, r] as const)),
+    );
     const next: Record<string, ServiceLaneSummary> = {};
-    for (const s of branch.services) {
-      try {
-        next[s.id] = await apiServiceLaneSummary(branch.id, s.id);
-      } catch {
-        /* skip */
-      }
+    for (const r of results) {
+      if (r.status === "fulfilled") next[r.value[0]] = r.value[1];
     }
     setLaneByService(next);
   }, [branch]);
@@ -75,16 +79,36 @@ export function BookingServicesScreen({ navigation, route }: Props) {
     <View style={styles.screen}>
       <StatusBar style="light" />
       <View style={[styles.header, { paddingTop: topPad }]}>
-        <Pressable style={styles.back} onPress={() => exitBookingFlow(navigation, returnTo)}>
-          <Ionicons name="arrow-back" size={22} color={theme.accent} />
-          <Text style={styles.backText}>{returnTo === "home" ? "Home" : "All branches"}</Text>
-        </Pressable>
-        <Text style={styles.title}>{branch.name}</Text>
+        <View style={styles.titleRow}>
+          <Pressable onPress={() => exitBookingFlow(navigation, returnTo)} hitSlop={8}>
+            <Ionicons name="chevron-back" size={24} color="#fff" />
+          </Pressable>
+          <Text style={styles.title}>{branch.name}</Text>
+        </View>
         <Text style={styles.sub}>Choose a service type to continue</Text>
       </View>
 
+      <View style={styles.searchRow}>
+        <View style={styles.searchWrap}>
+          <Ionicons name="search" size={16} color={theme.textMutedOnLight} />
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Search service type..."
+            placeholderTextColor={theme.textMutedOnLight}
+            value={search}
+            onChangeText={setSearch}
+            returnKeyType="search"
+          />
+          {search.length > 0 && (
+            <Pressable onPress={() => setSearch("")} hitSlop={8}>
+              <Ionicons name="close-circle" size={16} color={theme.textMutedOnLight} />
+            </Pressable>
+          )}
+        </View>
+      </View>
+
       <FlatList
-        data={branch.services}
+        data={filteredServices}
         keyExtractor={(s) => s.id}
         contentContainerStyle={{ paddingHorizontal: 18, paddingTop: 14, paddingBottom: 120 }}
         refreshControl={
@@ -99,7 +123,7 @@ export function BookingServicesScreen({ navigation, route }: Props) {
         renderItem={({ item }) => {
           const lane = laneByService[item.id];
           const crowdLabel =
-            lane == null ? "…" : lane.crowdLevel === "Low" ? "Low Crowd" : lane.crowdLevel === "Medium" ? "Medium Crowd" : "Busy";
+            lane == null ? "…" : lane.crowdLevel === "Low" ? "Low Crowd" : lane.crowdLevel === "Medium" ? "Medium" : "Busy";
           const crowdColor =
             lane == null
               ? theme.textMutedOnLight
@@ -111,39 +135,47 @@ export function BookingServicesScreen({ navigation, route }: Props) {
           return (
             <View style={styles.card}>
               <View style={styles.rowTop}>
-                <View style={styles.docCircle}>
-                  <Ionicons name="document-text" size={22} color="#b91c1c" />
+                <View style={styles.svcIcon}>
+                  <Ionicons name="briefcase-outline" size={20} color="#4a90d9" />
                 </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.svcName}>{item.name}</Text>
-                  <Text style={styles.avg}>Avg time: {item.defaultAvgServiceMinutes} mins</Text>
-                  <View style={styles.metrics}>
-                    <Text style={[styles.crowdTag, { color: crowdColor }]}>{crowdLabel}</Text>
-                    <Text style={styles.waitHint}>
-                      Wait: {lane?.estimatedWaitMinutes == null ? "~—" : `~${lane.estimatedWaitMinutes} mins`}
-                    </Text>
-                  </View>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={styles.svcName} numberOfLines={2}>{item.name}</Text>
+                  <Text style={styles.avg}>~{item.defaultAvgServiceMinutes} min per visit</Text>
                 </View>
               </View>
-              {lane ? (
-                <Text style={styles.queueMeta}>{lane.waitingCount} customer(s) in this lane</Text>
-              ) : (
-                <Text style={styles.muted}>Loading lane stats…</Text>
-              )}
+              <View style={styles.statsRow}>
+                <View style={styles.statItem}>
+                  <Ionicons name="people-outline" size={15} color="#4a90d9" />
+                  <Text style={styles.statText}>
+                    {lane ? `${lane.waitingCount} waiting` : "—"}
+                  </Text>
+                </View>
+                <View style={styles.statItem}>
+                  <Ionicons name="time-outline" size={15} color="#4a90d9" />
+                  <Text style={styles.statText}>
+                    {lane?.estimatedWaitMinutes == null ? "—" : `~${lane.estimatedWaitMinutes} min wait`}
+                  </Text>
+                </View>
+                <View style={[styles.crowdChip, { backgroundColor: crowdColor + "18" }]}>
+                  <View style={[styles.crowdDot, { backgroundColor: crowdColor }]} />
+                  <Text style={[styles.crowdText, { color: crowdColor }]}>{crowdLabel}</Text>
+                </View>
+              </View>
               <View style={styles.dualBtns}>
-                <PrimaryButton
-                  label="BOOK SLOT"
-                  compact
-                  icon="calendar-outline"
+                <Pressable
+                  style={styles.bookBtn}
                   onPress={() => navigation.navigate("BookingSlots", { branch, service: item, returnTo })}
-                />
-                <PrimaryButton
-                  label="WALK-IN TICKET"
-                  variant="ghost"
-                  compact
-                  icon="footsteps-outline"
+                >
+                  <Ionicons name="calendar-outline" size={14} color="#fff" />
+                  <Text style={styles.bookBtnText}>Book a Slot</Text>
+                </Pressable>
+                <Pressable
+                  style={styles.walkInBtn}
                   onPress={() => void walkIn(item.id)}
-                />
+                >
+                  <Ionicons name="footsteps-outline" size={14} color={theme.primaryDark} />
+                  <Text style={styles.walkInBtnText}>Walk-in</Text>
+                </Pressable>
               </View>
             </View>
           );
@@ -158,42 +190,109 @@ const styles = StyleSheet.create({
   header: {
     backgroundColor: theme.headerNavy,
     paddingHorizontal: 18,
-    paddingBottom: 16,
+    paddingBottom: 30,
   },
-  back: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 },
-  backText: { color: theme.accent, fontWeight: "700", fontSize: 16 },
+  searchRow: {
+    paddingHorizontal: 18,
+    marginTop: -22,
+    marginBottom: 6,
+  },
+  searchWrap: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    backgroundColor: "#fff",
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+    shadowColor: "#000",
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 3,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 14,
+    color: theme.textOnLight,
+    padding: 0,
+  },
+  titleRow: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 4 },
   title: { fontSize: 24, fontWeight: "800", color: "#fff" },
-  sub: { color: "rgba(255,255,255,0.85)", marginTop: 6 },
+  sub: { color: "rgba(255,255,255,0.65)", marginTop: 4, fontSize: 13 },
   card: {
     backgroundColor: "#fff",
-    borderRadius: 18,
-    padding: 16,
-    marginBottom: 14,
-    borderWidth: 1,
-    borderColor: theme.borderLight,
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 8,
     shadowColor: "#000",
-    shadowOpacity: 0.05,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 2,
+    shadowOpacity: 0.04,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 1 },
+    elevation: 1,
   },
-  rowTop: { flexDirection: "row", gap: 12, alignItems: "flex-start" },
-  docCircle: {
-    width: 48,
-    height: 48,
-    borderRadius: 14,
-    backgroundColor: "#fee2e2",
+  rowTop: { flexDirection: "row", gap: 10, alignItems: "center" },
+  svcIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    backgroundColor: "#edf2f7",
     alignItems: "center",
     justifyContent: "center",
-    borderWidth: 1,
-    borderColor: "#fecaca",
   },
-  svcName: { fontSize: 17, fontWeight: "700", color: theme.textOnLight },
-  avg: { fontSize: 13, color: theme.textMutedOnLight, marginTop: 4 },
-  metrics: { flexDirection: "row", flexWrap: "wrap", gap: 12, marginTop: 8, alignItems: "center" },
-  crowdTag: { fontSize: 13, fontWeight: "800" },
-  waitHint: { fontSize: 13, fontWeight: "700", color: theme.primaryDark },
-  queueMeta: { fontSize: 12, color: theme.textMutedOnLight, marginTop: 8 },
-  muted: { color: theme.textMutedOnLight, marginTop: 10 },
-  dualBtns: { flexDirection: "row", gap: 10, marginTop: 14, flexWrap: "wrap" },
+  svcName: { fontSize: 15, fontWeight: "700", color: theme.textOnLight },
+  avg: { fontSize: 12, color: theme.textMutedOnLight, marginTop: 3 },
+  statsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: "#f1f5f9",
+  },
+  statItem: { flexDirection: "row", alignItems: "center", gap: 3 },
+  statText: { fontSize: 11, color: theme.textMutedOnLight, fontWeight: "600" },
+  crowdChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 8,
+  },
+  crowdDot: { width: 5, height: 5, borderRadius: 2.5 },
+  crowdText: { fontSize: 10, fontWeight: "700" },
+  dualBtns: {
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: "#f1f5f9",
+  },
+  bookBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 5,
+    flex: 1,
+    paddingVertical: 8,
+    borderRadius: 10,
+    backgroundColor: theme.primaryDark,
+  },
+  bookBtnText: { fontSize: 12, fontWeight: "700", color: "#fff" },
+  walkInBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 5,
+    flex: 1,
+    paddingVertical: 8,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: "#e2e8f0",
+    backgroundColor: "#fff",
+  },
+  walkInBtnText: { fontSize: 12, fontWeight: "700", color: theme.primaryDark },
 });
