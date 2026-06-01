@@ -15,7 +15,6 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { apiQueueStatus, type QueueStatus } from "../api";
-import { PrimaryButton } from "../components/PrimaryButton";
 import { useCustomer } from "../context/CustomerContext";
 import type { QueueStackParamList } from "../navigation/navigationRef";
 import { theme } from "../theme";
@@ -33,13 +32,14 @@ type Phase =
   | "serving"       // Status 4: called/serving
   | "completed"     // Status 5
   | "missed"        // Status 6
+  | "cancelled"     // User cancelled
   | "loading";
 
 export function QueueTrackScreen({ route, navigation }: Props) {
   const { branchId, ticket, bookingId: bookingIdParam } = route.params;
   const insets = useSafeAreaInsets();
   const topPad = Platform.OS === "android" ? (RNStatusBar.currentHeight ?? 0) + 8 : Math.max(insets.top, 12);
-  const { token, bookings, branches, refreshBookings, checkIn, cancelBooking, busy } = useCustomer();
+  const { token, bookings, branches, refreshBookings, cancelBooking, busy } = useCustomer();
   const [status, setStatus] = useState<QueueStatus | null>(null);
   const [pullRefreshing, setPullRefreshing] = useState(false);
 
@@ -112,7 +112,7 @@ export function QueueTrackScreen({ route, navigation }: Props) {
 
   const displayService = status?.serviceName ?? serviceNameFromBooking ?? "\u2014";
   const appointmentBookingId = booking?.id ?? bookingIdParam ?? null;
-  const entryIsTerminal = status?.state === "Completed" || status?.state === "Missed";
+  const entryIsTerminal = status?.state === "Completed" || status?.state === "Missed" || booking?.status === "Cancelled";
   const bookingIsActive =
     !entryIsTerminal &&
     (!booking ||
@@ -126,6 +126,7 @@ export function QueueTrackScreen({ route, navigation }: Props) {
   // Determine phase
   const phase: Phase = useMemo(() => {
     if (!status) return "loading";
+    if (booking?.status === "Cancelled") return "cancelled";
     if (status.state === "Completed") return "completed";
     if (status.state === "Missed") return "missed";
     if (status.state === "Called" || status.state === "Serving") return "serving";
@@ -151,7 +152,6 @@ export function QueueTrackScreen({ route, navigation }: Props) {
     return "loading";
   }, [status, booking]);
 
-  const showCheckIn = Boolean(appointmentBookingId) && bookingIsActive && phase !== "future";
 
   const openReschedule = async () => {
     if (!booking) return;
@@ -209,10 +209,18 @@ export function QueueTrackScreen({ route, navigation }: Props) {
     : -1;
 
   return (
-    <View style={[styles.screen, { paddingTop: topPad }]}>
-      <StatusBar style="dark" />
+    <View style={styles.screen}>
+      <StatusBar style="light" />
+      <View style={[styles.header, { paddingTop: topPad }]}>
+        <View style={styles.titleRow}>
+          <Pressable onPress={goToQueueBookingList} hitSlop={8}>
+            <Ionicons name="chevron-back" size={24} color="#fff" />
+          </Pressable>
+          <Text style={styles.pageTitle}>Queue Status</Text>
+        </View>
+      </View>
       <ScrollView
-        contentContainerStyle={{ paddingBottom: 120 }}
+        contentContainerStyle={{ paddingBottom: 120, paddingHorizontal: 18, paddingTop: 14 }}
         showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl
@@ -224,38 +232,24 @@ export function QueueTrackScreen({ route, navigation }: Props) {
           />
         }
       >
-        {/* Header */}
-        <View style={styles.titleRow}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Back"
-            hitSlop={10}
-            style={({ pressed }) => [styles.backBtn, pressed && styles.backBtnPressed]}
-            onPress={goToQueueBookingList}
-          >
-            <Ionicons name="chevron-back" size={28} color={theme.primaryDark} />
-          </Pressable>
-          <Text style={styles.pageTitle} numberOfLines={1}>
-            Queue Status
-          </Text>
-        </View>
 
-        {/* Blue Ticket Card */}
+        {/* Ticket Card */}
         <View style={styles.ticketCard}>
-          <Text style={styles.ticketLabel}>Your Queue Number</Text>
-          <Text style={styles.ticketBig}>{ticket}</Text>
-          <Text style={styles.ticketService}>{displayService}</Text>
-          <Text style={styles.ticketBranch}>{branchName}</Text>
+          <Text style={styles.ticketLabel}>Queue Number</Text>
+          <Text style={styles.ticketBig} adjustsFontSizeToFit numberOfLines={1}>{ticket}</Text>
+          <View style={styles.ticketInfoRow}>
+            <Ionicons name="location-outline" size={14} color={theme.primaryDark} />
+            <Text style={styles.ticketMeta}>{branchName} · {displayService}</Text>
+          </View>
           {booking ? (
             <View style={styles.ticketDateRow}>
-              <View style={styles.ticketDateCol}>
-                <Text style={styles.ticketDateLabel}>Date</Text>
-                <Text style={styles.ticketDateValue}>{formatBookingDateMedium(booking.slotStart, branchOffset)}</Text>
+              <View style={styles.ticketDateChip}>
+                <Ionicons name="calendar-outline" size={13} color={theme.primaryDark} />
+                <Text style={styles.ticketDateText}>{formatBookingDateMedium(booking.slotStart, branchOffset)}</Text>
               </View>
-              <View style={styles.ticketDateDivider} />
-              <View style={styles.ticketDateCol}>
-                <Text style={styles.ticketDateLabel}>Time Slot</Text>
-                <Text style={styles.ticketDateValue}>{formatSlotRange(booking.slotStart, booking.slotEnd, branchOffset)}</Text>
+              <View style={styles.ticketDateChip}>
+                <Ionicons name="time-outline" size={13} color={theme.primaryDark} />
+                <Text style={styles.ticketDateText}>{formatSlotRange(booking.slotStart, booking.slotEnd, branchOffset)}</Text>
               </View>
             </View>
           ) : null}
@@ -279,23 +273,13 @@ export function QueueTrackScreen({ route, navigation }: Props) {
           <>
             <View style={[styles.reminderCard, styles.reminderCardBlue]}>
               <View style={styles.reminderIconRow}>
-                <Ionicons name="time-outline" size={22} color={theme.primary} />
+                <Ionicons name="time-outline" size={22} color="#d97706" />
                 <Text style={styles.reminderTitle}>Appointment Today</Text>
               </View>
               <Text style={styles.reminderText}>
                 Please arrive 10 minutes before your appointment time.
               </Text>
             </View>
-            {showCheckIn && (
-              <View style={styles.actionCard}>
-                <PrimaryButton
-                  label="I've arrived"
-                  icon="checkmark-circle-outline"
-                  disabled={busy}
-                  onPress={() => void checkIn(appointmentBookingId!)}
-                />
-              </View>
-            )}
           </>
         )}
 
@@ -312,6 +296,14 @@ export function QueueTrackScreen({ route, navigation }: Props) {
                   </View>
                 ))}
               </View>
+            </View>
+
+            <View style={styles.statusCard}>
+              <Text style={styles.hourglassEmoji}>⏳</Text>
+              <Text style={styles.statusTitle}>Please Wait</Text>
+              <Text style={styles.statusSub}>
+                You are in queue. We'll notify you when it's almost your turn.
+              </Text>
             </View>
 
             {/* Live Status */}
@@ -332,35 +324,7 @@ export function QueueTrackScreen({ route, navigation }: Props) {
                   </Text>
                 </View>
               </View>
-
-              {phase === "waiting" && status.estimatedWaitMinutes != null && (
-                <View style={styles.messageBox}>
-                  <Ionicons name="time-outline" size={16} color={theme.primary} />
-                  <Text style={styles.messageText}>
-                    You will be called in approximately {status.estimatedWaitMinutes} minutes.
-                  </Text>
-                </View>
-              )}
-              {phase === "almost" && (
-                <View style={[styles.messageBox, styles.messageBoxAmber]}>
-                  <Ionicons name="alert-circle-outline" size={16} color="#d97706" />
-                  <Text style={[styles.messageText, styles.messageTextAmber]}>
-                    Almost there! You will be called very soon.
-                  </Text>
-                </View>
-              )}
             </View>
-
-            {showCheckIn && (
-              <View style={styles.actionCard}>
-                <PrimaryButton
-                  label="I've arrived"
-                  icon="checkmark-circle-outline"
-                  disabled={busy}
-                  onPress={() => void checkIn(appointmentBookingId!)}
-                />
-              </View>
-            )}
           </>
         )}
 
@@ -386,16 +350,20 @@ export function QueueTrackScreen({ route, navigation }: Props) {
               <Text style={styles.statusSub}>Please be ready. You will be called shortly.</Text>
             </View>
 
-            {showCheckIn && (
-              <View style={styles.actionCard}>
-                <PrimaryButton
-                  label="I've arrived"
-                  icon="checkmark-circle-outline"
-                  disabled={busy}
-                  onPress={() => void checkIn(appointmentBookingId!)}
-                />
+            <View style={styles.liveCard}>
+              <View style={styles.liveGrid}>
+                <View style={styles.liveCell}>
+                  <Text style={styles.liveLab}>Now Serving</Text>
+                  <Text style={styles.liveVal}>{status?.currentServingTicketNumber ?? "\u2014"}</Text>
+                </View>
+                <View style={styles.liveCell}>
+                  <Text style={styles.liveLab}>Est. Wait</Text>
+                  <Text style={[styles.liveVal, styles.liveWait]}>
+                    {status?.estimatedWaitMinutes == null ? "\u2014" : `${status.estimatedWaitMinutes}m`}
+                  </Text>
+                </View>
               </View>
-            )}
+            </View>
           </>
         )}
 
@@ -457,6 +425,17 @@ export function QueueTrackScreen({ route, navigation }: Props) {
           </View>
         )}
 
+        {/* ═══════ Phase: Cancelled ═══════ */}
+        {phase === "cancelled" && (
+          <View style={styles.statusCard}>
+            <View style={[styles.statusIcon, styles.statusIconRed]}>
+              <Ionicons name="close-circle" size={40} color="#dc2626" />
+            </View>
+            <Text style={[styles.statusTitle, { color: "#dc2626" }]}>Booking Cancelled</Text>
+            <Text style={styles.statusSub}>This booking has been cancelled. You can book a new slot anytime.</Text>
+          </View>
+        )}
+
         {/* ═══════ Phase: Missed ═══════ */}
         {phase === "missed" && (
           <View style={styles.statusCard}>
@@ -513,40 +492,51 @@ export function QueueTrackScreen({ route, navigation }: Props) {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: theme.screenBg, paddingHorizontal: 18 },
-  titleRow: { flexDirection: "row", alignItems: "center", marginBottom: 16 },
-  backBtn: { marginLeft: -6, marginRight: 4, paddingVertical: 4, paddingRight: 4, borderRadius: 10 },
-  backBtnPressed: { opacity: 0.65 },
-  pageTitle: { flex: 1, fontSize: 22, fontWeight: "900", color: theme.textOnLight },
+  screen: { flex: 1, backgroundColor: theme.screenBg },
+  header: {
+    backgroundColor: theme.headerNavy,
+    paddingHorizontal: 18,
+    paddingBottom: 18,
+  },
+  titleRow: { flexDirection: "row", alignItems: "center", gap: 6 },
+  pageTitle: { fontSize: 24, fontWeight: "800", color: "#fff" },
 
-  // Blue ticket card
+  // Ticket card
   ticketCard: {
-    backgroundColor: theme.primary,
-    borderRadius: 18,
-    padding: 20,
+    backgroundColor: "#d6e4f5",
+    borderRadius: 16,
+    padding: 18,
     marginBottom: 16,
+    borderWidth: 1,
+    borderColor: "#b8cfe8",
   },
-  ticketLabel: { fontSize: 12, color: "rgba(255,255,255,0.75)", fontWeight: "600" },
+  ticketLabel: { fontSize: 12, color: theme.textMutedOnLight, fontWeight: "600" },
   ticketBig: {
-    fontSize: 42,
+    fontSize: 32,
     fontWeight: "900",
-    color: "#fff",
-    letterSpacing: 2,
-    marginVertical: 6,
+    color: theme.primaryDark,
+    letterSpacing: 1,
+    marginVertical: 8,
   },
-  ticketService: { fontSize: 15, fontWeight: "700", color: "#fff" },
-  ticketBranch: { fontSize: 13, color: "rgba(255,255,255,0.8)", marginTop: 2 },
+  ticketInfoRow: { flexDirection: "row", alignItems: "center", gap: 5, marginBottom: 12 },
+  ticketMeta: { fontSize: 13, color: theme.primaryDark, fontWeight: "600" },
   ticketDateRow: {
     flexDirection: "row",
-    marginTop: 16,
-    borderTopWidth: 1,
-    borderTopColor: "rgba(255,255,255,0.25)",
+    gap: 10,
     paddingTop: 12,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: "#b8cfe8",
   },
-  ticketDateCol: { flex: 1 },
-  ticketDateDivider: { width: 1, backgroundColor: "rgba(255,255,255,0.25)", marginHorizontal: 12 },
-  ticketDateLabel: { fontSize: 11, color: "rgba(255,255,255,0.7)", fontWeight: "600" },
-  ticketDateValue: { fontSize: 14, color: "#fff", fontWeight: "700", marginTop: 2 },
+  ticketDateChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    backgroundColor: "#fff",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  ticketDateText: { fontSize: 13, fontWeight: "700", color: theme.primaryDark },
 
   // Reminder card (green for future, blue for today)
   reminderCard: {
@@ -558,8 +548,8 @@ const styles = StyleSheet.create({
     borderColor: "rgba(34,197,94,0.3)",
   },
   reminderCardBlue: {
-    backgroundColor: "rgba(59,130,246,0.1)",
-    borderColor: "rgba(59,130,246,0.25)",
+    backgroundColor: "#fffbeb",
+    borderColor: "#fde68a",
   },
   reminderIconRow: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 },
   reminderTitle: { fontSize: 16, fontWeight: "800", color: theme.textOnLight },
@@ -605,8 +595,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   liveLab: { fontSize: 10, fontWeight: "700", color: theme.textMutedOnLight, textAlign: "center" },
-  liveVal: { fontSize: 18, fontWeight: "900", color: theme.textOnLight, marginTop: 4, textAlign: "center" },
-  liveWait: { color: theme.primary },
+  liveVal: { fontSize: 18, fontWeight: "900", color: theme.primary, marginTop: 4, textAlign: "center" },
+  liveWait: {},
   messageBox: {
     marginTop: 12,
     flexDirection: "row",
@@ -641,6 +631,7 @@ const styles = StyleSheet.create({
   statusIconYellow: { backgroundColor: "rgba(217,119,6,0.12)" },
   statusIconGreen: { backgroundColor: "rgba(21,128,61,0.1)" },
   statusIconRed: { backgroundColor: "rgba(220,38,38,0.1)" },
+  hourglassEmoji: { fontSize: 40, marginBottom: 12 },
   statusTitle: { fontSize: 20, fontWeight: "900", color: theme.textOnLight, textAlign: "center" },
   statusSub: { fontSize: 14, color: theme.textMutedOnLight, marginTop: 6, textAlign: "center", lineHeight: 20 },
   counterBadge: {

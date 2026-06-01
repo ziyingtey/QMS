@@ -300,8 +300,8 @@ export function HomeScreen({
           <Pressable
             style={[
               styles.activeCard,
-              activeStatus?.state === "Serving" && styles.activeCardServing,
-              activeStatus?.state !== "Serving" && activeStatus?.peopleAhead === 0 && styles.activeCardNext,
+              Date.now() >= new Date(primaryBooking.slotStart).getTime() && activeStatus?.state === "Serving" && styles.activeCardServing,
+              Date.now() >= new Date(primaryBooking.slotStart).getTime() && activeStatus?.state !== "Serving" && activeStatus?.peopleAhead === 0 && styles.activeCardNext,
             ]}
             onPress={() => navigateToQueueTrack(primaryBooking.branchId, primaryBooking.ticketNumber!, primaryBooking.id)}
           >
@@ -627,16 +627,13 @@ const styles = StyleSheet.create({
   filterChipTextOn: { color: theme.primaryDark, fontWeight: "700" },
   /* Active ticket card */
   activeCard: {
-    backgroundColor: "#DAEAFA",
-    borderRadius: 14,
+    backgroundColor: "#d6e4f5",
+    borderRadius: 16,
     padding: 18,
     marginTop: 16,
     marginBottom: 14,
-    shadowColor: "#000",
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 3 },
-    elevation: 3,
+    borderWidth: 1,
+    borderColor: "#b8cfe8",
   },
   activeCardServing: {
     backgroundColor: "#d4edda",
