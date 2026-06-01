@@ -28,10 +28,13 @@ public sealed class DashboardController(QmsDbContext db, QmsQueueService queue) 
             c => c.BranchId == branchId && c.Mode == CounterMode.Active,
             cancellationToken);
 
-        var avgWaitSeconds = await db.QueueEntries.AsNoTracking()
+        var waitEntries = await db.QueueEntries.AsNoTracking()
             .Where(q => q.BranchId == branchId && q.State == QueueEntryState.Completed && q.CalledAt != null)
-            .Select(q => (double?)(q.CalledAt!.Value - q.CreatedAt).TotalSeconds)
-            .AverageAsync(cancellationToken) ?? 0;
+            .Select(q => new { q.CalledAt, q.CreatedAt })
+            .ToListAsync(cancellationToken);
+        var avgWaitSeconds = waitEntries.Count > 0
+            ? waitEntries.Average(q => (q.CalledAt!.Value - q.CreatedAt).TotalSeconds)
+            : 0.0;
 
         var services = await db.ServiceTypes.AsNoTracking()
             .Where(s => s.BranchId == branchId)
