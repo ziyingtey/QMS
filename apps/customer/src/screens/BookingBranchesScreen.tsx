@@ -1,13 +1,14 @@
 import { Ionicons } from "@expo/vector-icons";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { StatusBar } from "expo-status-bar";
-import { useState } from "react";
-import { FlatList, Image, Platform, RefreshControl, StatusBar as RNStatusBar, StyleSheet, Text, View } from "react-native";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { AppState, FlatList, Image, Platform, Pressable, RefreshControl, StatusBar as RNStatusBar, StyleSheet, Text, TextInput, View } from "react-native";
+import { useFocusEffect } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import type { BookingStackParamList } from "../navigation/navigationRef";
-import { PrimaryButton } from "../components/PrimaryButton";
+import { navigationRef, type BookingStackParamList } from "../navigation/navigationRef";
 import { useCustomer } from "../context/CustomerContext";
 import { theme } from "../theme";
+import { getBranchOpenStatus, getTodayHoursLabel } from "../utils/branchStatus";
 import { distanceMeters, formatDistance } from "../utils/geo";
 
 type Props = NativeStackScreenProps<BookingStackParamList, "BookingBranches">;
@@ -17,7 +18,23 @@ export function BookingBranchesScreen({ navigation }: Props) {
   const topPad = Platform.OS === "android" ? (RNStatusBar.currentHeight ?? 0) + 8 : Math.max(insets.top, 12);
   const { branches, busy, loadBranches, userCoords, profile } = useCustomer();
   const [listRefreshing, setListRefreshing] = useState(false);
+  const [search, setSearch] = useState("");
   const favIds = profile?.favoriteBranchIds ?? [];
+
+  // Auto-refresh when screen gains focus + poll every 30s while visible
+  useFocusEffect(
+    useCallback(() => {
+      void loadBranches();
+      const interval = setInterval(() => void loadBranches(), 30_000);
+      const sub = AppState.addEventListener("change", (state) => {
+        if (state === "active") void loadBranches();
+      });
+      return () => {
+        clearInterval(interval);
+        sub.remove();
+      };
+    }, [loadBranches]),
+  );
 
   const onListRefresh = async () => {
     setListRefreshing(true);
@@ -28,7 +45,13 @@ export function BookingBranchesScreen({ navigation }: Props) {
     }
   };
 
-  const sorted = [...branches]
+  const filtered = branches.filter((b) => {
+    const q = search.trim().toLowerCase();
+    if (!q) return true;
+    return b.name.toLowerCase().includes(q) || (b.address ?? "").toLowerCase().includes(q);
+  });
+
+  const sorted = [...filtered]
     .map((b) => ({
       b,
       dist:
@@ -50,7 +73,26 @@ export function BookingBranchesScreen({ navigation }: Props) {
       <StatusBar style="light" />
       <View style={[styles.header, { paddingTop: topPad }]}>
         <Text style={styles.title}>Branches</Text>
-        <Text style={styles.sub}>Choose a branch · book a slot or walk-in ticket</Text>
+        <Text style={styles.sub}>Choose a branch · book a slot</Text>
+      </View>
+      <View style={styles.searchRow}>
+        <View style={styles.searchWrap}>
+          <Ionicons name="search-outline" size={20} color="#64748b" />
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Search for a branch…"
+            placeholderTextColor={theme.textMutedOnLight}
+            value={search}
+            onChangeText={setSearch}
+          />
+          <Pressable
+            accessibilityLabel="Locate on map"
+            onPress={() => { if (navigationRef.isReady()) navigationRef.navigate("MapBranches"); }}
+            hitSlop={8}
+          >
+            <Ionicons name="location-outline" size={18} color={theme.primaryDark} />
+          </Pressable>
+        </View>
       </View>
       <FlatList
         data={sorted}
@@ -66,44 +108,68 @@ export function BookingBranchesScreen({ navigation }: Props) {
           />
         }
         renderItem={({ item: { b, dist } }) => (
-          <View style={styles.card}>
-            {b.imageUrl ? (
-              <Image source={{ uri: b.imageUrl }} style={styles.thumbImg} />
-            ) : (
-              <View style={styles.thumb}>
-                <Ionicons name="storefront-outline" size={26} color={theme.primary} />
-              </View>
-            )}
-            <View style={{ flex: 1 }}>
-              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
-                <Text style={styles.cardTitle}>{b.name}</Text>
-                {favIds.includes(b.id) ? (
-                  <View style={styles.pref}>
-                    <Text style={styles.prefText}>Favorite</Text>
+          <Pressable style={styles.card} onPress={() => navigation.navigate("BookingServices", { branch: b })}>
+            <View style={styles.cardTop}>
+              {/* Left icon */}
+              {b.imageUrl ? (
+                <Image source={{ uri: b.imageUrl }} style={styles.thumbImg} />
+              ) : (
+                <View style={styles.thumb}>
+                  <Ionicons name="location-outline" size={24} color={theme.primaryDark} />
+                </View>
+              )}
+              {/* Content */}
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <View style={styles.titleRow}>
+                <Text style={styles.cardTitle} numberOfLines={1}>{b.name}</Text>
+                {b.state ? (
+                  <View style={styles.stateChip}>
+                    <Text style={styles.stateChipText}>{b.state}</Text>
                   </View>
                 ) : null}
               </View>
-              {b.state ? <Text style={styles.stateTag}>{b.state}</Text> : null}
-              {b.address ? (
-                <Text style={styles.addr} numberOfLines={2}>
-                  {b.address}
-                </Text>
-              ) : (
-                <Text style={styles.meta}>Banking & queue services</Text>
-              )}
-              <Text style={styles.openNow}>Open Now</Text>
-              <Text style={styles.near}>
-                {dist != null ? `Near You: ${formatDistance(dist)}` : "Near You: enable location on Home"}
-              </Text>
+                {b.address ? (
+                  <Text style={styles.addr} numberOfLines={1}>{b.address}</Text>
+                ) : null}
+                <View style={styles.metaRow}>
+                  <Ionicons name="location-outline" size={13} color="#4a90d9" />
+                  <Text style={styles.metaText}>
+                    {dist != null ? formatDistance(dist) : "—"}
+                  </Text>
+                  <Ionicons name="time-outline" size={13} color="#4a90d9" />
+                  <Text style={styles.metaText}>{getTodayHoursLabel(b) ?? "—"}</Text>
+                  <View style={[styles.openChip, getBranchOpenStatus(b) === "Closed" && styles.closedChip]}>
+                  <Text style={[styles.openChipText, getBranchOpenStatus(b) === "Closed" && styles.closedChipText]}>
+                    {getBranchOpenStatus(b)}
+                  </Text>
+                </View>
+                </View>
+              </View>
             </View>
-            <PrimaryButton label="Book a turn" compact onPress={() => navigation.navigate("BookingServices", { branch: b })} />
-          </View>
+            {/* Bottom row — Details + Book */}
+            <View style={styles.cardBottom}>
+              <Pressable
+                style={styles.detailsBtn}
+                onPress={() => { if (navigationRef.isReady()) navigationRef.navigate("BranchDetail", { branch: b }); }}
+              >
+                <Ionicons name="information-circle-outline" size={16} color={theme.primaryDark} />
+                <Text style={styles.detailsBtnText}>Details</Text>
+              </Pressable>
+              <Pressable
+                style={styles.bookBtn}
+                onPress={() => navigation.navigate("BookingServices", { branch: b })}
+              >
+                <Ionicons name="calendar-outline" size={14} color="#fff" />
+                <Text style={styles.bookBtnText}>Book a Slot</Text>
+              </Pressable>
+            </View>
+          </Pressable>
         )}
         ListEmptyComponent={
           busy ? (
-            <Text style={styles.meta}>Loading…</Text>
+            <Text style={styles.emptyText}>Loading…</Text>
           ) : (
-            <Text style={styles.meta}>No branches returned from API.</Text>
+            <Text style={styles.emptyText}>No branches returned from API.</Text>
           )
         }
       />
@@ -116,47 +182,108 @@ const styles = StyleSheet.create({
   header: {
     backgroundColor: theme.headerNavy,
     paddingHorizontal: 18,
-    paddingBottom: 14,
+    paddingBottom: 30,
   },
-  title: { fontSize: 28, fontWeight: "900", color: "#fff" },
-  sub: { color: "rgba(255,255,255,0.85)", marginTop: 6 },
+  title: { fontSize: 24, fontWeight: "800", color: "#fff" },
+  sub: { color: "rgba(255,255,255,0.75)", marginTop: 4, fontSize: 13 },
+  searchRow: {
+    paddingHorizontal: 18,
+    marginTop: -22,
+    marginBottom: 6,
+  },
+  searchWrap: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    backgroundColor: "#fff",
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+    shadowColor: "#000",
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 3,
+  },
+  searchInput: { flex: 1, color: theme.textOnLight, fontSize: 15 },
   card: {
+    backgroundColor: "#fff",
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 10,
+    shadowColor: "#000",
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 1,
+  },
+  cardTop: {
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
-    backgroundColor: "#fff",
-    borderRadius: 18,
-    padding: 14,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: theme.borderLight,
-    flexWrap: "wrap",
-    shadowColor: "#000",
-    shadowOpacity: 0.06,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 2,
+  },
+  cardBottom: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: "#f1f5f9",
   },
   thumb: {
-    width: 56,
-    height: 56,
-    borderRadius: 14,
-    backgroundColor: "#e8eef9",
+    width: 48,
+    height: 48,
+    borderRadius: 12,
+    backgroundColor: "#edf2f7",
     alignItems: "center",
     justifyContent: "center",
   },
-  thumbImg: { width: 56, height: 56, borderRadius: 14, backgroundColor: "#e8eef9" },
-  cardTitle: { fontSize: 17, fontWeight: "700", color: theme.textOnLight },
-  stateTag: { fontSize: 11, fontWeight: "700", color: theme.primary, marginTop: 4 },
-  meta: { fontSize: 12, color: theme.textMutedOnLight, marginTop: 4 },
-  addr: { fontSize: 12, color: theme.textMutedOnLight, marginTop: 4, lineHeight: 16 },
-  openNow: { fontSize: 12, fontWeight: "700", color: theme.success, marginTop: 6 },
-  near: { fontSize: 12, color: theme.primaryDark, marginTop: 4, fontWeight: "600" },
-  pref: {
-    backgroundColor: "rgba(34,197,94,0.15)",
+  thumbImg: { width: 48, height: 48, borderRadius: 12, backgroundColor: "#edf2f7" },
+  titleRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  cardTitle: { fontSize: 15, fontWeight: "700", color: theme.textOnLight, flexShrink: 1 },
+  addr: { fontSize: 12, color: theme.textMutedOnLight, marginTop: 3 },
+  metaRow: { flexDirection: "row", alignItems: "center", gap: 5, marginTop: 6, flexWrap: "wrap" },
+  metaText: { fontSize: 12, color: theme.textMutedOnLight, fontWeight: "600" },
+  openChip: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 10,
+    backgroundColor: "rgba(34,197,94,0.12)",
+    marginLeft: 4,
+  },
+  openChipText: { fontSize: 11, fontWeight: "700", color: theme.success },
+  closedChip: { backgroundColor: "rgba(239,68,68,0.1)" },
+  closedChipText: { color: "#e53e3e" },
+  stateChip: {
     paddingHorizontal: 8,
     paddingVertical: 3,
-    borderRadius: 8,
+    borderRadius: 6,
+    backgroundColor: "#edf2f7",
   },
-  prefText: { fontSize: 10, fontWeight: "900", color: theme.success },
+  stateChipText: { fontSize: 10, fontWeight: "700", color: theme.primaryDark },
+  detailsBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: "#e2e8f0",
+    backgroundColor: "#fff",
+  },
+  detailsBtnText: { fontSize: 13, fontWeight: "700", color: theme.primaryDark },
+  bookBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 12,
+    backgroundColor: theme.primaryDark,
+  },
+  bookBtnText: { fontSize: 13, fontWeight: "700", color: "#fff" },
+  emptyText: { fontSize: 13, color: theme.textMutedOnLight, textAlign: "center", marginTop: 24 },
 });

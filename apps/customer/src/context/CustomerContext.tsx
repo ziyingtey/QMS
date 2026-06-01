@@ -198,6 +198,7 @@ export function CustomerProvider({ children }: { children: React.ReactNode }) {
     accessToken: token,
     onEvent: () => {
       void refreshBookings();
+      void loadBranches();
     },
   });
 

@@ -506,7 +506,7 @@ function NearbyBranchCard({
         ) : null}
         <View style={styles.branchMetaRow}>
           <View style={styles.branchMetaItem}>
-            <Ionicons name="navigate-outline" size={13} color={theme.primaryDark} />
+            <Ionicons name="location-outline" size={13} color="#4a90d9" />
             <Text style={styles.branchMetaText}>{distanceLabel}</Text>
           </View>
           {crowdLabel ? (
