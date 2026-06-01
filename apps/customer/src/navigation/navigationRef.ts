@@ -34,6 +34,7 @@ export type RootStackParamList = {
   MapBranches: undefined;
   BranchDetail: { branch: BranchDto };
   Notifications: undefined;
+  SavedBranches: undefined;
 };
 
 export const navigationRef = createNavigationContainerRef<RootStackParamList>();

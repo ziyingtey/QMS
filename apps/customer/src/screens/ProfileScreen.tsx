@@ -49,15 +49,15 @@ type MenuProps = {
   chevron?: boolean;
 };
 
-function MenuRow({ icon, title, subtitle, onPress, danger, chevron = true }: MenuProps) {
+function MenuRow({ icon, title, subtitle, onPress, danger, chevron = true, iconBg, iconColor }: MenuProps & { iconBg?: string; iconColor?: string }) {
   return (
     <Pressable
       onPress={onPress}
       style={({ pressed }) => [styles.menuRow, pressed && styles.menuRowPressed]}
       accessibilityRole="button"
     >
-      <View style={[styles.menuIconWrap, danger && styles.menuIconWrapDanger]}>
-        <Ionicons name={icon} size={20} color={danger ? theme.danger : theme.primaryDark} />
+      <View style={[styles.menuIconWrap, danger && styles.menuIconWrapDanger, iconBg ? { backgroundColor: iconBg } : null]}>
+        <Ionicons name={icon} size={20} color={danger ? theme.danger : (iconColor ?? theme.primaryDark)} />
       </View>
       <View style={styles.menuTextCol}>
         <Text style={[styles.menuTitle, danger && styles.menuTitleDanger]} numberOfLines={1}>
@@ -142,7 +142,7 @@ export function ProfileScreen() {
 
   return (
     <View style={styles.screen}>
-      <StatusBar style="dark" />
+      <StatusBar style="light" />
       <ScrollView
         style={styles.scrollView}
         contentContainerStyle={styles.scrollContent}
@@ -184,90 +184,85 @@ export function ProfileScreen() {
             ) : null}
           </View>
 
-          {/* Stats */}
-          <View style={styles.statsRow}>
-            <View style={styles.statCard}>
-              <Text style={styles.statNumber}>{favoriteIds.length}</Text>
-              <Text style={styles.statLabel}>Favourites</Text>
-            </View>
-            <View style={styles.statCard}>
-              <Text style={styles.statNumber}>{completedCount}</Text>
-              <Text style={styles.statLabel}>Completed</Text>
-            </View>
-            <View style={styles.statCard}>
-              <Text style={styles.statNumber}>{bookings.length}</Text>
-              <Text style={styles.statLabel}>Bookings</Text>
-            </View>
-          </View>
         </View>
 
         {/* Content */}
         <View style={styles.content}>
-          <SectionTitle>Quick Actions</SectionTitle>
+          <SectionTitle>Account</SectionTitle>
           <View style={styles.card}>
             <MenuRow
-              icon="ticket-outline"
-              title="My Queue & Bookings"
-              onPress={() => tabNav.navigate("Queue")}
+              icon="person-outline"
+              title="Personal Information"
+              iconBg="#ede9fe"
+              iconColor="#7c3aed"
+              onPress={openEdit}
             />
             <View style={styles.menuDivider} />
             <MenuRow
-              icon="calendar-outline"
-              title="Book a Visit"
-              onPress={() => tabNav.navigate("Booking", { screen: "BookingBranches" })}
+              icon="ticket-outline"
+              title="My Queue & Bookings"
+              iconBg="#e0e7ff"
+              iconColor="#4f46e5"
+              onPress={() => tabNav.navigate("Queue")}
+            />
+          </View>
+
+
+          <SectionTitle>General</SectionTitle>
+          <View style={styles.card}>
+            <MenuRow
+              icon="bookmark-outline"
+              title={`Saved Branches (${favoriteIds.length})`}
+              iconBg="#fef9c3"
+              iconColor="#a16207"
+              onPress={() => {
+                if (navigationRef.isReady()) navigationRef.navigate("SavedBranches");
+              }}
+            />
+            <View style={styles.menuDivider} />
+            <MenuRow
+              icon="settings-outline"
+              title="Settings"
+              iconBg="#f1f5f9"
+              iconColor="#64748b"
+              onPress={() => Alert.alert("Settings", "Settings page coming soon.")}
+            />
+            <View style={styles.menuDivider} />
+            <MenuRow
+              icon="language-outline"
+              title="Language"
+              iconBg="#e0f2fe"
+              iconColor="#0284c7"
+              onPress={() => Alert.alert("Language", "Language selection coming soon.")}
             />
             <View style={styles.menuDivider} />
             <MenuRow
               icon="notifications-outline"
               title="Notifications"
+              iconBg="#dcfce7"
+              iconColor="#16a34a"
               onPress={() => {
                 if (navigationRef.isReady()) navigationRef.navigate("Notifications" as never);
               }}
             />
             <View style={styles.menuDivider} />
             <MenuRow
-              icon="map-outline"
-              title="Map & Branch Locator"
-              onPress={() => {
-                if (navigationRef.isReady()) navigationRef.navigate("MapBranches");
-              }}
+              icon="location-outline"
+              title="Location"
+              iconBg="#fee2e2"
+              iconColor="#dc2626"
+              subtitle={locationBusy ? "Getting GPS…" : undefined}
+              onPress={() => void requestLocation()}
             />
           </View>
 
-          {favoriteIds.length > 0 && (
-            <>
-              <SectionTitle>Favourite Branches</SectionTitle>
-              <View style={styles.card}>
-                {favoriteIds.map((id, i) => {
-                  const n = branches.find((b) => b.id === id)?.name ?? "Branch";
-                  return (
-                    <View key={id}>
-                      {i > 0 ? <View style={styles.menuDivider} /> : null}
-                      <MenuRow
-                        icon="heart"
-                        title={n}
-                        onPress={() => openBranchDetail(id)}
-                      />
-                    </View>
-                  );
-                })}
-              </View>
-            </>
-          )}
-
-          <SectionTitle>Settings</SectionTitle>
+          <SectionTitle>Support</SectionTitle>
           <View style={styles.card}>
             <MenuRow
-              icon="location-outline"
-              title="Refresh Location"
-              subtitle={locationBusy ? "Getting GPS…" : undefined}
-              onPress={() => void requestLocation()}
-              chevron={false}
-            />
-            <View style={styles.menuDivider} />
-            <MenuRow
               icon="help-circle-outline"
-              title="Help & Support"
+              title="Help & FAQ"
+              iconBg="#f1f5f9"
+              iconColor="#64748b"
               onPress={() =>
                 Alert.alert(
                   "Help",
@@ -277,18 +272,22 @@ export function ProfileScreen() {
             />
             <View style={styles.menuDivider} />
             <MenuRow
-              icon="information-circle-outline"
-              title="About"
-              subtitle={`IH-QMS Customer · ${API_BASE}`}
-              onPress={() => {}}
-              chevron={false}
+              icon="star-outline"
+              title="Rate This App"
+              iconBg="#fff7ed"
+              iconColor="#ea580c"
+              onPress={() => Alert.alert("Thank you!", "Rating feature coming soon.")}
             />
           </View>
 
-          <Pressable style={styles.signOutBtn} onPress={confirmSignOut} accessibilityRole="button">
-            <Ionicons name="log-out-outline" size={20} color={theme.danger} />
-            <Text style={styles.signOutText}>Sign Out</Text>
-          </Pressable>
+          <View style={[styles.card, { marginTop: 16 }]}>
+            <MenuRow
+              icon="log-out-outline"
+              title="Log Out"
+              danger
+              onPress={confirmSignOut}
+            />
+          </View>
         </View>
       </ScrollView>
 
@@ -340,22 +339,22 @@ const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.screenBg },
   scrollView: { flex: 1 },
   scrollContent: { flexGrow: 1, paddingBottom: 120 },
-  // Light blue background — positioned absolute, covers top half of profile card
+  // Navy header background — positioned absolute, covers top area
   headerBg: {
     position: "absolute",
     top: 0,
     left: 0,
     right: 0,
-    backgroundColor: "#e8f4f8",
+    backgroundColor: theme.headerNavy,
   },
   profileCardWrap: {
     paddingHorizontal: 18,
     paddingBottom: 20,
   },
   pageTitle: {
-    fontSize: 28,
-    fontWeight: "900",
-    color: theme.textOnLight,
+    fontSize: 24,
+    fontWeight: "800",
+    color: "#fff",
     marginBottom: 16,
     marginLeft: 4,
   },
@@ -404,26 +403,6 @@ const styles = StyleSheet.create({
     borderTopColor: "#f1f5f9",
   },
   phoneText: { fontSize: 14, color: theme.textMutedOnLight, fontWeight: "600" },
-  // Stats
-  statsRow: {
-    flexDirection: "row",
-    gap: 10,
-    marginTop: 16,
-  },
-  statCard: {
-    flex: 1,
-    backgroundColor: "#fff",
-    borderRadius: 12,
-    paddingVertical: 14,
-    alignItems: "center",
-    shadowColor: "#000",
-    shadowOpacity: 0.04,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 1,
-  },
-  statNumber: { fontSize: 22, fontWeight: "900", color: theme.primaryDark },
-  statLabel: { fontSize: 11, fontWeight: "700", color: theme.textMutedOnLight, marginTop: 2 },
   // Content
   content: {
     paddingHorizontal: 18,
@@ -471,20 +450,6 @@ const styles = StyleSheet.create({
   menuTitleDanger: { color: theme.danger },
   menuSubtitle: { fontSize: 12, color: theme.textMutedOnLight, marginTop: 2 },
   menuDivider: { height: StyleSheet.hairlineWidth, backgroundColor: "#f1f5f9", marginLeft: 64 },
-  // Sign out
-  signOutBtn: {
-    marginTop: 24,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    paddingVertical: 14,
-    borderRadius: 12,
-    backgroundColor: "rgba(239,68,68,0.06)",
-    borderWidth: 1,
-    borderColor: "rgba(239,68,68,0.2)",
-  },
-  signOutText: { fontSize: 15, fontWeight: "700", color: theme.danger },
   // Modal
   modalOverlay: {
     flex: 1,

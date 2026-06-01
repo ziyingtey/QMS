@@ -1,13 +1,13 @@
 import { Ionicons } from "@expo/vector-icons";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { StatusBar } from "expo-status-bar";
-import { Image, Platform, Pressable, ScrollView, StatusBar as RNStatusBar, StyleSheet, Text, View } from "react-native";
+import { Platform, Pressable, ScrollView, StatusBar as RNStatusBar, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { PrimaryButton } from "../components/PrimaryButton";
 import { useCustomer } from "../context/CustomerContext";
 import type { RootStackParamList } from "../navigation/navigationRef";
 import { theme } from "../theme";
 import { distanceMeters, formatDistance } from "../utils/geo";
+import { getBranchOpenStatus, getTodayHoursLabel } from "../utils/branchStatus";
 
 type Props = NativeStackScreenProps<RootStackParamList, "BranchDetail">;
 
@@ -20,92 +20,131 @@ export function BranchDetailScreen({ navigation, route }: Props) {
   const favoriteBusy = togglingFavoriteBranchId === branch.id;
   const distM =
     userCoords != null ? distanceMeters(userCoords.latitude, userCoords.longitude, branch.latitude, branch.longitude) : null;
+  const isOpen = getBranchOpenStatus(branch) === "Open";
+  const todayHours = getTodayHoursLabel(branch) ?? branch.operatingHours ?? "—";
 
   return (
     <View style={styles.root}>
       <StatusBar style="light" />
-      <ScrollView contentContainerStyle={{ paddingBottom: 120 }} showsVerticalScrollIndicator={false}>
-        <View style={[styles.hero, { paddingTop: topPad }]}>
-          <Pressable style={[styles.backFab, { top: topPad }]} onPress={() => navigation.goBack()} hitSlop={12}>
-            <Ionicons name="arrow-back" size={22} color="#fff" />
+
+      {/* Header */}
+      <View style={[styles.header, { paddingTop: topPad }]}>
+        <View style={styles.headerTop}>
+          <Pressable onPress={() => navigation.goBack()} hitSlop={8}>
+            <Ionicons name="chevron-back" size={24} color="#fff" />
           </Pressable>
           <Pressable
-            accessibilityLabel={isFavorite ? "Remove branch from favorites" : "Add branch to favorites"}
-            style={[styles.heartFab, { top: topPad }]}
             onPress={() => void toggleFavoriteBranch(branch.id)}
             disabled={favoriteBusy}
-            hitSlop={12}
+            hitSlop={8}
           >
-            <Ionicons name={isFavorite ? "heart" : "heart-outline"} size={24} color={isFavorite ? "#fda4af" : "#fff"} />
+            <Ionicons name={isFavorite ? "heart" : "heart-outline"} size={22} color={isFavorite ? "#fda4af" : "rgba(255,255,255,0.7)"} />
           </Pressable>
-          {branch.imageUrl ? (
-            <Image source={{ uri: branch.imageUrl }} style={styles.heroImg} resizeMode="cover" />
-          ) : (
-            <View style={[styles.heroImg, styles.heroPlaceholder]}>
-              <Ionicons name="business" size={48} color={theme.accent} />
-            </View>
-          )}
-          <View style={styles.heroBottomFade} />
-          <Text style={styles.heroTitle}>{branch.name}</Text>
         </View>
+        <Text style={styles.headerTitle}>{branch.name}</Text>
+        {branch.state ? <Text style={styles.headerState}>{branch.state}</Text> : null}
+      </View>
 
-        <View style={styles.sheet}>
-          {branch.state ? <Text style={styles.stateLine}>{branch.state}</Text> : null}
-          {distM != null ? (
-            <View style={styles.distBanner}>
-              <Ionicons name="navigate-circle-outline" size={18} color={theme.primaryDark} />
-              <Text style={styles.distText}>
-                About <Text style={styles.distStrong}>{formatDistance(distM)}</Text> from your current GPS fix
-              </Text>
-            </View>
-          ) : (
-            <Text style={styles.distHint}>Enable location on Home (Refresh GPS) to see distance to this branch.</Text>
-          )}
-          {branch.openingStatus === "Open" ? (
-            <Text style={styles.openNow}>Open now</Text>
-          ) : (
-            <Text style={styles.closed}>Currently closed</Text>
-          )}
-          {branch.address ? (
-            <View style={styles.row}>
-              <Ionicons name="location-outline" size={18} color={theme.primary} />
-              <Text style={styles.addr}>{branch.address}</Text>
-            </View>
-          ) : null}
-          {branch.operatingHours ? (
-            <View style={styles.row}>
-              <Ionicons name="time-outline" size={18} color={theme.primary} />
-              <Text style={styles.hours}>{branch.operatingHours}</Text>
-            </View>
-          ) : null}
-
-          <Text style={styles.section}>Services at this branch</Text>
-          <View style={styles.chips}>
-            {branch.services.map((s) => (
-              <View key={s.id} style={styles.chip}>
-                <Text style={styles.chipText}>{s.name}</Text>
-              </View>
-            ))}
+      <ScrollView contentContainerStyle={{ paddingBottom: 120 }} showsVerticalScrollIndicator={false}>
+        {/* Info Card */}
+        <View style={styles.infoCard}>
+          {/* Open/Closed + Hours */}
+          <View style={styles.statusRow}>
+            <View style={[styles.statusDot, { backgroundColor: isOpen ? "#22c55e" : "#ef4444" }]} />
+            <Text style={[styles.statusLabel, { color: isOpen ? "#16a34a" : "#dc2626" }]}>
+              {isOpen ? "Open" : "Closed"}
+            </Text>
+            <Text style={styles.statusDivider}>·</Text>
+            <Text style={styles.hoursText}>{todayHours}</Text>
           </View>
 
-          <PrimaryButton
-            label={isFavorite ? "Remove from favorites" : "Add to favorites"}
-            variant={isFavorite ? "ghost" : "primary"}
-            icon={isFavorite ? "close-circle-outline" : "heart-outline"}
-            disabled={favoriteBusy}
-            onPress={() => void toggleFavoriteBranch(branch.id)}
-          />
-          <PrimaryButton
-            label="Book a turn here"
-            variant="success"
-            icon="calendar-outline"
+          {/* Address */}
+          {branch.address ? (
+            <View style={styles.infoRow}>
+              <Ionicons name="location-outline" size={16} color={theme.primaryDark} />
+              <Text style={styles.infoText}>{branch.address}</Text>
+            </View>
+          ) : null}
+
+          {/* Distance */}
+          {distM != null ? (
+            <View style={styles.infoRow}>
+              <Ionicons name="navigate-outline" size={16} color={theme.primaryDark} />
+              <Text style={styles.infoText}>
+                <Text style={styles.infoStrong}>{formatDistance(distM)}</Text> from you
+              </Text>
+            </View>
+          ) : null}
+        </View>
+
+        {/* Quick Actions */}
+        <View style={styles.actionsRow}>
+          <Pressable
+            style={styles.actionBtn}
             onPress={() => {
               navigation.navigate("MainTabs", {
                 screen: "Booking",
                 params: { screen: "BookingServices", params: { branch } },
               });
             }}
-          />
+          >
+            <View style={[styles.actionIcon, { backgroundColor: "#eef4ff" }]}>
+              <Ionicons name="calendar-outline" size={20} color={theme.primaryDark} />
+            </View>
+            <Text style={styles.actionLabel}>Book</Text>
+          </Pressable>
+
+          <Pressable
+            style={styles.actionBtn}
+            onPress={() => void toggleFavoriteBranch(branch.id)}
+            disabled={favoriteBusy}
+          >
+            <View style={[styles.actionIcon, { backgroundColor: isFavorite ? "#fef2f2" : "#f0fdf4" }]}>
+              <Ionicons
+                name={isFavorite ? "heart-dislike-outline" : "heart-outline"}
+                size={20}
+                color={isFavorite ? "#dc2626" : "#16a34a"}
+              />
+            </View>
+            <Text style={styles.actionLabel}>{isFavorite ? "Unfavorite" : "Favorite"}</Text>
+          </Pressable>
+
+          <Pressable style={styles.actionBtn} onPress={() => navigation.goBack()}>
+            <View style={[styles.actionIcon, { backgroundColor: "#fefce8" }]}>
+              <Ionicons name="share-outline" size={20} color="#a16207" />
+            </View>
+            <Text style={styles.actionLabel}>Share</Text>
+          </Pressable>
+        </View>
+
+        {/* Services */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Services</Text>
+          {branch.services.map((s) => (
+            <View key={s.id} style={styles.serviceRow}>
+              <View style={styles.serviceIcon}>
+                <Ionicons name="briefcase-outline" size={16} color={theme.primaryDark} />
+              </View>
+              <Text style={styles.serviceText}>{s.name}</Text>
+              <Ionicons name="chevron-forward" size={16} color="#cbd5e1" />
+            </View>
+          ))}
+        </View>
+
+        {/* Book Button */}
+        <View style={styles.bookBtnWrap}>
+          <Pressable
+            style={styles.bookBtn}
+            onPress={() => {
+              navigation.navigate("MainTabs", {
+                screen: "Booking",
+                params: { screen: "BookingServices", params: { branch } },
+              });
+            }}
+          >
+            <Ionicons name="calendar-outline" size={18} color="#fff" />
+            <Text style={styles.bookBtnText}>Book a visit</Text>
+          </Pressable>
         </View>
       </ScrollView>
     </View>
@@ -114,85 +153,102 @@ export function BranchDetailScreen({ navigation, route }: Props) {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: theme.screenBg },
-  hero: { backgroundColor: theme.headerNavy },
-  backFab: {
-    position: "absolute",
-    left: 16,
-    zIndex: 4,
-    width: 44,
-    height: 44,
-    borderRadius: 14,
-    backgroundColor: "rgba(0,0,0,0.35)",
+  header: {
+    backgroundColor: theme.headerNavy,
+    paddingHorizontal: 18,
+    paddingBottom: 22,
+  },
+  headerTop: {
+    flexDirection: "row",
+    justifyContent: "space-between",
     alignItems: "center",
-    justifyContent: "center",
+    marginBottom: 14,
   },
-  heartFab: {
-    position: "absolute",
-    right: 16,
-    zIndex: 4,
-    width: 44,
-    height: 44,
-    borderRadius: 14,
-    backgroundColor: "rgba(0,0,0,0.35)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  heroImg: { width: "100%", height: 220 },
-  heroPlaceholder: { backgroundColor: "#1a3354", alignItems: "center", justifyContent: "center" },
-  heroBottomFade: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    bottom: 0,
-    height: 100,
-    backgroundColor: "rgba(4,51,107,0.55)",
-  },
-  heroTitle: {
-    position: "absolute",
-    left: 18,
-    right: 18,
-    bottom: 18,
-    fontSize: 24,
-    fontWeight: "900",
-    color: "#fff",
-    textShadowColor: "rgba(0,0,0,0.45)",
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 6,
-  },
-  sheet: {
-    marginTop: -14,
+  headerTitle: { fontSize: 24, fontWeight: "800", color: "#fff" },
+  headerState: { fontSize: 13, color: "rgba(255,255,255,0.6)", marginTop: 3 },
+
+  // Info card
+  infoCard: {
     backgroundColor: "#fff",
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    padding: 20,
-    borderWidth: 1,
-    borderColor: theme.borderLight,
+    marginHorizontal: 18,
+    marginTop: 14,
+    borderRadius: 14,
+    padding: 16,
+    shadowColor: "#000",
+    shadowOpacity: 0.04,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 1 },
+    elevation: 1,
   },
-  stateLine: { fontSize: 13, fontWeight: "700", color: theme.accent, marginBottom: 6 },
-  distBanner: {
+  statusRow: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 12 },
+  statusDot: { width: 8, height: 8, borderRadius: 4 },
+  statusLabel: { fontSize: 13, fontWeight: "700" },
+  statusDivider: { color: "#cbd5e1", fontSize: 13 },
+  hoursText: { fontSize: 13, color: theme.textMutedOnLight, fontWeight: "600" },
+  infoRow: { flexDirection: "row", alignItems: "flex-start", gap: 8, marginTop: 8 },
+  infoText: { flex: 1, fontSize: 13, color: theme.textMutedOnLight, lineHeight: 18 },
+  infoStrong: { fontWeight: "700", color: theme.primaryDark },
+
+  // Quick actions
+  actionsRow: {
+    flexDirection: "row",
+    justifyContent: "space-around",
+    marginHorizontal: 18,
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  actionBtn: { alignItems: "center", gap: 6 },
+  actionIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  actionLabel: { fontSize: 12, fontWeight: "600", color: theme.textMutedOnLight },
+
+  // Services section
+  section: {
+    marginHorizontal: 18,
+    marginTop: 16,
+    backgroundColor: "#fff",
+    borderRadius: 14,
+    padding: 14,
+    shadowColor: "#000",
+    shadowOpacity: 0.04,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 1 },
+    elevation: 1,
+  },
+  sectionTitle: { fontSize: 15, fontWeight: "700", color: theme.textOnLight, marginBottom: 10 },
+  serviceRow: {
     flexDirection: "row",
     alignItems: "center",
+    gap: 10,
+    paddingVertical: 11,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "#f1f5f9",
+  },
+  serviceIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: "#edf2f7",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  serviceText: { flex: 1, fontSize: 14, fontWeight: "600", color: theme.textOnLight },
+
+  // Book button
+  bookBtnWrap: { marginHorizontal: 18, marginTop: 20 },
+  bookBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
     gap: 8,
-    backgroundColor: "#e8eef9",
-    padding: 12,
-    borderRadius: 12,
-    marginBottom: 10,
+    backgroundColor: theme.primaryDark,
+    paddingVertical: 14,
+    borderRadius: 14,
   },
-  distText: { flex: 1, fontSize: 13, color: theme.textOnLight, lineHeight: 18 },
-  distStrong: { fontWeight: "900", color: theme.primaryDark },
-  distHint: { fontSize: 12, color: theme.textMutedOnLight, marginBottom: 10, lineHeight: 17 },
-  openNow: { color: theme.success, fontWeight: "800", marginBottom: 10 },
-  closed: { color: theme.danger, fontWeight: "800", marginBottom: 10 },
-  row: { flexDirection: "row", gap: 10, alignItems: "flex-start", marginBottom: 10 },
-  addr: { flex: 1, color: theme.textOnLight, fontSize: 14, lineHeight: 20 },
-  hours: { flex: 1, color: theme.textMutedOnLight, fontSize: 14, lineHeight: 20 },
-  section: { fontSize: 16, fontWeight: "800", color: theme.textOnLight, marginTop: 8, marginBottom: 10 },
-  chips: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 16 },
-  chip: {
-    backgroundColor: "#e8eef9",
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 10,
-  },
-  chipText: { fontSize: 13, fontWeight: "700", color: theme.primaryDark },
+  bookBtnText: { fontSize: 15, fontWeight: "700", color: "#fff" },
 });
