@@ -2,12 +2,12 @@ import { useState } from "react";
 import type { FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { apiLogin, setStoredBranchId, setStoredEmail, setStoredRole, setStoredToken } from "../api";
-import { API_BASE } from "../config";
 
 export function LoginPage() {
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -34,45 +34,95 @@ export function LoginPage() {
   };
 
   return (
-    <div className="deck-page">
-      <div className="login-card">
-        <div className="brand-inline">
-          <span className="brand-mark" />
-          <span className="brand-text">IH-QMS</span>
-        </div>
-        <h1 className="login-title">IH-QMS · Staff</h1>
-        <p className="login-hint">
-          Sign in with a <strong>Staff</strong> or <strong>Manager</strong> account that exists in your database (insert via SQL or your admin process).
-          Managers land on <strong>Branch operations</strong> (<code>/manager</code>) to assign tellers and lanes to counters, set Open/Break/Closed, and tune booking capacity.
-        </p>
-        <p className="login-hint muted-small">
-          If you used <code>database/insert-staff-sample.sql</code>, try <code>staff.teller@local.test</code> or{" "}
-          <code>staff.manager@local.test</code> with password <code>Passw0rd!</code> (zero, exclamation). You still need at
-          least one row in <code>BRANCHES</code> before that script succeeds.
-        </p>
-        {import.meta.env.DEV ? (
-          <p className="login-hint muted-small">
-            Dev: API base is <code>{API_BASE}</code> — set <code>VITE_API_URL</code> in <code>.env.local</code> if wrong.
+    <div className="login-page-v2">
+      {/* Left panel - brand */}
+      <div className="lp-left">
+        <div className="lp-left-inner">
+          <div className="lp-logo">QGo</div>
+          <h1 className="lp-headline">Queue Management<br />Made Simple</h1>
+          <p className="lp-tagline">
+            Manage branches, assign counters, and serve customers with real-time queue tracking.
           </p>
-        ) : null}
-        <form className="login-form" onSubmit={(e) => void onSubmit(e)}>
-          <label>
-            Email
-            <input value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="username" />
-          </label>
-          <label>
-            Password
-            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" />
-          </label>
-          {error ? (
-            <p className="error login-error" role="alert">
-              {error}
-            </p>
-          ) : null}
-          <button type="submit" className="btn-primary-lg" disabled={busy}>
-            {busy ? "Signing in…" : "Sign in"}
-          </button>
-        </form>
+          <div className="lp-features">
+            <div className="lp-feature">
+              <span className="lp-feature-icon">⚡</span>
+              <span>Real-time queue updates</span>
+            </div>
+            <div className="lp-feature">
+              <span className="lp-feature-icon">📊</span>
+              <span>Live dashboard analytics</span>
+            </div>
+            <div className="lp-feature">
+              <span className="lp-feature-icon">🏢</span>
+              <span>Multi-branch support</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Right panel - form */}
+      <div className="lp-right">
+        <div className="lp-form-wrap">
+          <h2 className="lp-form-title">Welcome back</h2>
+          <p className="lp-form-sub">Sign in to your staff account</p>
+
+          <form className="lp-form" onSubmit={(e) => void onSubmit(e)}>
+            <div className="lp-field">
+              <label className="lp-label" htmlFor="lp-email">Email</label>
+              <div className="lp-input-wrap">
+                <svg className="lp-input-icon" viewBox="0 0 20 20" fill="currentColor" width="18" height="18">
+                  <path d="M2.003 5.884L10 9.882l7.997-3.998A2 2 0 0016 4H4a2 2 0 00-1.997 1.884z" />
+                  <path d="M18 8.118l-8 4-8-4V14a2 2 0 002 2h12a2 2 0 002-2V8.118z" />
+                </svg>
+                <input
+                  id="lp-email"
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  autoComplete="username"
+                  placeholder="you@company.com"
+                />
+              </div>
+            </div>
+
+            <div className="lp-field">
+              <label className="lp-label" htmlFor="lp-pass">Password</label>
+              <div className="lp-input-wrap">
+                <svg className="lp-input-icon" viewBox="0 0 20 20" fill="currentColor" width="18" height="18">
+                  <path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" />
+                </svg>
+                <input
+                  id="lp-pass"
+                  type={showPassword ? "text" : "password"}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  autoComplete="current-password"
+                  placeholder="Enter your password"
+                />
+                <button
+                  type="button"
+                  className="lp-eye-btn"
+                  onClick={() => setShowPassword(!showPassword)}
+                  tabIndex={-1}
+                >
+                  {showPassword ? "Hide" : "Show"}
+                </button>
+              </div>
+            </div>
+
+            {error ? (
+              <div className="lp-error" role="alert">{error}</div>
+            ) : null}
+
+            <button type="submit" className="lp-submit" disabled={busy}>
+              {busy ? "Signing in…" : "Sign in"}
+            </button>
+          </form>
+
+          <p className="lp-demo-hint">
+            Demo credentials: <code>staff.teller@local.test</code> / <code>Passw0rd!</code>
+          </p>
+        </div>
       </div>
     </div>
   );
