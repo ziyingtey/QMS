@@ -2,7 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { StatusBar } from "expo-status-bar";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AppState, FlatList, Image, Platform, Pressable, RefreshControl, StatusBar as RNStatusBar, StyleSheet, Text, TextInput, View } from "react-native";
+import { AppState, FlatList, Image, Linking, Platform, Pressable, RefreshControl, StatusBar as RNStatusBar, StyleSheet, Text, TextInput, View } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { navigationRef, type BookingStackParamList } from "../navigation/navigationRef";
@@ -108,7 +108,7 @@ export function BookingBranchesScreen({ navigation }: Props) {
           />
         }
         renderItem={({ item: { b, dist } }) => (
-          <Pressable style={styles.card} onPress={() => navigation.navigate("BookingServices", { branch: b })}>
+          <Pressable style={styles.card} onPress={() => { if (navigationRef.isReady()) navigationRef.navigate("BranchDetail", { branch: b }); }}>
             <View style={styles.cardTop}>
               {/* Left icon */}
               {b.imageUrl ? (
@@ -121,13 +121,13 @@ export function BookingBranchesScreen({ navigation }: Props) {
               {/* Content */}
               <View style={{ flex: 1, minWidth: 0 }}>
                 <View style={styles.titleRow}>
-                <Text style={styles.cardTitle} numberOfLines={1}>{b.name}</Text>
-                {b.state ? (
-                  <View style={styles.stateChip}>
-                    <Text style={styles.stateChipText}>{b.state}</Text>
-                  </View>
-                ) : null}
-              </View>
+                  <Text style={styles.cardTitle} numberOfLines={1}>{b.name}</Text>
+                  {b.state ? (
+                    <View style={styles.stateChip}>
+                      <Text style={styles.stateChipText}>{b.state}</Text>
+                    </View>
+                  ) : null}
+                </View>
                 {b.address ? (
                   <Text style={styles.addr} numberOfLines={1}>{b.address}</Text>
                 ) : null}
@@ -139,25 +139,34 @@ export function BookingBranchesScreen({ navigation }: Props) {
                   <Ionicons name="time-outline" size={13} color="#4a90d9" />
                   <Text style={styles.metaText}>{getTodayHoursLabel(b) ?? "—"}</Text>
                   <View style={[styles.openChip, getBranchOpenStatus(b) === "Closed" && styles.closedChip]}>
-                  <Text style={[styles.openChipText, getBranchOpenStatus(b) === "Closed" && styles.closedChipText]}>
-                    {getBranchOpenStatus(b)}
-                  </Text>
-                </View>
+                    <Text style={[styles.openChipText, getBranchOpenStatus(b) === "Closed" && styles.closedChipText]}>
+                      {getBranchOpenStatus(b)}
+                    </Text>
+                  </View>
                 </View>
               </View>
             </View>
-            {/* Bottom row — Details + Book */}
+            {/* Bottom row — Directions + Book */}
             <View style={styles.cardBottom}>
               <Pressable
                 style={styles.detailsBtn}
-                onPress={() => { if (navigationRef.isReady()) navigationRef.navigate("BranchDetail", { branch: b }); }}
+                onPress={(e) => {
+                  e.stopPropagation?.();
+                  const url = Platform.OS === "ios"
+                    ? `maps://?q=${encodeURIComponent(b.name)}&ll=${b.latitude},${b.longitude}`
+                    : `geo:${b.latitude},${b.longitude}?q=${b.latitude},${b.longitude}(${encodeURIComponent(b.name)})`;
+                  void Linking.openURL(url);
+                }}
               >
-                <Ionicons name="information-circle-outline" size={16} color={theme.primaryDark} />
-                <Text style={styles.detailsBtnText}>Details</Text>
+                <Ionicons name="navigate-outline" size={16} color={theme.primaryDark} />
+                <Text style={styles.detailsBtnText}>Directions</Text>
               </Pressable>
               <Pressable
                 style={styles.bookBtn}
-                onPress={() => navigation.navigate("BookingServices", { branch: b })}
+                onPress={(e) => {
+                  e.stopPropagation?.();
+                  navigation.navigate("BookingServices", { branch: b });
+                }}
               >
                 <Ionicons name="calendar-outline" size={14} color="#fff" />
                 <Text style={styles.bookBtnText}>Book a Slot</Text>

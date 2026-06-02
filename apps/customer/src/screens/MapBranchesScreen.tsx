@@ -7,7 +7,6 @@ import {
   Linking,
   Platform,
   Pressable,
-  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -16,14 +15,12 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { BranchDto } from "../api";
-import { PrimaryButton } from "../components/PrimaryButton";
 import { MALAYSIA_STATE_FILTERS } from "../constants/malaysiaStates";
 import { useCustomer } from "../context/CustomerContext";
 import type { RootStackParamList } from "../navigation/navigationRef";
 import { theme } from "../theme";
 import { distanceMeters, formatDistance } from "../utils/geo";
-
-const OFFICIAL_PB_LOCATOR = "https://www.pbebank.com/en/branch-locator/";
+import { getBranchOpenStatus } from "../utils/branchStatus";
 
 function matchesStateFilter(branch: BranchDto, selected: string): boolean {
   if (selected === "All") return true;
@@ -41,11 +38,11 @@ export function MapBranchesScreen({ navigation }: Props) {
   const Marker = NativeMaps?.Marker;
   const mapRef = useRef<{ animateToRegion: (r: object) => void } | null>(null);
   const insets = useSafeAreaInsets();
+  const topPad = Platform.OS === "android" ? 8 : Math.max(insets.top, 12);
   const { branches, userCoords, requestLocation, loadBranches } = useCustomer();
   const [search, setSearch] = useState("");
   const [stateFilter, setStateFilter] = useState<string>("All");
-  const [layoutMode, setLayoutMode] = useState<"map" | "list">("map");
-  const [listRefreshing, setListRefreshing] = useState(false);
+  const [filtersVisible, setFiltersVisible] = useState(false);
 
   useEffect(() => {
     void requestLocation();
@@ -123,72 +120,67 @@ export function MapBranchesScreen({ navigation }: Props) {
     });
   };
 
-  const onMapListRefresh = async () => {
-    setListRefreshing(true);
-    try {
-      await loadBranches();
-    } finally {
-      setListRefreshing(false);
-    }
+  const goBranchDetail = (branch: BranchDto) => {
+    navigation.navigate("BranchDetail", { branch });
   };
-
-  const topPad = Math.max(insets.top, 12);
 
   return (
     <View style={styles.screen}>
       <StatusBar style="light" />
+
+      {/* Header */}
       <View style={[styles.header, { paddingTop: topPad }]}>
-        <Pressable onPress={() => navigation.goBack()} style={styles.backBtn} hitSlop={10}>
-          <Ionicons name="arrow-back" size={24} color={theme.text} />
-        </Pressable>
+        <View style={styles.headerRow}>
+          <Pressable onPress={() => navigation.goBack()} hitSlop={8}>
+            <Ionicons name="chevron-back" size={24} color="#fff" />
+          </Pressable>
+          <Text style={styles.headerTitle}>Find a Branch</Text>
+          <Pressable onPress={() => setFiltersVisible(!filtersVisible)} hitSlop={8}>
+            <Ionicons name="options-outline" size={22} color="#fff" />
+          </Pressable>
+        </View>
+
+        {/* Search */}
         <View style={styles.searchWrap}>
-          <Ionicons name="search-outline" size={20} color={theme.textMuted} />
+          <Ionicons name="search-outline" size={18} color="#94a3b8" />
           <TextInput
             style={styles.searchInput}
-            placeholder="Search for an Office…"
-            placeholderTextColor={theme.textMuted}
+            placeholder="Search branch name or address..."
+            placeholderTextColor="#94a3b8"
             value={search}
             onChangeText={setSearch}
           />
+          {search.length > 0 ? (
+            <Pressable onPress={() => setSearch("")} hitSlop={8}>
+              <Ionicons name="close-circle" size={18} color="#94a3b8" />
+            </Pressable>
+          ) : null}
         </View>
+
+        {/* State filter chips */}
+        {filtersVisible && (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.stateScroll}>
+            {MALAYSIA_STATE_FILTERS.map((s) => {
+              const on = stateFilter === s;
+              return (
+                <Pressable
+                  key={s}
+                  onPress={() => setStateFilter(s)}
+                  style={[styles.stateChip, on && styles.stateChipOn]}
+                  hitSlop={4}
+                >
+                  <Text style={[styles.stateChipText, on && styles.stateChipTextOn]} numberOfLines={1}>
+                    {s}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        )}
       </View>
 
-      <View style={styles.filterBlock}>
-        <View style={styles.typeRow}>
-          <Text style={styles.typeLabel}>Type</Text>
-          <View style={styles.typeChipOn}>
-            <Text style={styles.typeChipOnText}>Branches (queue)</Text>
-          </View>
-        </View>
-        <Text style={styles.stateLabel}>State</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.stateScroll}>
-          {MALAYSIA_STATE_FILTERS.map((s) => {
-            const on = stateFilter === s;
-            return (
-              <Pressable
-                key={s}
-                onPress={() => setStateFilter(s)}
-                style={[styles.stateChip, on && styles.stateChipOn]}
-                hitSlop={4}
-              >
-                <Text style={[styles.stateChipText, on && styles.stateChipTextOn]} numberOfLines={1}>
-                  {s}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </ScrollView>
-        <Text style={styles.disclosure}>
-          Pins are your QMS branch list (database), not a live copy of the bank's public site. Import or enter real
-          branches to match production.
-        </Text>
-        <Pressable onPress={() => void Linking.openURL(OFFICIAL_PB_LOCATOR)} style={styles.officialRow}>
-          <Ionicons name="open-outline" size={16} color={theme.accent} />
-          <Text style={styles.officialLink}>Open Public Bank's full branch directory (official)</Text>
-        </Pressable>
-      </View>
-
-      {MapView && Marker && layoutMode === "map" ? (
+      {/* Map */}
+      {MapView && Marker ? (
         <MapView
           ref={mapRef as never}
           style={styles.map}
@@ -201,238 +193,208 @@ export function MapBranchesScreen({ navigation }: Props) {
               key={b.id}
               coordinate={{ latitude: b.latitude, longitude: b.longitude }}
               title={b.name}
-              description={[b.state, "Open now · tap card below to book"].filter(Boolean).join(" · ")}
-              onCalloutPress={() => goBookBranch(b.id)}
+              description={b.state ?? ""}
+              onCalloutPress={() => goBranchDetail(b)}
             />
           ))}
         </MapView>
       ) : (
-        <FlatList
-          data={sortedForList}
-          keyExtractor={(x) => x.b.id}
-          style={{ flex: 1 }}
-          contentContainerStyle={{ paddingBottom: 100 }}
-          refreshControl={
-            <RefreshControl
-              refreshing={listRefreshing}
-              onRefresh={() => void onMapListRefresh()}
-              tintColor={theme.accent}
-              colors={[theme.accent]}
-              progressBackgroundColor="#1e293b"
-            />
-          }
-          renderItem={({ item: { b, dist } }) => (
-            <View style={styles.listCard}>
-              <Text style={styles.listTitle}>{b.name}</Text>
-              {b.state ? <Text style={styles.listState}>{b.state}</Text> : null}
-              {b.address ? <Text style={styles.listAddr}>{b.address}</Text> : null}
-              <Text style={styles.listMeta}>
-                {dist != null ? formatDistance(dist) + " · " : ""}
-                {b.latitude.toFixed(4)}, {b.longitude.toFixed(4)}
-              </Text>
-              <View style={styles.listActions}>
-                <PrimaryButton label="Open in Maps" compact variant="ghost" onPress={() => openMapsApp(b.latitude, b.longitude, b.name)} />
-                <PrimaryButton label="Book" compact onPress={() => goBookBranch(b.id)} />
-              </View>
-            </View>
-          )}
-          ListEmptyComponent={<Text style={styles.empty}>No branches match your search.</Text>}
-        />
+        <View style={styles.mapPlaceholder}>
+          <Ionicons name="map-outline" size={48} color="#cbd5e1" />
+          <Text style={styles.mapPlaceholderText}>Map not available on web</Text>
+        </View>
       )}
 
-      {MapView && layoutMode === "map" ? (
-        <Pressable
-          accessibilityLabel="Locate me"
-          style={[styles.fab, { bottom: Math.max(insets.bottom, 16) + 8 }]}
-          onPress={() => void requestLocation()}
-        >
-          <Ionicons name="locate" size={26} color="#fff" />
-        </Pressable>
-      ) : null}
-
+      {/* Locate Me FAB */}
       {MapView ? (
         <Pressable
-          accessibilityLabel={layoutMode === "map" ? "List view" : "Map view"}
-          style={[styles.fabToggle, { bottom: Math.max(insets.bottom, 16) + (MapView && layoutMode === "map" ? 72 : 8) }]}
-          onPress={() => setLayoutMode((m) => (m === "map" ? "list" : "map"))}
+          accessibilityLabel="Locate me"
+          style={[styles.fab, { bottom: Math.max(insets.bottom, 16) + 200 }]}
+          onPress={() => void requestLocation()}
         >
-          <Ionicons name={layoutMode === "map" ? "list-outline" : "map-outline"} size={24} color="#fff" />
+          <Ionicons name="locate" size={22} color="#fff" />
         </Pressable>
       ) : null}
 
-      {MapView && layoutMode === "map" ? (
-        <View style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, 12) }]}>
-          <Text style={styles.sheetTitle}>Nearby</Text>
-          <FlatList
-            horizontal
-            data={sortedForList}
-            keyExtractor={(x) => x.b.id}
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={{ gap: 10 }}
-            renderItem={({ item: { b, dist } }) => (
-              <Pressable style={styles.miniCard} onPress={() => goBookBranch(b.id)}>
-                <Text style={styles.miniTitle} numberOfLines={2}>
-                  {b.name}
-                </Text>
+      {/* Bottom Sheet */}
+      <View style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, 12) + 8 }]}>
+        <View style={styles.sheetHandle} />
+        <Text style={styles.sheetTitle}>
+          Nearby {filtered.length > 0 ? `(${filtered.length})` : ""}
+        </Text>
+        <FlatList
+          horizontal
+          data={sortedForList}
+          keyExtractor={(x) => x.b.id}
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={{ gap: 12, paddingHorizontal: 4 }}
+          renderItem={({ item: { b, dist } }) => {
+            const branchOpen = getBranchOpenStatus(b) === "Open";
+            return (
+              <Pressable style={styles.miniCard} onPress={() => goBranchDetail(b)}>
+                <Text style={styles.miniTitle} numberOfLines={1}>{b.name}</Text>
                 {b.state ? <Text style={styles.miniState}>{b.state}</Text> : null}
                 {b.address ? (
-                  <Text style={styles.miniAddr} numberOfLines={2}>
-                    {b.address}
-                  </Text>
+                  <Text style={styles.miniAddr} numberOfLines={2}>{b.address}</Text>
                 ) : null}
-                <Text style={styles.openChip}>Open Now</Text>
-                <Text style={styles.miniMeta}>{dist != null ? formatDistance(dist) : "—"}</Text>
-                <Text style={styles.miniLink}>Book · Maps</Text>
+                <View style={styles.miniMeta}>
+                  <Text style={[styles.miniOpen, { color: branchOpen ? "#16a34a" : "#dc2626" }]}>
+                    {branchOpen ? "Open" : "Closed"}
+                  </Text>
+                  {dist != null ? <Text style={styles.miniDist}>{formatDistance(dist)}</Text> : null}
+                </View>
+                <View style={styles.miniActions}>
+                  <Pressable style={styles.miniActionBtn} onPress={() => goBookBranch(b.id)}>
+                    <Text style={styles.miniActionText}>Book</Text>
+                  </Pressable>
+                  <Pressable
+                    style={[styles.miniActionBtn, styles.miniActionBtnOutline]}
+                    onPress={() => openMapsApp(b.latitude, b.longitude, b.name)}
+                  >
+                    <Text style={[styles.miniActionText, { color: theme.primaryDark }]}>Maps</Text>
+                  </Pressable>
+                </View>
               </Pressable>
-            )}
-          />
-        </View>
-      ) : null}
+            );
+          }}
+        />
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: theme.bg },
+  screen: { flex: 1, backgroundColor: theme.screenBg },
+
+  // Header
   header: {
+    backgroundColor: theme.headerNavy,
+    paddingHorizontal: 18,
+    paddingBottom: 14,
+  },
+  headerRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
-    paddingHorizontal: 12,
-    paddingBottom: 10,
-    backgroundColor: theme.bg,
-    borderBottomWidth: 1,
-    borderBottomColor: theme.border,
+    justifyContent: "space-between",
+    marginBottom: 12,
   },
-  backBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
-    backgroundColor: theme.bgCard,
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 1,
-    borderColor: theme.border,
-  },
+  headerTitle: { fontSize: 18, fontWeight: "800", color: "#fff" },
   searchWrap: {
-    flex: 1,
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
-    backgroundColor: theme.bgCard,
-    borderRadius: 14,
+    backgroundColor: "rgba(255,255,255,0.1)",
+    borderRadius: 12,
     paddingHorizontal: 12,
     paddingVertical: 10,
-    borderWidth: 1,
-    borderColor: theme.border,
   },
-  searchInput: { flex: 1, color: theme.text, fontSize: 16 },
-  filterBlock: {
-    paddingHorizontal: 12,
-    paddingBottom: 10,
-    paddingTop: 4,
-    backgroundColor: theme.bg,
-    borderBottomWidth: 1,
-    borderBottomColor: theme.border,
-    gap: 8,
-  },
-  typeRow: { flexDirection: "row", alignItems: "center", gap: 10 },
-  typeLabel: { color: theme.textMuted, fontSize: 12, fontWeight: "700", width: 44 },
-  typeChipOn: {
-    backgroundColor: theme.primary,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 20,
-  },
-  typeChipOnText: { color: "#fff", fontSize: 12, fontWeight: "700" },
-  stateLabel: { color: theme.textMuted, fontSize: 12, fontWeight: "700", marginTop: 4 },
-  stateScroll: { flexDirection: "row", gap: 8, paddingVertical: 4 },
+  searchInput: { flex: 1, color: "#fff", fontSize: 14 },
+  stateScroll: { flexDirection: "row", gap: 8, paddingTop: 10, paddingBottom: 4 },
   stateChip: {
     paddingHorizontal: 14,
-    paddingVertical: 8,
+    paddingVertical: 7,
     borderRadius: 20,
-    backgroundColor: theme.bgCard,
-    borderWidth: 1,
-    borderColor: theme.border,
+    backgroundColor: "rgba(255,255,255,0.1)",
   },
-  stateChipOn: { backgroundColor: theme.chip, borderColor: theme.primary },
-  stateChipText: { color: theme.textMuted, fontSize: 12, fontWeight: "600" },
-  stateChipTextOn: { color: theme.text },
-  disclosure: { color: theme.textMuted, fontSize: 11, lineHeight: 16, marginTop: 4 },
-  officialRow: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 2 },
-  officialLink: { color: theme.accent, fontSize: 12, fontWeight: "700", flex: 1 },
+  stateChipOn: { backgroundColor: "#fff" },
+  stateChipText: { color: "rgba(255,255,255,0.7)", fontSize: 12, fontWeight: "600" },
+  stateChipTextOn: { color: theme.headerNavy, fontWeight: "700" },
+
+  // Map
   map: { flex: 1 },
+  mapPlaceholder: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+  },
+  mapPlaceholderText: { fontSize: 14, color: "#94a3b8" },
+
+  // FAB
   fab: {
     position: "absolute",
     right: 16,
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    backgroundColor: theme.primary,
-    alignItems: "center",
-    justifyContent: "center",
-    elevation: 4,
-    shadowColor: "#000",
-    shadowOpacity: 0.25,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
-  },
-  fabToggle: {
-    position: "absolute",
-    right: 16,
-    width: 52,
-    height: 52,
-    borderRadius: 26,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     backgroundColor: theme.primaryDark,
     alignItems: "center",
     justifyContent: "center",
     elevation: 4,
     shadowColor: "#000",
-    shadowOpacity: 0.25,
-    shadowRadius: 8,
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
     shadowOffset: { width: 0, height: 2 },
   },
+
+  // Bottom Sheet
   sheet: {
     position: "absolute",
     left: 0,
     right: 0,
     bottom: 0,
-    paddingTop: 12,
-    paddingHorizontal: 12,
-    backgroundColor: theme.navBar,
-    borderTopLeftRadius: 18,
-    borderTopRightRadius: 18,
-    borderTopWidth: 1,
-    borderColor: theme.border,
+    paddingTop: 10,
+    paddingHorizontal: 18,
+    backgroundColor: "#fff",
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    shadowColor: "#000",
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: -4 },
+    elevation: 8,
   },
-  sheetTitle: { color: theme.textMuted, fontWeight: "700", marginBottom: 10, fontSize: 13 },
-  miniCard: {
-    width: 168,
-    backgroundColor: theme.bgCard,
-    borderRadius: 14,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: theme.border,
-  },
-  miniTitle: { color: theme.text, fontWeight: "700", fontSize: 14 },
-  miniState: { color: theme.accent, fontSize: 11, fontWeight: "600", marginTop: 4 },
-  miniAddr: { color: theme.textMuted, fontSize: 10, marginTop: 4, lineHeight: 14 },
-  openChip: { color: theme.success, fontSize: 11, fontWeight: "700", marginTop: 6 },
-  miniMeta: { color: theme.textMuted, fontSize: 12, marginTop: 6 },
-  miniLink: { color: theme.accent, fontSize: 12, fontWeight: "700", marginTop: 8 },
-  listCard: {
-    marginHorizontal: 16,
+  sheetHandle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: "#d1d5db",
+    alignSelf: "center",
     marginBottom: 12,
-    padding: 14,
-    backgroundColor: theme.bgCard,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: theme.border,
   },
-  listTitle: { color: theme.text, fontWeight: "800", fontSize: 16 },
-  listState: { color: theme.accent, fontSize: 12, fontWeight: "700", marginTop: 4 },
-  listAddr: { color: theme.textMuted, fontSize: 12, marginTop: 6, lineHeight: 16 },
-  listMeta: { color: theme.textMuted, fontSize: 13, marginTop: 6 },
-  listActions: { flexDirection: "row", gap: 8, marginTop: 12 },
-  empty: { color: theme.textMuted, textAlign: "center", marginTop: 40, paddingHorizontal: 24 },
+  sheetTitle: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: theme.textOnLight,
+    marginBottom: 12,
+  },
+
+  // Mini Cards
+  miniCard: {
+    width: 200,
+    backgroundColor: "#f8fafc",
+    borderRadius: 14,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+  },
+  miniTitle: { fontSize: 15, fontWeight: "700", color: theme.textOnLight },
+  miniState: { fontSize: 12, fontWeight: "600", color: theme.primaryDark, marginTop: 3 },
+  miniAddr: { fontSize: 11, color: theme.textMutedOnLight, marginTop: 4, lineHeight: 15 },
+  miniMeta: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 8,
+  },
+  miniOpen: { fontSize: 12, fontWeight: "700" },
+  miniDist: { fontSize: 12, color: theme.textMutedOnLight },
+  miniActions: {
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 10,
+  },
+  miniActionBtn: {
+    flex: 1,
+    paddingVertical: 7,
+    borderRadius: 8,
+    backgroundColor: theme.primaryDark,
+    alignItems: "center",
+  },
+  miniActionBtnOutline: {
+    backgroundColor: "#fff",
+    borderWidth: 1.5,
+    borderColor: theme.primaryDark,
+  },
+  miniActionText: { fontSize: 12, fontWeight: "700", color: "#fff" },
 });

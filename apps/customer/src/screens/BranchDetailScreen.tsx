@@ -1,6 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { StatusBar } from "expo-status-bar";
+import { useState } from "react";
 import { Platform, Pressable, ScrollView, StatusBar as RNStatusBar, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useCustomer } from "../context/CustomerContext";
@@ -22,117 +23,120 @@ export function BranchDetailScreen({ navigation, route }: Props) {
     userCoords != null ? distanceMeters(userCoords.latitude, userCoords.longitude, branch.latitude, branch.longitude) : null;
   const isOpen = getBranchOpenStatus(branch) === "Open";
   const todayHours = getTodayHoursLabel(branch) ?? branch.operatingHours ?? "—";
+  const [servicesExpanded, setServicesExpanded] = useState(false);
 
   return (
     <View style={styles.root}>
       <StatusBar style="light" />
 
-      {/* Header */}
+      {/* Header with building icon */}
       <View style={[styles.header, { paddingTop: topPad }]}>
         <View style={styles.headerTop}>
-          <Pressable onPress={() => navigation.goBack()} hitSlop={8}>
-            <Ionicons name="chevron-back" size={24} color="#fff" />
+          <Pressable style={styles.headerBtn} onPress={() => navigation.goBack()} hitSlop={8}>
+            <Ionicons name="arrow-back" size={22} color="#fff" />
           </Pressable>
           <Pressable
+            style={styles.headerBtn}
             onPress={() => void toggleFavoriteBranch(branch.id)}
             disabled={favoriteBusy}
             hitSlop={8}
           >
-            <Ionicons name={isFavorite ? "heart" : "heart-outline"} size={22} color={isFavorite ? "#fda4af" : "rgba(255,255,255,0.7)"} />
+            <Ionicons name={isFavorite ? "heart" : "heart-outline"} size={22} color="#fff" />
           </Pressable>
         </View>
+
+        {/* Building icon */}
+        <View style={styles.buildingIconWrap}>
+          <Ionicons name="business" size={48} color="rgba(255,255,255,0.85)" />
+        </View>
+
         <Text style={styles.headerTitle}>{branch.name}</Text>
-        {branch.state ? <Text style={styles.headerState}>{branch.state}</Text> : null}
       </View>
 
-      <ScrollView contentContainerStyle={{ paddingBottom: 120 }} showsVerticalScrollIndicator={false}>
-        {/* Info Card */}
+      <ScrollView contentContainerStyle={{ paddingBottom: 140 }} showsVerticalScrollIndicator={false}>
+        {/* Info Section */}
         <View style={styles.infoCard}>
-          {/* Open/Closed + Hours */}
-          <View style={styles.statusRow}>
-            <View style={[styles.statusDot, { backgroundColor: isOpen ? "#22c55e" : "#ef4444" }]} />
-            <Text style={[styles.statusLabel, { color: isOpen ? "#16a34a" : "#dc2626" }]}>
-              {isOpen ? "Open" : "Closed"}
-            </Text>
-            <Text style={styles.statusDivider}>·</Text>
-            <Text style={styles.hoursText}>{todayHours}</Text>
-          </View>
-
-          {/* Address */}
-          {branch.address ? (
-            <View style={styles.infoRow}>
-              <Ionicons name="location-outline" size={16} color={theme.primaryDark} />
-              <Text style={styles.infoText}>{branch.address}</Text>
+          {/* State + Open/Closed chips */}
+          <View style={styles.chipsRow}>
+            {branch.state ? (
+              <View style={styles.stateBadge}>
+                <Text style={styles.stateBadgeText}>{branch.state}</Text>
+              </View>
+            ) : null}
+            <View style={[styles.openBadge, { backgroundColor: isOpen ? "#dcfce7" : "#fee2e2" }]}>
+              <Text style={[styles.openBadgeText, { color: isOpen ? "#16a34a" : "#dc2626" }]}>
+                {isOpen ? "Open" : "Closed"}
+              </Text>
             </View>
-          ) : null}
+          </View>
 
           {/* Distance */}
           {distM != null ? (
             <View style={styles.infoRow}>
-              <Ionicons name="navigate-outline" size={16} color={theme.primaryDark} />
+              <Ionicons name="navigate-circle-outline" size={16} color={theme.textMutedOnLight} />
               <Text style={styles.infoText}>
                 <Text style={styles.infoStrong}>{formatDistance(distM)}</Text> from you
               </Text>
             </View>
           ) : null}
+
+          {/* Address */}
+          {branch.address ? (
+            <View style={styles.infoRow}>
+              <Ionicons name="location-outline" size={16} color={theme.textMutedOnLight} />
+              <Text style={styles.infoText}>{branch.address}</Text>
+            </View>
+          ) : null}
+
+          {/* Hours */}
+          <View style={styles.infoRow}>
+            <Ionicons name="time-outline" size={16} color={theme.textMutedOnLight} />
+            <Text style={styles.infoText}>{todayHours}</Text>
+          </View>
         </View>
 
-        {/* Quick Actions */}
-        <View style={styles.actionsRow}>
+        {/* Services - collapsible */}
+        <View style={styles.servicesSection}>
           <Pressable
-            style={styles.actionBtn}
-            onPress={() => {
-              navigation.navigate("MainTabs", {
-                screen: "Booking",
-                params: { screen: "BookingServices", params: { branch } },
-              });
-            }}
+            style={styles.servicesTitleRow}
+            onPress={() => setServicesExpanded(!servicesExpanded)}
           >
-            <View style={[styles.actionIcon, { backgroundColor: "#eef4ff" }]}>
-              <Ionicons name="calendar-outline" size={20} color={theme.primaryDark} />
-            </View>
-            <Text style={styles.actionLabel}>Book</Text>
+            <Text style={styles.servicesTitle}>Services at this branch</Text>
+            <Ionicons
+              name={servicesExpanded ? "chevron-up" : "chevron-down"}
+              size={20}
+              color={theme.textMutedOnLight}
+            />
           </Pressable>
 
+          {servicesExpanded && (
+            <View style={styles.chipsWrap}>
+              {branch.services.map((s) => (
+                <View key={s.id} style={styles.chip}>
+                  <Text style={styles.chipText}>{s.name}</Text>
+                </View>
+              ))}
+            </View>
+          )}
+        </View>
+
+        {/* Bottom Buttons */}
+        <View style={styles.buttonsWrap}>
           <Pressable
-            style={styles.actionBtn}
+            style={[styles.favBtn, favoriteBusy && { opacity: 0.6 }]}
             onPress={() => void toggleFavoriteBranch(branch.id)}
             disabled={favoriteBusy}
           >
-            <View style={[styles.actionIcon, { backgroundColor: isFavorite ? "#fef2f2" : "#f0fdf4" }]}>
-              <Ionicons
-                name={isFavorite ? "heart-dislike-outline" : "heart-outline"}
-                size={20}
-                color={isFavorite ? "#dc2626" : "#16a34a"}
-              />
-            </View>
-            <Text style={styles.actionLabel}>{isFavorite ? "Unfavorite" : "Favorite"}</Text>
+            <Ionicons
+              name={isFavorite ? "heart" : "heart-outline"}
+              size={18}
+              color="#fff"
+            />
+            <Text style={styles.favBtnText}>
+              {isFavorite ? "Remove from favorites" : "Add to favorites"}
+            </Text>
           </Pressable>
 
-          <Pressable style={styles.actionBtn} onPress={() => navigation.goBack()}>
-            <View style={[styles.actionIcon, { backgroundColor: "#fefce8" }]}>
-              <Ionicons name="share-outline" size={20} color="#a16207" />
-            </View>
-            <Text style={styles.actionLabel}>Share</Text>
-          </Pressable>
-        </View>
-
-        {/* Services */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Services</Text>
-          {branch.services.map((s) => (
-            <View key={s.id} style={styles.serviceRow}>
-              <View style={styles.serviceIcon}>
-                <Ionicons name="briefcase-outline" size={16} color={theme.primaryDark} />
-              </View>
-              <Text style={styles.serviceText}>{s.name}</Text>
-              <Ionicons name="chevron-forward" size={16} color="#cbd5e1" />
-            </View>
-          ))}
-        </View>
-
-        {/* Book Button */}
-        <View style={styles.bookBtnWrap}>
           <Pressable
             style={styles.bookBtn}
             onPress={() => {
@@ -143,7 +147,7 @@ export function BranchDetailScreen({ navigation, route }: Props) {
             }}
           >
             <Ionicons name="calendar-outline" size={18} color="#fff" />
-            <Text style={styles.bookBtnText}>Book a visit</Text>
+            <Text style={styles.bookBtnText}>Book a turn here</Text>
           </Pressable>
         </View>
       </ScrollView>
@@ -153,25 +157,88 @@ export function BranchDetailScreen({ navigation, route }: Props) {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: theme.screenBg },
+
+  // Header
   header: {
     backgroundColor: theme.headerNavy,
     paddingHorizontal: 18,
-    paddingBottom: 22,
+    paddingBottom: 24,
+    alignItems: "center",
   },
   headerTop: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
+    width: "100%",
+    marginBottom: 16,
+  },
+  headerBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "rgba(255,255,255,0.15)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  buildingIconWrap: {
     marginBottom: 14,
   },
-  headerTitle: { fontSize: 24, fontWeight: "800", color: "#fff" },
-  headerState: { fontSize: 13, color: "rgba(255,255,255,0.6)", marginTop: 3 },
+  headerTitle: { fontSize: 24, fontWeight: "800", color: "#fff", alignSelf: "flex-start" },
 
   // Info card
   infoCard: {
     backgroundColor: "#fff",
     marginHorizontal: 18,
     marginTop: 14,
+    borderRadius: 18,
+    padding: 18,
+    paddingTop: 20,
+    shadowColor: "#000",
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
+  },
+  chipsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 14,
+  },
+  stateBadge: {
+    backgroundColor: "#f1f5f9",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+  },
+  stateBadgeText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: theme.headerNavy,
+  },
+  openBadge: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+  },
+  openBadgeText: {
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  infoRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+    marginBottom: 8,
+  },
+  infoText: { flex: 1, fontSize: 13, color: theme.textMutedOnLight, lineHeight: 18 },
+  infoStrong: { fontWeight: "700", color: theme.textOnLight },
+
+  // Services
+  servicesSection: {
+    marginHorizontal: 18,
+    marginTop: 12,
+    backgroundColor: "#fff",
     borderRadius: 14,
     padding: 16,
     shadowColor: "#000",
@@ -180,74 +247,59 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 1 },
     elevation: 1,
   },
-  statusRow: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 12 },
-  statusDot: { width: 8, height: 8, borderRadius: 4 },
-  statusLabel: { fontSize: 13, fontWeight: "700" },
-  statusDivider: { color: "#cbd5e1", fontSize: 13 },
-  hoursText: { fontSize: 13, color: theme.textMutedOnLight, fontWeight: "600" },
-  infoRow: { flexDirection: "row", alignItems: "flex-start", gap: 8, marginTop: 8 },
-  infoText: { flex: 1, fontSize: 13, color: theme.textMutedOnLight, lineHeight: 18 },
-  infoStrong: { fontWeight: "700", color: theme.primaryDark },
-
-  // Quick actions
-  actionsRow: {
+  servicesTitleRow: {
     flexDirection: "row",
-    justifyContent: "space-around",
-    marginHorizontal: 18,
-    marginTop: 16,
-    marginBottom: 8,
-  },
-  actionBtn: { alignItems: "center", gap: 6 },
-  actionIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 14,
+    justifyContent: "space-between",
     alignItems: "center",
-    justifyContent: "center",
   },
-  actionLabel: { fontSize: 12, fontWeight: "600", color: theme.textMutedOnLight },
+  servicesTitle: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: theme.textOnLight,
+  },
+  chipsWrap: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginTop: 14,
+  },
+  chip: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    backgroundColor: "#f8fafc",
+  },
+  chipText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: theme.textOnLight,
+  },
 
-  // Services section
-  section: {
+  // Buttons
+  buttonsWrap: {
     marginHorizontal: 18,
-    marginTop: 16,
-    backgroundColor: "#fff",
-    borderRadius: 14,
-    padding: 14,
-    shadowColor: "#000",
-    shadowOpacity: 0.04,
-    shadowRadius: 4,
-    shadowOffset: { width: 0, height: 1 },
-    elevation: 1,
+    marginTop: 20,
+    gap: 12,
   },
-  sectionTitle: { fontSize: 15, fontWeight: "700", color: theme.textOnLight, marginBottom: 10 },
-  serviceRow: {
+  favBtn: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
-    paddingVertical: 11,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: "#f1f5f9",
-  },
-  serviceIcon: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    backgroundColor: "#edf2f7",
-    alignItems: "center",
     justifyContent: "center",
+    gap: 8,
+    backgroundColor: theme.headerNavy,
+    paddingVertical: 15,
+    borderRadius: 14,
   },
-  serviceText: { flex: 1, fontSize: 14, fontWeight: "600", color: theme.textOnLight },
-
-  // Book button
-  bookBtnWrap: { marginHorizontal: 18, marginTop: 20 },
+  favBtnText: { fontSize: 15, fontWeight: "700", color: "#fff" },
   bookBtn: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: 8,
-    backgroundColor: theme.primaryDark,
-    paddingVertical: 14,
+    backgroundColor: "#22c55e",
+    paddingVertical: 15,
     borderRadius: 14,
   },
   bookBtnText: { fontSize: 15, fontWeight: "700", color: "#fff" },
