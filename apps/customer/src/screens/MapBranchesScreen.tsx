@@ -8,6 +8,7 @@ import {
   Platform,
   Pressable,
   ScrollView,
+  StatusBar as RNStatusBar,
   StyleSheet,
   Text,
   TextInput,
@@ -38,7 +39,7 @@ export function MapBranchesScreen({ navigation }: Props) {
   const Marker = NativeMaps?.Marker;
   const mapRef = useRef<{ animateToRegion: (r: object) => void } | null>(null);
   const insets = useSafeAreaInsets();
-  const topPad = Platform.OS === "android" ? 8 : Math.max(insets.top, 12);
+  const topPad = Platform.OS === "android" ? (RNStatusBar.currentHeight ?? 0) + 8 : Math.max(insets.top, 12);
   const { branches, userCoords, requestLocation, loadBranches } = useCustomer();
   const [search, setSearch] = useState("");
   const [stateFilter, setStateFilter] = useState<string>("All");

@@ -316,7 +316,7 @@ SELECT
     b.[Latitude],
     b.[Longitude],
     70 AS [OnlineQuotaPercent],
-    30 AS [SlotDurationMinutes],
+    60 AS [SlotDurationMinutes],
     80 AS [GeofenceMeters],
     480 AS [ServiceZoneOffsetMinutes],
     0 AS [OpeningStatus],
