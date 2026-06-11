@@ -1,7 +1,17 @@
 import { API_BASE } from "./config";
+import type { LoginResponse, RegisterPendingResponse } from "./authTypes";
+import { getValidCustomerAccessToken } from "./customerSession";
+
+export type { LoginResponse, RegisterPendingResponse };
 
 function bearerHeaders(token: string): { Authorization: string } {
   return { Authorization: `Bearer ${token.trim()}` };
+}
+
+async function customerAuthHeaders(): Promise<{ Authorization: string }> {
+  const t = await getValidCustomerAccessToken();
+  if (!t) throw new Error("Not signed in. Open Profile to log in.");
+  return bearerHeaders(t);
 }
 
 /** Cold start: check whether a stored JWT is still accepted. Do not treat network/5xx as logout. */
@@ -17,13 +27,6 @@ export async function probeCustomerSession(token: string): Promise<"ok" | "unaut
     return "unavailable";
   }
 }
-
-export type LoginResponse = {
-  token: string;
-  userId: string;
-  email: string;
-  role: string;
-};
 
 export type ServiceDto = {
   id: string;
@@ -149,14 +152,36 @@ export function userFacingApiError(e: unknown): string {
   return "Unknown error. Confirm the QMS API is running and EXPO_PUBLIC_API_URL matches it.";
 }
 
-export async function apiRegister(email: string, password: string, name?: string): Promise<LoginResponse> {
+export async function apiRegister(
+  email: string,
+  password: string,
+  name?: string,
+): Promise<LoginResponse | RegisterPendingResponse> {
   const res = await fetch(`${API_BASE}/api/auth/register`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, password, name }),
   });
   if (!res.ok) throw new Error(await parseError(res));
-  return res.json() as Promise<LoginResponse>;
+  const json = (await res.json()) as Record<string, unknown>;
+  if (json.requiresEmailVerification === true) {
+    return {
+      requiresEmailVerification: true,
+      message: String(json.message ?? "Check your email."),
+      emailSent: Boolean(json.emailSent),
+    };
+  }
+  return json as unknown as LoginResponse;
+}
+
+export async function apiResendVerificationEmail(email: string): Promise<{ message: string }> {
+  const res = await fetch(`${API_BASE}/api/auth/resend-verification`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email }),
+  });
+  if (!res.ok) throw new Error(await parseError(res));
+  return (await res.json()) as { message: string };
 }
 
 export async function apiLogin(email: string, password: string): Promise<LoginResponse> {
@@ -243,17 +268,17 @@ function parseCustomerProfile(o: Record<string, unknown>): CustomerProfile {
   };
 }
 
-export async function apiCustomerMe(token: string): Promise<CustomerProfile> {
-  const res = await fetch(`${API_BASE}/api/customers/me`, { headers: bearerHeaders(token) });
+export async function apiCustomerMe(): Promise<CustomerProfile> {
+  const res = await fetch(`${API_BASE}/api/customers/me`, { headers: await customerAuthHeaders() });
   if (!res.ok) throw new Error(await parseError(res));
   const o = (await res.json()) as Record<string, unknown>;
   return parseCustomerProfile(o);
 }
 
-export async function apiUpdateProfile(token: string, data: { name?: string; phone?: string }): Promise<CustomerProfile> {
+export async function apiUpdateProfile(data: { name?: string; phone?: string }): Promise<CustomerProfile> {
   const res = await fetch(`${API_BASE}/api/customers/me`, {
     method: "PUT",
-    headers: { "Content-Type": "application/json", ...bearerHeaders(token) },
+    headers: { "Content-Type": "application/json", ...(await customerAuthHeaders()) },
     body: JSON.stringify(data),
   });
   if (!res.ok) throw new Error(await parseError(res));
@@ -261,10 +286,10 @@ export async function apiUpdateProfile(token: string, data: { name?: string; pho
   return parseCustomerProfile(o);
 }
 
-export async function apiToggleFavoriteBranch(token: string, branchId: string): Promise<CustomerProfile> {
+export async function apiToggleFavoriteBranch(branchId: string): Promise<CustomerProfile> {
   const res = await fetch(`${API_BASE}/api/customers/me/favorite-branches/toggle`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...bearerHeaders(token) },
+    headers: { "Content-Type": "application/json", ...(await customerAuthHeaders()) },
     body: JSON.stringify({ branchId }),
   });
   if (!res.ok) throw new Error(await parseError(res));
@@ -273,11 +298,11 @@ export async function apiToggleFavoriteBranch(token: string, branchId: string): 
 }
 
 /** `dayYmd` = branch-local calendar date, e.g. 2026-05-05 (not UTC midnight ISO). */
-export async function apiSlots(branchId: string, serviceId: string, dayYmd: string, token: string): Promise<SlotDto[]> {
+export async function apiSlots(branchId: string, serviceId: string, dayYmd: string): Promise<SlotDto[]> {
   const q = encodeURIComponent(dayYmd);
   const res = await fetch(
     `${API_BASE}/api/branches/${branchId}/services/${serviceId}/slots?day=${q}`,
-    { headers: bearerHeaders(token) },
+    { headers: await customerAuthHeaders() },
   );
   if (!res.ok) throw new Error(await parseError(res));
   const text = await res.text();
@@ -304,13 +329,15 @@ export async function apiSlots(branchId: string, serviceId: string, dayYmd: stri
   });
 }
 
-export async function apiCreateBooking(
-  token: string,
-  body: { branchId: string; serviceTypeId: string; slotStart: string; slotEnd: string },
-): Promise<BookingCreated> {
+export async function apiCreateBooking(body: {
+  branchId: string;
+  serviceTypeId: string;
+  slotStart: string;
+  slotEnd: string;
+}): Promise<BookingCreated> {
   const res = await fetch(`${API_BASE}/api/bookings`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...bearerHeaders(token) },
+    headers: { "Content-Type": "application/json", ...(await customerAuthHeaders()) },
     body: JSON.stringify({
       branchId: body.branchId,
       serviceTypeId: body.serviceTypeId,
@@ -326,14 +353,13 @@ export async function apiCreateBooking(
 }
 
 export async function apiCheckIn(
-  token: string,
   bookingId: string,
   coords?: { latitude: number; longitude: number },
 ): Promise<void> {
   const res = await fetch(`${API_BASE}/api/bookings/${bookingId}/check-in`, {
     method: "POST",
     headers: {
-      ...bearerHeaders(token),
+      ...(await customerAuthHeaders()),
       "Content-Type": "application/json",
     },
     body: JSON.stringify(coords ? { latitude: coords.latitude, longitude: coords.longitude } : {}),
@@ -341,31 +367,26 @@ export async function apiCheckIn(
   if (!res.ok) throw new Error(await parseError(res));
 }
 
-export async function apiRescheduleBooking(
-  token: string,
-  bookingId: string,
-  slotStart: string,
-  slotEnd: string,
-): Promise<void> {
+export async function apiRescheduleBooking(bookingId: string, slotStart: string, slotEnd: string): Promise<void> {
   const res = await fetch(`${API_BASE}/api/bookings/${bookingId}/reschedule`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json", ...bearerHeaders(token) },
+    headers: { "Content-Type": "application/json", ...(await customerAuthHeaders()) },
     body: JSON.stringify({ slotStart, slotEnd }),
   });
   if (!res.ok) throw new Error(await parseError(res));
 }
 
-export async function apiCancelBooking(token: string, bookingId: string): Promise<void> {
+export async function apiCancelBooking(bookingId: string): Promise<void> {
   const res = await fetch(`${API_BASE}/api/bookings/${bookingId}/cancel`, {
     method: "POST",
-    headers: bearerHeaders(token),
+    headers: await customerAuthHeaders(),
   });
   if (!res.ok) throw new Error(await parseError(res));
 }
 
-export async function apiMyBookings(token: string): Promise<BookingSummary[]> {
+export async function apiMyBookings(): Promise<BookingSummary[]> {
   const res = await fetch(`${API_BASE}/api/bookings/mine`, {
-    headers: bearerHeaders(token),
+    headers: await customerAuthHeaders(),
   });
   if (!res.ok) throw new Error(await parseError(res));
   return res.json() as Promise<BookingSummary[]>;

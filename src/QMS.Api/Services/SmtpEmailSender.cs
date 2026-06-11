@@ -1,0 +1,53 @@
+using MailKit.Net.Smtp;
+using MailKit.Security;
+using Microsoft.Extensions.Options;
+using MimeKit;
+
+namespace QMS.Api.Services;
+
+public sealed class SmtpEmailSender(IOptions<SmtpOptions> smtpOptions, ILogger<SmtpEmailSender> log) : IEmailSender
+{
+    private readonly SmtpOptions _smtp = smtpOptions.Value;
+
+    public async Task SendCustomerVerificationEmailAsync(
+        string toEmail,
+        string recipientDisplayName,
+        string verifyUrl,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(_smtp.Host))
+            throw new InvalidOperationException("Smtp:Host is not configured.");
+        if (string.IsNullOrWhiteSpace(_smtp.FromEmail))
+            throw new InvalidOperationException("Smtp:FromEmail is not configured.");
+
+        var message = new MimeMessage();
+        message.From.Add(new MailboxAddress(_smtp.FromName, _smtp.FromEmail));
+        message.To.Add(new MailboxAddress(string.IsNullOrWhiteSpace(recipientDisplayName) ? toEmail : recipientDisplayName, toEmail));
+        message.Subject = "Verify your QGo account";
+
+        var body =
+            $"Welcome to QGo (Smart Queue).\r\n\r\n"
+            + $"Please verify your email by opening this link in your browser:\r\n{verifyUrl}\r\n\r\n"
+            + "This link expires in 24 hours.\r\n\r\n"
+            + "If you did not create an account, you can ignore this message.\r\n";
+
+        message.Body = new TextPart("plain") { Text = body };
+
+        using var client = new SmtpClient();
+        var secure =
+            _smtp.Port == 465 && !_smtp.UseStartTls
+                ? SecureSocketOptions.SslOnConnect
+                : _smtp.UseStartTls
+                    ? SecureSocketOptions.StartTls
+                    : SecureSocketOptions.Auto;
+
+        log.LogInformation("SMTP connect {Host}:{Port} ({Secure})", _smtp.Host, _smtp.Port, secure);
+        await client.ConnectAsync(_smtp.Host, _smtp.Port, secure, cancellationToken).ConfigureAwait(false);
+
+        if (!string.IsNullOrWhiteSpace(_smtp.User))
+            await client.AuthenticateAsync(_smtp.User, _smtp.Password ?? "", cancellationToken).ConfigureAwait(false);
+
+        await client.SendAsync(message, cancellationToken).ConfigureAwait(false);
+        await client.DisconnectAsync(true, cancellationToken).ConfigureAwait(false);
+    }
+}

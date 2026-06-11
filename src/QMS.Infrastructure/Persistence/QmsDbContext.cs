@@ -22,6 +22,7 @@ public sealed class QmsDbContext : DbContext
     public DbSet<Notification> Notifications => Set<Notification>();
     public DbSet<AnalyticsSummary> AnalyticsSummaries => Set<AnalyticsSummary>();
     public DbSet<MlTrainingObservation> MlTrainingObservations => Set<MlTrainingObservation>();
+    public DbSet<RefreshSession> RefreshSessions => Set<RefreshSession>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -29,8 +30,10 @@ public sealed class QmsDbContext : DbContext
         {
             e.ToTable("CUSTOMERS");
             e.HasIndex(x => x.Email).IsUnique();
+            e.HasIndex(x => x.EmailVerificationToken).IsUnique().HasFilter("[EmailVerificationToken] IS NOT NULL");
             e.Property(x => x.Email).HasMaxLength(256);
             e.Property(x => x.Name).HasMaxLength(200);
+            e.Property(x => x.EmailVerificationToken).HasMaxLength(128);
             e.Property(x => x.CreatedAt).HasDefaultValueSql("TODATETIMEOFFSET(SYSUTCDATETIME(), '+00:00')");
         });
 
@@ -158,6 +161,13 @@ public sealed class QmsDbContext : DbContext
             e.ToTable("ML_TRAINING_DATA");
             e.HasOne(x => x.Branch).WithMany(b => b.MlTrainingObservations).HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.Cascade);
             e.HasOne(x => x.ServiceType).WithMany(s => s.MlTrainingObservations).HasForeignKey(x => x.ServiceTypeId).OnDelete(DeleteBehavior.NoAction);
+        });
+
+        modelBuilder.Entity<RefreshSession>(e =>
+        {
+            e.ToTable("REFRESH_SESSIONS");
+            e.HasIndex(x => x.TokenHash).IsUnique();
+            e.Property(x => x.TokenHash).HasMaxLength(64);
         });
     }
 }

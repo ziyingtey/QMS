@@ -15,7 +15,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { apiCreateBooking, apiRescheduleBooking, apiSlots, userFacingApiError, type SlotDto } from "../api";
-import { readToken } from "../authStorage";
+import { getValidCustomerAccessToken } from "../customerSession";
 import { useCustomer } from "../context/CustomerContext";
 import { useBranchRealtime } from "../useBranchRealtime";
 import type { BookingStackParamList } from "../navigation/navigationRef";
@@ -84,19 +84,19 @@ export function BookingSlotsScreen({ navigation, route }: Props) {
   }, [slots]);
 
   const reload = useCallback(async () => {
-    const tok = (sessionToken ?? (await readToken()))?.trim() || null;
+    const tok = await getValidCustomerAccessToken();
     if (!tok) {
       Alert.alert("Sign in required", "Log in from the Profile tab to load booking slots.");
       return;
     }
     setBusy(true);
     try {
-      let list = await apiSlots(branch.id, service.id, selectedYmd, tok);
+      let list = await apiSlots(branch.id, service.id, selectedYmd);
       let usedDay = selectedYmd;
       if (list.length === 0 && selectedYmd === minYmd) {
         const fallback = deviceLocalCalendarYmd();
         if (fallback !== minYmd) {
-          list = await apiSlots(branch.id, service.id, fallback, tok);
+          list = await apiSlots(branch.id, service.id, fallback);
           if (list.length > 0) usedDay = fallback;
         }
       }
@@ -172,7 +172,7 @@ export function BookingSlotsScreen({ navigation, route }: Props) {
 
   const bookSlot = async (slot: SlotDto) => {
     if (slot.status === "Full" || slot.status === "Past") return;
-    const tok = (sessionToken ?? (await readToken()))?.trim() || null;
+    const tok = await getValidCustomerAccessToken();
     if (!tok) {
       Alert.alert("Sign in", "Use Profile tab — you must be logged in to book.");
       return;
@@ -180,7 +180,7 @@ export function BookingSlotsScreen({ navigation, route }: Props) {
     setBusy(true);
     try {
       if (rescheduleId) {
-        await apiRescheduleBooking(tok, rescheduleId, slot.slotStart, slot.slotEnd);
+        await apiRescheduleBooking(rescheduleId, slot.slotStart, slot.slotEnd);
         if (rescheduleExitToQueue) {
           Alert.alert("Rescheduled", "Your appointment time was updated.", [
             { text: "OK", onPress: () => exitRescheduleToQueue() },
@@ -191,7 +191,7 @@ export function BookingSlotsScreen({ navigation, route }: Props) {
         }
         return;
       }
-      const created = await apiCreateBooking(tok, {
+      const created = await apiCreateBooking({
         branchId: branch.id,
         serviceTypeId: service.id,
         slotStart: slot.slotStart,

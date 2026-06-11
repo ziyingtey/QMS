@@ -9,6 +9,7 @@ import {
   apiLogin,
   apiMyBookings,
   apiRegister,
+  apiResendVerificationEmail,
   apiToggleFavoriteBranch,
   probeCustomerSession,
   userFacingApiError,
@@ -16,7 +17,16 @@ import {
   type BranchDto,
   type CustomerProfile,
 } from "../api";
-import { clearToken, clearUserEmail, readToken, readUserEmail, saveToken, saveUserEmail } from "../authStorage";
+import {
+  clearAuthStores,
+  readUserEmail,
+  saveRefreshToken,
+  saveToken,
+  saveUserEmail,
+  readRefreshToken,
+} from "../authStorage";
+import { isRegisterPending } from "../authTypes";
+import { getValidCustomerAccessToken, revokeCustomerRefreshRemote, subscribeCustomerAccessToken } from "../customerSession";
 import { navigationRef } from "../navigation/navigationRef";
 import { useBranchRealtime } from "../useBranchRealtime";
 
@@ -54,6 +64,7 @@ type CustomerContextValue = {
   locationBusy: boolean;
   onLogin: () => Promise<void>;
   onLogout: () => Promise<void>;
+  resendVerificationEmail: () => Promise<void>;
   checkIn: (bookingId: string) => Promise<void>;
   cancelBooking: (id: string) => Promise<boolean>;
   navigateToQueueTrack: (branchId: string, ticket: string, bookingId?: string) => void;
@@ -99,24 +110,29 @@ export function CustomerProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     void (async () => {
       try {
-        const [tRaw, em] = await Promise.all([readToken(), readUserEmail()]);
-        const trimmed = tRaw?.trim() ?? "";
-        if (!trimmed) {
+        const em = await readUserEmail();
+        const access = await getValidCustomerAccessToken();
+        if (!access) {
           setToken(null);
-          setUserEmail(null);
+          setUserEmail(em?.trim() || null);
           return;
         }
 
-        const probe = await probeCustomerSession(trimmed);
+        const probe = await probeCustomerSession(access);
         if (probe === "unauthorized") {
-          await clearToken();
-          await clearUserEmail();
+          await clearAuthStores();
           setToken(null);
           setUserEmail(null);
           return;
         }
 
-        setToken(trimmed);
+        if (probe === "unavailable") {
+          setToken(access);
+          setUserEmail(em?.trim() || null);
+          return;
+        }
+
+        setToken(access);
         setUserEmail(em?.trim() || null);
       } catch {
         setToken(null);
@@ -125,6 +141,19 @@ export function CustomerProvider({ children }: { children: React.ReactNode }) {
         setAuthReady(true);
       }
     })();
+  }, []);
+
+  useEffect(() => {
+    return subscribeCustomerAccessToken((next) => {
+      if (!next) {
+        setToken(null);
+        setUserEmail(null);
+        setBookings([]);
+        setProfile(null);
+        return;
+      }
+      setToken(next);
+    });
   }, []);
 
   const loadBranches = useCallback(async () => {
@@ -140,41 +169,41 @@ export function CustomerProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const refreshBookings = useCallback(async () => {
-    const t = await readToken();
+    const t = await getValidCustomerAccessToken();
     if (!t) return;
     try {
-      setBookings(await apiMyBookings(t));
+      setBookings(await apiMyBookings());
     } catch {
       /* ignore */
     }
   }, []);
 
   const refreshProfile = useCallback(async () => {
-    const t = await readToken();
+    const t = await getValidCustomerAccessToken();
     if (!t) {
       setProfile(null);
       return;
     }
     try {
-      setProfile(await apiCustomerMe(t));
+      setProfile(await apiCustomerMe());
     } catch {
       setProfile(null);
     }
   }, []);
 
   const updateProfile = useCallback(async (data: { name?: string; phone?: string }) => {
-    const t = await readToken();
+    const t = await getValidCustomerAccessToken();
     if (!t) return;
     const { apiUpdateProfile } = await import("../api");
-    setProfile(await apiUpdateProfile(t, data));
+    setProfile(await apiUpdateProfile(data));
   }, []);
 
   const toggleFavoriteBranch = useCallback(async (branchId: string) => {
-    const t = await readToken();
+    const t = await getValidCustomerAccessToken();
     if (!t) return;
     setTogglingFavoriteBranchId(branchId);
     try {
-      setProfile(await apiToggleFavoriteBranch(t, branchId));
+      setProfile(await apiToggleFavoriteBranch(branchId));
     } catch (e) {
       Alert.alert("Favorite branches", e instanceof Error ? e.message : String(e));
     } finally {
@@ -256,11 +285,28 @@ export function CustomerProvider({ children }: { children: React.ReactNode }) {
   const onLogin = useCallback(async () => {
     setBusy(true);
     try {
-      const res =
-        authMode === "register"
-          ? await apiRegister(email.trim(), password, registerName.trim() || undefined)
-          : await apiLogin(email.trim(), password);
+      if (authMode === "register") {
+        const res = await apiRegister(email.trim(), password, registerName.trim() || undefined);
+        if (isRegisterPending(res)) {
+          Alert.alert(
+            "Check your email",
+            res.message + (res.emailSent ? "" : "\n\n(If you did not receive it, try Resend verification after switching to Sign in.)"),
+          );
+          setAuthMode("login");
+          setPassword("");
+          return;
+        }
+        await saveToken(res.token);
+        if (res.refreshToken) await saveRefreshToken(res.refreshToken);
+        await saveUserEmail(email.trim());
+        setToken(res.token);
+        setUserEmail(email.trim());
+        return;
+      }
+
+      const res = await apiLogin(email.trim(), password);
       await saveToken(res.token);
+      if (res.refreshToken) await saveRefreshToken(res.refreshToken);
       await saveUserEmail(email.trim());
       setToken(res.token);
       setUserEmail(email.trim());
@@ -271,9 +317,27 @@ export function CustomerProvider({ children }: { children: React.ReactNode }) {
     }
   }, [authMode, email, password, registerName]);
 
+  const resendVerificationEmail = useCallback(async () => {
+    const em = email.trim();
+    if (!em) {
+      Alert.alert("Email required", "Enter your email above, then tap Resend verification.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const { message } = await apiResendVerificationEmail(em);
+      Alert.alert("Verification email", message);
+    } catch (e) {
+      Alert.alert("Could not resend", userFacingApiError(e));
+    } finally {
+      setBusy(false);
+    }
+  }, [email]);
+
   const onLogout = useCallback(async () => {
-    await clearToken();
-    await clearUserEmail();
+    const r = await readRefreshToken();
+    if (r) await revokeCustomerRefreshRemote(r);
+    await clearAuthStores();
     setToken(null);
     setUserEmail(null);
     setBookings([]);
@@ -284,11 +348,11 @@ export function CustomerProvider({ children }: { children: React.ReactNode }) {
 
   const checkIn = useCallback(
     async (bookingId: string) => {
-      const t = await readToken();
+      const t = await getValidCustomerAccessToken();
       if (!t) return;
       setBusy(true);
       try {
-        await apiCheckIn(t, bookingId);
+        await apiCheckIn(bookingId);
         Alert.alert("Marked as arrived", "You can join the call queue for your slot. Pull down on Queue to refresh.");
         await refreshBookings();
       } catch (e) {
@@ -302,14 +366,14 @@ export function CustomerProvider({ children }: { children: React.ReactNode }) {
 
   const cancelBooking = useCallback(
     async (id: string): Promise<boolean> => {
-      const t = await readToken();
+      const t = await getValidCustomerAccessToken();
       if (!t) {
         Alert.alert("Sign in required", "Log in from the Profile tab to manage bookings.");
         return false;
       }
       setBusy(true);
       try {
-        await apiCancelBooking(t, id);
+        await apiCancelBooking(id);
         await refreshBookings();
         return true;
       } catch (e) {
@@ -352,6 +416,7 @@ export function CustomerProvider({ children }: { children: React.ReactNode }) {
         locationBusy,
         onLogin,
         onLogout,
+        resendVerificationEmail,
         checkIn,
         cancelBooking,
         navigateToQueueTrack,
@@ -380,6 +445,7 @@ export function CustomerProvider({ children }: { children: React.ReactNode }) {
       locationBusy,
       onLogin,
       onLogout,
+      resendVerificationEmail,
       checkIn,
       cancelBooking,
     ],

@@ -15,6 +15,8 @@ import {
   getStoredEmail,
   getStoredRole,
   getStoredToken,
+  getValidStaffAccessToken,
+  subscribeStaffSession,
   type BranchDto,
   type LiveDashboard,
   type MyCounterDto,
@@ -24,9 +26,15 @@ import { API_BASE } from "../config";
 
 export function StaffDeckPage() {
   const navigate = useNavigate();
-  const token = useMemo(() => getStoredToken(), []);
+  const [hubToken, setHubToken] = useState<string | null>(() => getStoredToken());
   const role = useMemo(() => getStoredRole(), []);
   const email = useMemo(() => getStoredEmail(), []);
+
+  useEffect(() => {
+    return subscribeStaffSession(() => {
+      setHubToken(getStoredToken());
+    });
+  }, []);
 
   const [branches, setBranches] = useState<BranchDto[]>([]);
   const [branchId, setBranchId] = useState("");
@@ -45,16 +53,18 @@ export function StaffDeckPage() {
   }, []);
 
   useEffect(() => {
-    if (!token) {
-      navigate("/login");
-      return;
-    }
     void (async () => {
+      const t = await getValidStaffAccessToken();
+      if (!t) {
+        navigate("/login");
+        return;
+      }
+      setHubToken(t);
       try {
         const b = await apiBranches();
         setBranches(b);
         try {
-          const mc = await apiMyCounter(token);
+          const mc = await apiMyCounter();
           setMyCounter(mc);
           setBranchId(mc.branchId);
           const br = b.find((x) => x.id === mc.branchId);
@@ -76,32 +86,32 @@ export function StaffDeckPage() {
         push(e instanceof Error ? e.message : String(e));
       }
     })();
-  }, [navigate, token, push]);
+  }, [navigate, push]);
 
   const refreshWaiting = useCallback(async () => {
-    if (!token || !branchId || !serviceId) return;
+    if (!branchId || !serviceId) return;
     try {
-      const w = await apiWaitingQueue(token, branchId, serviceId);
+      const w = await apiWaitingQueue(branchId, serviceId);
       setWaiting(w);
     } catch {
       setWaiting([]);
     }
-  }, [token, branchId, serviceId]);
+  }, [branchId, serviceId]);
 
   const refreshLive = useCallback(async () => {
-    if (!token || !branchId) return;
+    if (!branchId) return;
     try {
-      const d = await apiLiveDashboard(token, branchId);
+      const d = await apiLiveDashboard(branchId);
       setLive(d);
     } catch (e) {
       push(e instanceof Error ? e.message : String(e));
     }
-  }, [token, branchId, push]);
+  }, [branchId, push]);
 
   useEffect(() => {
-    if (!token || !branchId) return;
+    if (!hubToken || !branchId) return;
     const conn = new signalR.HubConnectionBuilder()
-      .withUrl(`${API_BASE}/hubs/queue?access_token=${encodeURIComponent(token)}`)
+      .withUrl(`${API_BASE}/hubs/queue?access_token=${encodeURIComponent(hubToken)}`)
       .withAutomaticReconnect()
       .configureLogging(signalR.LogLevel.None)
       .build();
@@ -121,7 +131,7 @@ export function StaffDeckPage() {
       void refreshLive();
       void (async () => {
         try {
-          const mc = await apiMyCounter(token);
+          const mc = await apiMyCounter();
           setMyCounter(mc);
         } catch {
           /* ignore */
@@ -148,7 +158,7 @@ export function StaffDeckPage() {
     return () => {
       void conn.stop();
     };
-  }, [token, branchId, push, refreshWaiting, refreshLive]);
+  }, [hubToken, branchId, push, refreshWaiting, refreshLive]);
 
   useEffect(() => {
     void refreshLive();
@@ -186,16 +196,16 @@ export function StaffDeckPage() {
 
   const onCallNext = async (e?: FormEvent) => {
     e?.preventDefault();
-    if (!token || !branchId || !serviceId) return;
+    if (!branchId || !serviceId) return;
     if (!myCounter?.allowedServiceTypeIds?.length) return;
     setBusy(true);
     try {
-      const r = await apiCallNext(token, branchId, serviceId);
+      const r = await apiCallNext(branchId, serviceId);
       if (r.ticketNumber) {
         setTicket(r.ticketNumber);
         setServingActive(false);
         try {
-          await apiStartService(token, r.ticketNumber);
+          await apiStartService(r.ticketNumber);
           setServingActive(true);
           push(`Next: ${r.ticketNumber} — service started`);
         } catch (startErr) {
@@ -215,10 +225,10 @@ export function StaffDeckPage() {
   };
 
   const onStart = async () => {
-    if (!token || !ticket) return;
+    if (!ticket) return;
     setBusy(true);
     try {
-      await apiStartService(token, ticket);
+      await apiStartService(ticket);
       setServingActive(true);
       push(`Start ${ticket}`);
     } catch (e) {
@@ -229,10 +239,10 @@ export function StaffDeckPage() {
   };
 
   const onNoShow = async () => {
-    if (!token || !ticket) return;
+    if (!ticket) return;
     setBusy(true);
     try {
-      await apiMarkMissed(token, ticket);
+      await apiMarkMissed(ticket);
       push(`No show: ${ticket}`);
       setTicket("");
       setServingActive(false);
@@ -246,10 +256,10 @@ export function StaffDeckPage() {
   };
 
   const onComplete = async () => {
-    if (!token || !ticket || !servingActive) return;
+    if (!ticket || !servingActive) return;
     setBusy(true);
     try {
-      await apiEndService(token, ticket);
+      await apiEndService(ticket);
       push(`Complete ${ticket}`);
       setTicket("");
       setServingActive(false);

@@ -2,7 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { StatusBar } from "expo-status-bar";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AppState, FlatList, Image, Linking, Platform, Pressable, RefreshControl, StatusBar as RNStatusBar, StyleSheet, Text, TextInput, View } from "react-native";
+import { AppState, FlatList, Image, Platform, Pressable, RefreshControl, StatusBar as RNStatusBar, StyleSheet, Text, TextInput, View } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { navigationRef, type BookingStackParamList } from "../navigation/navigationRef";
@@ -10,7 +10,8 @@ import { useCustomer } from "../context/CustomerContext";
 import { useMapsDistance } from "../hooks/useMapsDistance";
 import { theme } from "../theme";
 import { getBranchOpenStatus, getTodayHoursLabel } from "../utils/branchStatus";
-import { distanceMeters, formatDistance } from "../utils/geo";
+import { distanceMeters, effectiveDistanceSortMeters, formatBranchTravelLabel } from "../utils/geo";
+import { openBranchInMaps } from "../utils/openMaps";
 
 type Props = NativeStackScreenProps<BookingStackParamList, "BookingBranches">;
 
@@ -54,11 +55,17 @@ export function BookingBranchesScreen({ navigation }: Props) {
   });
 
   const sorted = [...filtered]
-    .map((b) => ({
-      b,
-      dist:
-        userCoords != null ? distanceMeters(userCoords.latitude, userCoords.longitude, b.latitude, b.longitude) : null,
-    }))
+    .map((b) => {
+      const haversine =
+        userCoords != null ? distanceMeters(userCoords.latitude, userCoords.longitude, b.latitude, b.longitude) : null;
+      const mapsInfo = mapsDistances.get(b.id);
+      return {
+        b,
+        dist: effectiveDistanceSortMeters(mapsInfo, haversine),
+        mapsInfo,
+        haversine,
+      };
+    })
     .sort((a, x) => {
       const pa = favIds.includes(a.b.id);
       const pb = favIds.includes(x.b.id);
@@ -109,8 +116,10 @@ export function BookingBranchesScreen({ navigation }: Props) {
             progressBackgroundColor="#ffffff"
           />
         }
-        renderItem={({ item: { b, dist } }) => {
-          const mapsInfo = mapsDistances.get(b.id);
+        renderItem={({ item: { b, mapsInfo, haversine } }) => {
+          const travelLine = formatBranchTravelLabel(mapsInfo, haversine, {
+            noCoordsLabel: userCoords ? "—" : "Enable location",
+          });
           return (
           <Pressable style={styles.card} onPress={() => { if (navigationRef.isReady()) navigationRef.navigate("BranchDetail", { branch: b }); }}>
             <View style={styles.cardTop}>
@@ -136,16 +145,10 @@ export function BookingBranchesScreen({ navigation }: Props) {
                   <Text style={styles.addr} numberOfLines={1}>{b.address}</Text>
                 ) : null}
                 <View style={styles.metaRow}>
-                  <Ionicons name="car-outline" size={13} color="#4a90d9" />
+                  <Ionicons name={mapsInfo ? "car-outline" : "navigate-circle-outline"} size={13} color="#4a90d9" />
                   <Text style={styles.metaText}>
-                    {mapsInfo ? mapsInfo.distanceText : dist != null ? formatDistance(dist) : "—"}
+                    {travelLine}
                   </Text>
-                  {mapsInfo ? (
-                    <>
-                      <Ionicons name="time-outline" size={13} color="#4a90d9" />
-                      <Text style={styles.metaText}>{mapsInfo.durationText}</Text>
-                    </>
-                  ) : null}
                   <Ionicons name="time-outline" size={13} color="#4a90d9" />
                   <Text style={styles.metaText}>{getTodayHoursLabel(b) ?? "—"}</Text>
                   <View style={[styles.openChip, getBranchOpenStatus(b) === "Closed" && styles.closedChip]}>
@@ -162,10 +165,7 @@ export function BookingBranchesScreen({ navigation }: Props) {
                 style={styles.detailsBtn}
                 onPress={(e) => {
                   e.stopPropagation?.();
-                  const url = Platform.OS === "ios"
-                    ? `maps://?q=${encodeURIComponent(b.name)}&ll=${b.latitude},${b.longitude}`
-                    : `geo:${b.latitude},${b.longitude}?q=${b.latitude},${b.longitude}(${encodeURIComponent(b.name)})`;
-                  void Linking.openURL(url);
+                  openBranchInMaps(b.latitude, b.longitude, b.name);
                 }}
               >
                 <Ionicons name="navigate-outline" size={16} color={theme.primaryDark} />

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { apiLogin, setStoredBranchId, setStoredEmail, setStoredRole, setStoredToken } from "../api";
+import { apiLogin, setStoredBranchId, setStoredEmail, setStoredRefreshToken, setStoredRole, setStoredToken } from "../api";
 
 export function LoginPage() {
   const navigate = useNavigate();
@@ -22,6 +22,7 @@ export function LoginPage() {
         return;
       }
       setStoredToken(res.token);
+      if (res.refreshToken) setStoredRefreshToken(res.refreshToken);
       setStoredRole(res.role);
       setStoredEmail(res.email);
       if (res.branchId) setStoredBranchId(res.branchId);

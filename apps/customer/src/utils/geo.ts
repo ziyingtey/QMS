@@ -30,6 +30,32 @@ export type MapsDistanceResult = {
   durationSeconds: number;
 };
 
+/** Prefer Google driving distance (meters) for sorting; fall back to Haversine straight-line. */
+export function effectiveDistanceSortMeters(
+  maps: MapsDistanceResult | undefined | null,
+  haversineMeters: number | null,
+): number | null {
+  if (maps != null && typeof maps.distanceMeters === "number") return maps.distanceMeters;
+  return haversineMeters;
+}
+
+/**
+ * List-card label: driving distance + duration when Maps returned a row;
+ * otherwise straight-line Haversine (same as before Maps loads or without API key).
+ */
+export function formatBranchTravelLabel(
+  maps: MapsDistanceResult | undefined | null,
+  haversineMeters: number | null,
+  opts?: { noCoordsLabel?: string },
+): string {
+  const noCoords = opts?.noCoordsLabel ?? "—";
+  if (maps != null && maps.distanceText?.length) {
+    return maps.durationText?.length ? `${maps.distanceText} · ${maps.durationText}` : maps.distanceText;
+  }
+  if (haversineMeters != null) return formatDistance(haversineMeters);
+  return noCoords;
+}
+
 /** In-memory cache to avoid repeated API calls for the same origin→destination. */
 const distanceCache = new Map<string, MapsDistanceResult>();
 

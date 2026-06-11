@@ -31,5 +31,10 @@ function rewriteLocalhostForAndroid(base: string): string {
 const resolved = normalizeApiBase(process.env.EXPO_PUBLIC_API_URL) ?? defaultApiBase;
 export const API_BASE = rewriteLocalhostForAndroid(resolved);
 
+if (__DEV__) {
+  // Metro / Xcode console — confirm login uses the URL you expect after changing .env (run: npx expo start -c).
+  console.log("[QMS] API_BASE =", API_BASE);
+}
+
 /** Google Maps Platform API key — set EXPO_PUBLIC_GOOGLE_MAPS_KEY in .env */
 export const GOOGLE_MAPS_API_KEY: string = process.env.EXPO_PUBLIC_GOOGLE_MAPS_KEY ?? "";

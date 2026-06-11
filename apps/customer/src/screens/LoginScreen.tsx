@@ -29,6 +29,7 @@ export function LoginScreen() {
     setRegisterName,
     onLogin,
     busy,
+    resendVerificationEmail,
   } = useCustomer();
   const [showPassword, setShowPassword] = useState(false);
 
@@ -138,6 +139,12 @@ export function LoginScreen() {
               {authMode === "login" ? "Register" : "Sign in"}
             </Text>
           </Text>
+
+          {authMode === "login" ? (
+            <Pressable onPress={() => void resendVerificationEmail()} disabled={busy} style={styles.resendWrap}>
+              <Text style={styles.resendText}>Resend verification email</Text>
+            </Pressable>
+          ) : null}
         </View>
       </ScrollView>
     </KeyboardAvoidingView>
@@ -260,5 +267,16 @@ const styles = StyleSheet.create({
   switchLink: {
     color: theme.headerNavy,
     fontWeight: "700",
+  },
+  resendWrap: {
+    marginTop: 16,
+    alignItems: "center",
+    paddingVertical: 8,
+  },
+  resendText: {
+    fontSize: 13,
+    color: theme.headerNavy,
+    fontWeight: "600",
+    textDecorationLine: "underline",
   },
 });

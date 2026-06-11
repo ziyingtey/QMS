@@ -1,0 +1,14 @@
+-- Run against existing QMS database if EnsureCreated already ran without this table.
+IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'REFRESH_SESSIONS')
+BEGIN
+    CREATE TABLE REFRESH_SESSIONS (
+        Id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY,
+        UserId UNIQUEIDENTIFIER NOT NULL,
+        TokenHash NVARCHAR(64) NOT NULL,
+        ExpiresAt DATETIMEOFFSET(7) NOT NULL,
+        CreatedAt DATETIMEOFFSET(7) NOT NULL,
+        RevokedAt DATETIMEOFFSET(7) NULL
+    );
+    CREATE UNIQUE INDEX IX_REFRESH_SESSIONS_TokenHash ON REFRESH_SESSIONS (TokenHash);
+END
+GO

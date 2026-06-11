@@ -64,14 +64,24 @@ Default dev server: `http://localhost:5173`.
 The API **does not** insert demo branches or demo users on startup. After `EnsureCreated`, tables are **empty** until you load data:
 
 - **Branches / services / counters / staff:** use SQL scripts under `database/` (e.g. `schema.sql`, `insert-branches-*.sql`, `insert-service-types-all-branches.sql`) in SSMS or your pipeline, or add your own **admin/import** flow later.
-- **Customers:** `POST /api/auth/register`, or insert into `CUSTOMERS` with a valid password hash if you script it.
+- **Customers:** `POST /api/auth/register` (then verify via email), or insert into `CUSTOMERS` with a valid password hash **and** `EmailVerified = 1` if you script test users (otherwise login is blocked until verified).
+
+### Customer email verification (SMTP)
+
+1. Run `database/add-customer-email-verification.sql` on your SQL Server if the database already existed before this feature (`EnsureCreated` only applies on empty databases).
+2. Set **`PublicUrls:ApiPublicBaseUrl`** to the **public HTTPS URL** of this API (same host the user’s mail client can open), e.g. `https://api.yourdomain.com` — **not** `http://127.0.0.1:5154` for real mail tests.
+3. Set **`Smtp`** (`Host`, `Port`, `UseStartTls`, `User`, `Password`, `FromEmail`, `FromName`) in `appsettings.Production.json`, environment variables, or user secrets. Port **587** + `UseStartTls: true` is typical; port **465** often uses `UseStartTls: false` (implicit SSL).
+
+Gmail / Outlook usually require an **app password** or SMTP relay, not your normal login password.
 
 There are **no** pre-seeded accounts like `customer@qms.demo` unless you insert them yourself.
 
 ## Key HTTP endpoints
 
 - `POST /api/auth/login` — JWT for SignalR (`?access_token=...`) and `[Authorize]` APIs.
-- `POST /api/auth/register` — Create customer account (email/password; OTP can be added later).
+- `POST /api/auth/register` — Create **customer** account; sends a **real verification email** (SMTP). No JWT until the user opens the link and then signs in. Staff accounts are unchanged.
+- `GET /api/auth/verify-email?token=` — Link from the email (browser); marks the customer verified.
+- `POST /api/auth/resend-verification` — JSON `{ "email" }` to send a new link (pending accounts only).
 - `GET /api/branches` — Branches + services (includes **geofence**, **service day window** for slot generation).
 - `GET /api/branches/{branchId}/services/{serviceId}/summary` — **Crowd** (Low/Medium/High), waiting count, ETA for that lane (anonymous).
 - `GET /api/branches/{branchId}/walk-in-link?serviceTypeId=` — **QR URL** (`…/qms-walk-in?branchId=&serviceTypeId=`) for the mobile app to parse and call walk-in.

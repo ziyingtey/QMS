@@ -4,7 +4,6 @@ import { StatusBar } from "expo-status-bar";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   FlatList,
-  Linking,
   Platform,
   Pressable,
   ScrollView,
@@ -21,8 +20,9 @@ import { useCustomer } from "../context/CustomerContext";
 import { useMapsDistance } from "../hooks/useMapsDistance";
 import type { RootStackParamList } from "../navigation/navigationRef";
 import { theme } from "../theme";
-import { distanceMeters, formatDistance } from "../utils/geo";
+import { distanceMeters, effectiveDistanceSortMeters, formatBranchTravelLabel } from "../utils/geo";
 import { getBranchOpenStatus } from "../utils/branchStatus";
+import { openBranchInMaps } from "../utils/openMaps";
 
 function matchesStateFilter(branch: BranchDto, selected: string): boolean {
   if (selected === "All") return true;
@@ -61,18 +61,24 @@ export function MapBranchesScreen({ navigation }: Props) {
 
   const sortedForList = useMemo(() => {
     return [...filtered]
-      .map((b) => ({
-        b,
-        dist:
-          userCoords != null ? distanceMeters(userCoords.latitude, userCoords.longitude, b.latitude, b.longitude) : null,
-      }))
+      .map((b) => {
+        const haversine =
+          userCoords != null ? distanceMeters(userCoords.latitude, userCoords.longitude, b.latitude, b.longitude) : null;
+        const mapsInfo = mapsDistances.get(b.id);
+        return {
+          b,
+          dist: effectiveDistanceSortMeters(mapsInfo, haversine),
+          mapsInfo,
+          haversine,
+        };
+      })
       .sort((a, x) => {
         if (a.dist == null && x.dist == null) return a.b.name.localeCompare(x.b.name);
         if (a.dist == null) return 1;
         if (x.dist == null) return -1;
         return a.dist - x.dist;
       });
-  }, [filtered, userCoords]);
+  }, [filtered, userCoords, mapsDistances]);
 
   const initialRegion = useMemo(() => {
     if (userCoords) {
@@ -100,19 +106,6 @@ export function MapBranchesScreen({ navigation }: Props) {
       longitudeDelta: 0.06,
     });
   }, [userCoords?.latitude, userCoords?.longitude, MapView]);
-
-  const openMapsApp = (lat: number, lng: number, label: string) => {
-    const q = encodeURIComponent(`${label}`);
-    if (Platform.OS === "web") {
-      void Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${lat},${lng}`);
-      return;
-    }
-    const url =
-      Platform.OS === "ios"
-        ? `maps://?q=${q}&ll=${lat},${lng}`
-        : `geo:${lat},${lng}?q=${lat},${lng}(${q})`;
-    void Linking.openURL(url);
-  };
 
   const goBookBranch = (branchId: string) => {
     const b = branches.find((x) => x.id === branchId);
@@ -231,9 +224,9 @@ export function MapBranchesScreen({ navigation }: Props) {
           keyExtractor={(x) => x.b.id}
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={{ gap: 12, paddingHorizontal: 4 }}
-          renderItem={({ item: { b, dist } }) => {
+          renderItem={({ item: { b, mapsInfo, haversine } }) => {
             const branchOpen = getBranchOpenStatus(b) === "Open";
-            const mapsInfo = mapsDistances.get(b.id);
+            const travelLine = formatBranchTravelLabel(mapsInfo, haversine, { noCoordsLabel: "—" });
             return (
               <Pressable style={styles.miniCard} onPress={() => goBranchDetail(b)}>
                 <Text style={styles.miniTitle} numberOfLines={1}>{b.name}</Text>
@@ -245,11 +238,7 @@ export function MapBranchesScreen({ navigation }: Props) {
                   <Text style={[styles.miniOpen, { color: branchOpen ? "#16a34a" : "#dc2626" }]}>
                     {branchOpen ? "Open" : "Closed"}
                   </Text>
-                  {mapsInfo ? (
-                    <Text style={styles.miniDist}>{mapsInfo.distanceText} · {mapsInfo.durationText}</Text>
-                  ) : dist != null ? (
-                    <Text style={styles.miniDist}>{formatDistance(dist)}</Text>
-                  ) : null}
+                  <Text style={styles.miniDist}>{travelLine}</Text>
                 </View>
                 <View style={styles.miniActions}>
                   <Pressable style={styles.miniActionBtn} onPress={() => goBookBranch(b.id)}>
@@ -257,7 +246,7 @@ export function MapBranchesScreen({ navigation }: Props) {
                   </Pressable>
                   <Pressable
                     style={[styles.miniActionBtn, styles.miniActionBtnOutline]}
-                    onPress={() => openMapsApp(b.latitude, b.longitude, b.name)}
+                    onPress={() => openBranchInMaps(b.latitude, b.longitude, b.name)}
                   >
                     <Text style={[styles.miniActionText, { color: theme.primaryDark }]}>Maps</Text>
                   </Pressable>

@@ -2,19 +2,28 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
+using QMS.Api;
 using QMS.Api.Services;
 using QMS.Domain.Entities;
 using QMS.Infrastructure.Persistence;
+using System.Net;
 
 namespace QMS.Api.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-public sealed class AuthController(QmsDbContext db, IPasswordHasher<string> passwordHasher, JwtTokenService jwt) : ControllerBase
+public sealed class AuthController(
+    QmsDbContext db,
+    IPasswordHasher<string> passwordHasher,
+    AuthSessionService sessions,
+    IEmailSender emailSender,
+    IOptions<PublicUrlOptions> publicUrls,
+    ILogger<AuthController> log) : ControllerBase
 {
     [AllowAnonymous]
     [HttpPost("register")]
-    public async Task<ActionResult<LoginResponse>> Register([FromBody] RegisterRequest request, CancellationToken cancellationToken)
+    public async Task<ActionResult<RegisterPendingResponse>> Register([FromBody] RegisterRequest request, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(request.Email) || string.IsNullOrWhiteSpace(request.Password))
             return BadRequest(new { message = "Email and password are required." });
@@ -26,19 +35,137 @@ public sealed class AuthController(QmsDbContext db, IPasswordHasher<string> pass
             || await db.StaffMembers.AnyAsync(s => s.Email == email, cancellationToken))
             return Conflict(new { message = "An account with this email already exists." });
 
+        var baseUrl = publicUrls.Value.ApiPublicBaseUrl.Trim().TrimEnd('/');
+        if (string.IsNullOrWhiteSpace(baseUrl))
+            return BadRequest(new
+            {
+                message =
+                    "Server is missing PublicUrls:ApiPublicBaseUrl (the public HTTPS base URL of this API). It is required so verification links in emails work.",
+            });
+
+        var token = EmailVerificationToken.Create();
         var customer = new Customer
         {
             Id = Guid.NewGuid(),
             Email = email,
             Name = string.IsNullOrWhiteSpace(request.Name) ? email.Split('@')[0] : request.Name.Trim(),
-            PasswordHash = passwordHasher.HashPassword(email, request.Password)
+            PasswordHash = passwordHasher.HashPassword(email, request.Password),
+            EmailVerified = false,
+            EmailVerificationToken = token,
+            EmailVerificationTokenExpiresAt = DateTimeOffset.UtcNow.AddHours(24),
         };
-        db.Customers.Add(customer);
+
+        var verifyUrl = $"{baseUrl}/api/auth/verify-email?token={Uri.EscapeDataString(token)}";
+
+        await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+        try
+        {
+            db.Customers.Add(customer);
+            await db.SaveChangesAsync(cancellationToken);
+            await emailSender.SendCustomerVerificationEmailAsync(customer.Email, customer.Name, verifyUrl, cancellationToken);
+            await tx.CommitAsync(cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            log.LogError(ex, "Registration failed for {Email} (email send or DB).", email);
+            return StatusCode(
+                StatusCodes.Status502BadGateway,
+                new
+                {
+                    message =
+                        "Could not send the verification email. Check Smtp settings (host, port, credentials) and that the mailbox allows SMTP. No account was created.",
+                });
+        }
+
+        return Ok(new RegisterPendingResponse(
+            RequiresEmailVerification: true,
+            Message: "We sent a verification link to your email. Open it to verify, then sign in here.",
+            EmailSent: true));
+    }
+
+    /// <summary>Link target from the verification email (opens in the browser).</summary>
+    [AllowAnonymous]
+    [HttpGet("verify-email")]
+    public async Task<IActionResult> VerifyEmail([FromQuery] string? token, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(token))
+            return Content(HtmlMessage("Invalid link", "Missing token. Use the link from your email."), "text/html; charset=utf-8");
+
+        var customer = await db.Customers.FirstOrDefaultAsync(
+            c => c.EmailVerificationToken == token,
+            cancellationToken);
+
+        if (customer is null)
+            return Content(
+                HtmlMessage("Link not valid", "This verification link is not valid or was already used."),
+                "text/html; charset=utf-8");
+
+        if (customer.EmailVerified)
+        {
+            return Content(
+                HtmlMessage("Already verified", "You can return to the app and sign in."),
+                "text/html; charset=utf-8");
+        }
+
+        if (customer.EmailVerificationTokenExpiresAt is null
+            || customer.EmailVerificationTokenExpiresAt < DateTimeOffset.UtcNow)
+        {
+            return Content(
+                HtmlMessage(
+                    "Link expired",
+                    "Request a new verification email from the app (Sign in screen → Resend verification)."),
+                "text/html; charset=utf-8");
+        }
+
+        customer.EmailVerified = true;
+        customer.EmailVerificationToken = null;
+        customer.EmailVerificationTokenExpiresAt = null;
         await db.SaveChangesAsync(cancellationToken);
 
-        const string role = "Customer";
-        var token = jwt.CreateToken(customer.Id, customer.Email, role);
-        return Ok(new LoginResponse(token, customer.Id, customer.Email, role));
+        return Content(
+            HtmlMessage("Email verified", "You can return to the QGo app and sign in."),
+            "text/html; charset=utf-8");
+    }
+
+    [AllowAnonymous]
+    [HttpPost("resend-verification")]
+    public async Task<ActionResult> ResendVerification([FromBody] ResendVerificationRequest request, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(request.Email))
+            return BadRequest(new { message = "Email is required." });
+
+        var email = request.Email.Trim();
+        var baseUrl = publicUrls.Value.ApiPublicBaseUrl.Trim().TrimEnd('/');
+        if (string.IsNullOrWhiteSpace(baseUrl))
+            return BadRequest(new { message = "Server is missing PublicUrls:ApiPublicBaseUrl." });
+
+        var customer = await db.Customers.FirstOrDefaultAsync(c => c.Email == email, cancellationToken);
+        if (customer is null || customer.EmailVerified)
+        {
+            // Do not reveal whether the email exists.
+            return Ok(new { message = "If that address has a pending account, we sent a new link." });
+        }
+
+        var newToken = EmailVerificationToken.Create();
+        customer.EmailVerificationToken = newToken;
+        customer.EmailVerificationTokenExpiresAt = DateTimeOffset.UtcNow.AddHours(24);
+        await db.SaveChangesAsync(cancellationToken);
+
+        var verifyUrl = $"{baseUrl}/api/auth/verify-email?token={Uri.EscapeDataString(newToken)}";
+        try
+        {
+            await emailSender.SendCustomerVerificationEmailAsync(customer.Email, customer.Name, verifyUrl, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            log.LogError(ex, "Resend verification failed for {Email}.", email);
+            return StatusCode(
+                StatusCodes.Status502BadGateway,
+                new { message = "Could not send email. Check SMTP configuration on the server." });
+        }
+
+        return Ok(new { message = "If that address has a pending account, we sent a new link." });
     }
 
     [AllowAnonymous]
@@ -51,9 +178,17 @@ public sealed class AuthController(QmsDbContext db, IPasswordHasher<string> pass
         {
             var ok = passwordHasher.VerifyHashedPassword(email, customer.PasswordHash, request.Password);
             if (ok == PasswordVerificationResult.Failed) return Unauthorized();
+
+            if (!customer.EmailVerified)
+            {
+                return BadRequest(new
+                {
+                    message = "Please verify your email first. Check your inbox for the link, or use Resend verification.",
+                });
+            }
+
             const string role = "Customer";
-            var token = jwt.CreateToken(customer.Id, customer.Email, role);
-            return Ok(new LoginResponse(token, customer.Id, customer.Email, role));
+            return Ok(await sessions.CreateSessionAsync(customer.Id, customer.Email, role, null, cancellationToken));
         }
 
         var staff = await db.StaffMembers.AsNoTracking().FirstOrDefaultAsync(s => s.Email == email, cancellationToken);
@@ -63,11 +198,44 @@ public sealed class AuthController(QmsDbContext db, IPasswordHasher<string> pass
         if (staffOk == PasswordVerificationResult.Failed) return Unauthorized();
 
         var staffRole = staff.Role.ToString();
-        var staffToken = jwt.CreateToken(staff.Id, staff.Email, staffRole);
-        return Ok(new LoginResponse(staffToken, staff.Id, staff.Email, staffRole, staff.BranchId));
+        return Ok(await sessions.CreateSessionAsync(staff.Id, staff.Email, staffRole, staff.BranchId, cancellationToken));
+    }
+
+    [AllowAnonymous]
+    [HttpPost("refresh")]
+    public async Task<ActionResult<LoginResponse>> Refresh([FromBody] RefreshRequest request, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(request.RefreshToken))
+            return BadRequest(new { message = "Refresh token is required." });
+
+        var result = await sessions.RotateRefreshAsync(request.RefreshToken.Trim(), cancellationToken);
+        if (result is null) return Unauthorized();
+        return Ok(result);
+    }
+
+    /// <summary>Invalidate the given refresh session (e.g. sign-out on one device).</summary>
+    [AllowAnonymous]
+    [HttpPost("revoke")]
+    public async Task<IActionResult> Revoke([FromBody] RefreshRequest request, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(request.RefreshToken))
+            return BadRequest(new { message = "Refresh token is required." });
+
+        await sessions.TryRevokeAsync(request.RefreshToken.Trim(), cancellationToken);
+        return NoContent();
+    }
+
+    private static string HtmlMessage(string title, string body)
+    {
+        var safeTitle = WebUtility.HtmlEncode(title);
+        var safeBody = WebUtility.HtmlEncode(body);
+        return string.Concat(
+            "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\"/><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"/><title>",
+            safeTitle,
+            "</title><style>body{font-family:system-ui,sans-serif;padding:24px;max-width:40rem;line-height:1.5;color:#0f172a}</style></head><body><h1>",
+            safeTitle,
+            "</h1><p>",
+            safeBody,
+            "</p></body></html>");
     }
 }
-
-public sealed record RegisterRequest(string Email, string Password, string? Name);
-public sealed record LoginRequest(string Email, string Password);
-public sealed record LoginResponse(string Token, Guid UserId, string Email, string Role, Guid? BranchId = null);

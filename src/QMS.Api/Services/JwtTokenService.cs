@@ -7,11 +7,14 @@ namespace QMS.Api.Services;
 
 public sealed class JwtTokenService(IConfiguration configuration)
 {
-    public string CreateToken(Guid userId, string email, string role)
+    /// <summary>Short-lived bearer JWT (use refresh token for long sessions).</summary>
+    public string CreateAccessToken(Guid userId, string email, string role)
     {
         var key = configuration["Jwt:Key"] ?? "CHANGE_ME_DEV_ONLY_32_CHARS_MIN!!";
         var issuer = configuration["Jwt:Issuer"] ?? "QMS";
         var audience = configuration["Jwt:Audience"] ?? "QMS";
+        var accessMinutes = configuration.GetValue("Jwt:AccessTokenMinutes", 15);
+        if (accessMinutes < 1) accessMinutes = 1;
         var claims = new[]
         {
             new Claim(JwtRegisteredClaimNames.Sub, userId.ToString()),
@@ -27,7 +30,7 @@ public sealed class JwtTokenService(IConfiguration configuration)
             issuer,
             audience,
             claims,
-            expires: DateTime.UtcNow.AddHours(8),
+            expires: DateTime.UtcNow.AddMinutes(accessMinutes),
             signingCredentials: creds);
 
         return new JwtSecurityTokenHandler().WriteToken(token);

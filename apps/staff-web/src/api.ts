@@ -1,6 +1,38 @@
 import { API_BASE } from "./config";
+import {
+  getValidStaffAccessToken,
+  revokeStaffRefreshRemote,
+  subscribeStaffSession,
+} from "./staffSession";
+export { getValidStaffAccessToken, revokeStaffRefreshRemote, subscribeStaffSession };
+export {
+  clearStoredSession,
+  getStoredBranchId,
+  getStoredEmail,
+  getStoredRefreshToken,
+  getStoredRole,
+  getStoredToken,
+  setStoredBranchId,
+  setStoredEmail,
+  setStoredRefreshToken,
+  setStoredRole,
+  setStoredToken,
+} from "./staffStorage";
 
-export type LoginResponse = { token: string; userId: string; email: string; role: string; branchId: string | null };
+export type LoginResponse = {
+  token: string;
+  refreshToken?: string;
+  userId: string;
+  email: string;
+  role: string;
+  branchId: string | null;
+};
+
+async function staffAuthHeaders(): Promise<{ Authorization: string }> {
+  const t = await getValidStaffAccessToken();
+  if (!t) throw new Error("Not signed in.");
+  return { Authorization: `Bearer ${t}` };
+}
 
 export type ServiceDto = { id: string; code: string; name: string; defaultAvgServiceMinutes: number };
 
@@ -108,50 +140,6 @@ export type ManagerInsights = {
   noShowsToday: number;
 };
 
-const TOKEN_KEY = "qms_staff_token";
-const ROLE_KEY = "qms_staff_role";
-const EMAIL_KEY = "qms_staff_email";
-const BRANCH_KEY = "qms_staff_branch";
-
-export function getStoredToken(): string | null {
-  return sessionStorage.getItem(TOKEN_KEY);
-}
-
-export function setStoredToken(token: string): void {
-  sessionStorage.setItem(TOKEN_KEY, token);
-}
-
-export function getStoredRole(): string | null {
-  return sessionStorage.getItem(ROLE_KEY);
-}
-
-export function setStoredRole(role: string): void {
-  sessionStorage.setItem(ROLE_KEY, role);
-}
-
-export function setStoredEmail(email: string): void {
-  sessionStorage.setItem(EMAIL_KEY, email);
-}
-
-export function getStoredEmail(): string | null {
-  return sessionStorage.getItem(EMAIL_KEY);
-}
-
-export function setStoredBranchId(id: string): void {
-  sessionStorage.setItem(BRANCH_KEY, id);
-}
-
-export function getStoredBranchId(): string | null {
-  return sessionStorage.getItem(BRANCH_KEY);
-}
-
-export function clearStoredSession(): void {
-  sessionStorage.removeItem(TOKEN_KEY);
-  sessionStorage.removeItem(ROLE_KEY);
-  sessionStorage.removeItem(EMAIL_KEY);
-  sessionStorage.removeItem(BRANCH_KEY);
-}
-
 async function parseError(res: Response): Promise<string> {
   try {
     const j = (await res.json()) as { message?: string };
@@ -177,145 +165,137 @@ export async function apiBranches(): Promise<BranchDto[]> {
   return res.json() as Promise<BranchDto[]>;
 }
 
-export async function apiMyCounter(token: string): Promise<MyCounterDto> {
+export async function apiMyCounter(): Promise<MyCounterDto> {
   const res = await fetch(`${API_BASE}/api/staff/my-counter`, {
-    headers: { Authorization: `Bearer ${token}` },
+    headers: await staffAuthHeaders(),
   });
   if (!res.ok) throw new Error(await parseError(res));
   return res.json() as Promise<MyCounterDto>;
 }
 
-export async function apiWaitingQueue(token: string, branchId: string, serviceTypeId: string): Promise<WaitingTicketDto[]> {
+export async function apiWaitingQueue(branchId: string, serviceTypeId: string): Promise<WaitingTicketDto[]> {
   const res = await fetch(
     `${API_BASE}/api/staff/branches/${branchId}/services/${serviceTypeId}/waiting`,
-    { headers: { Authorization: `Bearer ${token}` } },
+    { headers: await staffAuthHeaders() },
   );
   if (!res.ok) throw new Error(await parseError(res));
   return res.json() as Promise<WaitingTicketDto[]>;
 }
 
-export async function apiCallNext(token: string, branchId: string, serviceTypeId: string): Promise<CallNextResponse> {
+export async function apiCallNext(branchId: string, serviceTypeId: string): Promise<CallNextResponse> {
   const res = await fetch(`${API_BASE}/api/staff/call-next`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    headers: { "Content-Type": "application/json", ...(await staffAuthHeaders()) },
     body: JSON.stringify({ branchId, serviceTypeId }),
   });
   if (!res.ok) throw new Error(await parseError(res));
   return res.json() as Promise<CallNextResponse>;
 }
 
-export async function apiStartService(token: string, ticketNumber: string): Promise<void> {
+export async function apiStartService(ticketNumber: string): Promise<void> {
   const res = await fetch(`${API_BASE}/api/staff/start-service`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    headers: { "Content-Type": "application/json", ...(await staffAuthHeaders()) },
     body: JSON.stringify({ ticketNumber }),
   });
   if (!res.ok) throw new Error(await parseError(res));
 }
 
-export async function apiEndService(token: string, ticketNumber: string): Promise<void> {
+export async function apiEndService(ticketNumber: string): Promise<void> {
   const res = await fetch(`${API_BASE}/api/staff/end-service`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    headers: { "Content-Type": "application/json", ...(await staffAuthHeaders()) },
     body: JSON.stringify({ ticketNumber }),
   });
   if (!res.ok) throw new Error(await parseError(res));
 }
 
-export async function apiMarkMissed(token: string, ticketNumber: string): Promise<void> {
+export async function apiMarkMissed(ticketNumber: string): Promise<void> {
   const res = await fetch(`${API_BASE}/api/staff/mark-missed`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    headers: { "Content-Type": "application/json", ...(await staffAuthHeaders()) },
     body: JSON.stringify({ ticketNumber }),
   });
   if (!res.ok) throw new Error(await parseError(res));
 }
 
-export async function apiLiveDashboard(token: string, branchId: string): Promise<LiveDashboard> {
+export async function apiLiveDashboard(branchId: string): Promise<LiveDashboard> {
   const res = await fetch(`${API_BASE}/api/branches/${branchId}/dashboard/live`, {
-    headers: { Authorization: `Bearer ${token}` },
+    headers: await staffAuthHeaders(),
   });
   if (!res.ok) throw new Error(await parseError(res));
   return res.json() as Promise<LiveDashboard>;
 }
 
-export async function apiManagerCounters(token: string, branchId: string): Promise<ManagerCounterRowDto[]> {
+export async function apiManagerCounters(branchId: string): Promise<ManagerCounterRowDto[]> {
   const res = await fetch(`${API_BASE}/api/manager/branches/${branchId}/counters`, {
-    headers: { Authorization: `Bearer ${token}` },
+    headers: await staffAuthHeaders(),
   });
   if (!res.ok) throw new Error(await parseError(res));
   return res.json() as Promise<ManagerCounterRowDto[]>;
 }
 
 export async function apiManagerSetCounterMode(
-  token: string,
   branchId: string,
   counterId: string,
   mode: "Active" | "Break" | "Closed",
 ): Promise<void> {
   const res = await fetch(`${API_BASE}/api/manager/branches/${branchId}/counters/${counterId}/mode`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    headers: { "Content-Type": "application/json", ...(await staffAuthHeaders()) },
     body: JSON.stringify({ mode }),
   });
   if (!res.ok) throw new Error(await parseError(res));
 }
 
 export async function apiManagerSetCounterStaff(
-  token: string,
   branchId: string,
   counterId: string,
   staffId: string | null,
 ): Promise<void> {
   const res = await fetch(`${API_BASE}/api/manager/branches/${branchId}/counters/${counterId}/staff`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    headers: { "Content-Type": "application/json", ...(await staffAuthHeaders()) },
     body: JSON.stringify({ staffId }),
   });
   if (!res.ok) throw new Error(await parseError(res));
 }
 
 export async function apiManagerSetAllowedServices(
-  token: string,
   branchId: string,
   counterId: string,
   serviceTypeIds: string[],
 ): Promise<void> {
   const res = await fetch(`${API_BASE}/api/manager/branches/${branchId}/counters/${counterId}/allowed-services`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    headers: { "Content-Type": "application/json", ...(await staffAuthHeaders()) },
     body: JSON.stringify({ serviceTypeIds }),
   });
   if (!res.ok) throw new Error(await parseError(res));
 }
 
 export async function apiManagerSetDedicatedLane(
-  token: string,
   branchId: string,
   counterId: string,
   serviceTypeId: string | null,
 ): Promise<void> {
   const res = await fetch(`${API_BASE}/api/manager/branches/${branchId}/counters/${counterId}/dedicated-lane`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    headers: { "Content-Type": "application/json", ...(await staffAuthHeaders()) },
     body: JSON.stringify({ serviceTypeId }),
   });
   if (!res.ok) throw new Error(await parseError(res));
 }
 
-export async function apiManagerOperationalSettings(
-  token: string,
-  branchId: string,
-): Promise<BranchOperationalSettings> {
+export async function apiManagerOperationalSettings(branchId: string): Promise<BranchOperationalSettings> {
   const res = await fetch(`${API_BASE}/api/manager/branches/${branchId}/operational-settings`, {
-    headers: { Authorization: `Bearer ${token}` },
+    headers: await staffAuthHeaders(),
   });
   if (!res.ok) throw new Error(await parseError(res));
   return res.json() as Promise<BranchOperationalSettings>;
 }
 
 export async function apiManagerPatchOperationalSettings(
-  token: string,
   branchId: string,
   body: {
     onlineQuotaPercent?: number;
@@ -332,24 +312,24 @@ export async function apiManagerPatchOperationalSettings(
 ): Promise<BranchOperationalSettings> {
   const res = await fetch(`${API_BASE}/api/manager/branches/${branchId}/operational-settings`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    headers: { "Content-Type": "application/json", ...(await staffAuthHeaders()) },
     body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(await parseError(res));
   return res.json() as Promise<BranchOperationalSettings>;
 }
 
-export async function apiManagerInsights(token: string, branchId: string): Promise<ManagerInsights> {
+export async function apiManagerInsights(branchId: string): Promise<ManagerInsights> {
   const res = await fetch(`${API_BASE}/api/manager/branches/${branchId}/insights`, {
-    headers: { Authorization: `Bearer ${token}` },
+    headers: await staffAuthHeaders(),
   });
   if (!res.ok) throw new Error(await parseError(res));
   return res.json() as Promise<ManagerInsights>;
 }
 
-export async function apiManagerAssignableStaff(token: string, branchId: string): Promise<AssignableStaffDto[]> {
+export async function apiManagerAssignableStaff(branchId: string): Promise<AssignableStaffDto[]> {
   const res = await fetch(`${API_BASE}/api/manager/branches/${branchId}/assignable-staff`, {
-    headers: { Authorization: `Bearer ${token}` },
+    headers: await staffAuthHeaders(),
   });
   if (!res.ok) throw new Error(await parseError(res));
   return res.json() as Promise<AssignableStaffDto[]>;

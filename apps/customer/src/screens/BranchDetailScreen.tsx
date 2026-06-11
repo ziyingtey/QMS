@@ -9,6 +9,7 @@ import type { RootStackParamList } from "../navigation/navigationRef";
 import { theme } from "../theme";
 import { distanceMeters, formatDistance, fetchMapsDistance, type MapsDistanceResult } from "../utils/geo";
 import { getBranchOpenStatus, getTodayHoursLabel } from "../utils/branchStatus";
+import { openBranchInMaps } from "../utils/openMaps";
 
 type Props = NativeStackScreenProps<RootStackParamList, "BranchDetail">;
 
@@ -44,6 +45,7 @@ export function BranchDetailScreen({ navigation, route }: Props) {
           </Pressable>
           <Pressable
             style={styles.headerBtn}
+            accessibilityLabel={isFavorite ? "Remove branch from favorites" : "Save branch to favorites"}
             onPress={() => void toggleFavoriteBranch(branch.id)}
             disabled={favoriteBusy}
             hitSlop={8}
@@ -60,7 +62,7 @@ export function BranchDetailScreen({ navigation, route }: Props) {
         <Text style={styles.headerTitle}>{branch.name}</Text>
       </View>
 
-      <ScrollView contentContainerStyle={{ paddingBottom: 140 }} showsVerticalScrollIndicator={false}>
+      <ScrollView contentContainerStyle={{ paddingBottom: 100 }} showsVerticalScrollIndicator={false}>
         {/* Info Section */}
         <View style={styles.infoCard}>
           {/* State + Open/Closed chips */}
@@ -138,35 +140,35 @@ export function BranchDetailScreen({ navigation, route }: Props) {
           )}
         </View>
 
-        {/* Bottom Buttons */}
+        {/* Directions + book (favorite: header heart) */}
         <View style={styles.buttonsWrap}>
-          <Pressable
-            style={[styles.favBtn, favoriteBusy && { opacity: 0.6 }]}
-            onPress={() => void toggleFavoriteBranch(branch.id)}
-            disabled={favoriteBusy}
-          >
-            <Ionicons
-              name={isFavorite ? "heart" : "heart-outline"}
-              size={18}
-              color="#fff"
-            />
-            <Text style={styles.favBtnText}>
-              {isFavorite ? "Remove from favorites" : "Add to favorites"}
-            </Text>
-          </Pressable>
-
-          <Pressable
-            style={styles.bookBtn}
-            onPress={() => {
-              navigation.navigate("MainTabs", {
-                screen: "Booking",
-                params: { screen: "BookingServices", params: { branch } },
-              });
-            }}
-          >
-            <Ionicons name="calendar-outline" size={18} color="#fff" />
-            <Text style={styles.bookBtnText}>Book a turn here</Text>
-          </Pressable>
+          <View style={styles.actionRow}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Open directions in Maps"
+              android_ripple={{ color: "rgba(15, 23, 42, 0.08)", foreground: true }}
+              style={({ pressed }) => [styles.directionsBtn, pressed && styles.directionsBtnPressed]}
+              onPress={() => openBranchInMaps(branch.latitude, branch.longitude, branch.name)}
+            >
+              <Ionicons name="navigate-outline" size={20} color={theme.primaryDark} />
+              <Text style={styles.directionsBtnText}>Directions</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Book a turn at this branch"
+              android_ripple={{ color: "rgba(255,255,255,0.22)", foreground: true }}
+              style={({ pressed }) => [styles.bookBtn, pressed && styles.bookBtnPressed]}
+              onPress={() => {
+                navigation.navigate("MainTabs", {
+                  screen: "Booking",
+                  params: { screen: "BookingServices", params: { branch } },
+                });
+              }}
+            >
+              <Ionicons name="calendar-outline" size={18} color="#fff" />
+              <Text style={styles.bookBtnText}>Book a turn</Text>
+            </Pressable>
+          </View>
         </View>
       </ScrollView>
     </View>
@@ -297,28 +299,48 @@ const styles = StyleSheet.create({
 
   // Buttons
   buttonsWrap: {
-    marginHorizontal: 18,
+    marginHorizontal: 12,
     marginTop: 20,
+  },
+  actionRow: {
+    flexDirection: "row",
     gap: 12,
   },
-  favBtn: {
+  /** Larger tap targets than booking list cards; same colors. */
+  directionsBtn: {
+    flex: 1,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: 8,
-    backgroundColor: theme.headerNavy,
-    paddingVertical: 15,
+    minHeight: 52,
+    paddingVertical: 14,
+    paddingHorizontal: 8,
     borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: "#e2e8f0",
+    backgroundColor: "#fff",
   },
-  favBtnText: { fontSize: 15, fontWeight: "700", color: "#fff" },
+  directionsBtnPressed: {
+    opacity: 0.92,
+    transform: [{ scale: 0.99 }],
+  },
+  directionsBtnText: { fontSize: 15, fontWeight: "700", color: theme.primaryDark },
   bookBtn: {
+    flex: 1,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: 8,
-    backgroundColor: "#22c55e",
-    paddingVertical: 15,
+    minHeight: 52,
+    paddingVertical: 14,
+    paddingHorizontal: 8,
     borderRadius: 14,
+    backgroundColor: theme.primaryDark,
+  },
+  bookBtnPressed: {
+    opacity: 0.92,
+    transform: [{ scale: 0.99 }],
   },
   bookBtnText: { fontSize: 15, fontWeight: "700", color: "#fff" },
 });

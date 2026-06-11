@@ -18,6 +18,8 @@ import {
   getStoredEmail,
   getStoredRole,
   getStoredToken,
+  getValidStaffAccessToken,
+  subscribeStaffSession,
   type AssignableStaffDto,
   type BranchDto,
   type BranchOperatingHourRow,
@@ -175,8 +177,11 @@ function SnapshotWaitBars({
 
 export function ManagerCountersPage() {
   const navigate = useNavigate();
-  const token = useMemo(() => getStoredToken(), []);
-  const role = useMemo(() => getStoredRole(), []);
+  const [hubToken, setHubToken] = useState<string | null>(() => getStoredToken());
+
+  useEffect(() => {
+    return subscribeStaffSession(() => setHubToken(getStoredToken()));
+  }, []);
   const [branches, setBranches] = useState<BranchDto[]>([]);
   const [branchId, setBranchId] = useState(() => getStoredBranchId() ?? "");
   const [rows, setRows] = useState<ManagerCounterRowDto[]>([]);
@@ -207,37 +212,41 @@ export function ManagerCountersPage() {
   }, [branchId]);
 
   useEffect(() => {
-    if (!token || role !== "Manager") {
-      navigate("/login");
-      return;
-    }
     void (async () => {
+      if (getStoredRole() !== "Manager") {
+        navigate("/login");
+        return;
+      }
+      const t = await getValidStaffAccessToken();
+      if (!t) {
+        navigate("/login");
+        return;
+      }
+      setHubToken(t);
       const b = await apiBranches();
       setBranches(b);
-      // branchId is already set from session storage (login response)
-      // fallback: if somehow missing, use first branch
-      if (!branchId && b.length > 0) setBranchId(b[0].id);
+      setBranchId((prev) => prev || (b[0]?.id ?? ""));
     })();
-  }, [navigate, token, role]);
+  }, [navigate]);
 
   useEffect(() => {
-    if (!token || !branchId) return;
+    if (!branchId) return;
     void (async () => {
       try {
-        const list = await apiManagerAssignableStaff(token, branchId);
+        const list = await apiManagerAssignableStaff(branchId);
         setStaffPickList(list);
       } catch (err) {
         console.error("[staff-pick-list] failed for branch", branchId, err);
         setStaffPickList([]);
       }
     })();
-  }, [token, branchId]);
+  }, [branchId]);
 
   const load = useCallback(async () => {
-    if (!token || !branchId) return;
+    if (!branchId) return;
     setBusy(true);
     try {
-      const list = await apiManagerCounters(token, branchId);
+      const list = await apiManagerCounters(branchId);
       setRows(list);
       setMessage(null);
     } catch (e) {
@@ -245,12 +254,12 @@ export function ManagerCountersPage() {
     } finally {
       setBusy(false);
     }
-  }, [token, branchId]);
+  }, [branchId]);
 
   const loadSettings = useCallback(async () => {
-    if (!token || !branchId) return;
+    if (!branchId) return;
     try {
-      const s = await apiManagerOperationalSettings(token, branchId);
+      const s = await apiManagerOperationalSettings(branchId);
       setSettings(s);
       setFormOnline(s.onlineQuotaPercent);
       setFormSlot(s.slotDurationMinutes);
@@ -273,25 +282,25 @@ export function ManagerCountersPage() {
     } catch {
       setSettings(null);
     }
-  }, [token, branchId]);
+  }, [branchId]);
 
   const loadInsights = useCallback(async () => {
-    if (!token || !branchId) return;
+    if (!branchId) return;
     try {
-      setInsights(await apiManagerInsights(token, branchId));
+      setInsights(await apiManagerInsights(branchId));
     } catch {
       setInsights(null);
     }
-  }, [token, branchId]);
+  }, [branchId]);
 
   const refreshLive = useCallback(async () => {
-    if (!token || !branchId) return;
+    if (!branchId) return;
     try {
-      setLive(await apiLiveDashboard(token, branchId));
+      setLive(await apiLiveDashboard(branchId));
     } catch {
       setLive(null);
     }
-  }, [token, branchId]);
+  }, [branchId]);
 
   useEffect(() => {
     void load();
@@ -304,9 +313,9 @@ export function ManagerCountersPage() {
   }, [refreshLive, loadSettings, loadInsights]);
 
   useEffect(() => {
-    if (!token || !branchId) return;
+    if (!hubToken || !branchId) return;
     const conn = new signalR.HubConnectionBuilder()
-      .withUrl(`${API_BASE}/hubs/queue?access_token=${encodeURIComponent(token)}`)
+      .withUrl(`${API_BASE}/hubs/queue?access_token=${encodeURIComponent(hubToken)}`)
       .configureLogging(signalR.LogLevel.None)
       .withAutomaticReconnect()
       .build();
@@ -344,23 +353,23 @@ export function ManagerCountersPage() {
     return () => {
       void conn.stop();
     };
-  }, [token, branchId, load, refreshLive, loadInsights, loadSettings]);
+  }, [hubToken, branchId, load, refreshLive, loadInsights, loadSettings]);
 
   useEffect(() => {
-    if (!token || !branchId) return;
+    if (!branchId) return;
     const id = setInterval(() => {
       void refreshLive();
       void loadInsights();
       void load();
     }, 12_000);
     return () => clearInterval(id);
-  }, [token, branchId, refreshLive, loadInsights, load]);
+  }, [branchId, refreshLive, loadInsights, load]);
 
   const setMode = async (counterId: string, mode: "Active" | "Break" | "Closed") => {
-    if (!token || !branchId) return;
+    if (!branchId) return;
     setBusy(true);
     try {
-      await apiManagerSetCounterMode(token, branchId, counterId, mode);
+      await apiManagerSetCounterMode(branchId, counterId, mode);
       await load();
       await refreshLive();
       await loadInsights();
@@ -372,7 +381,7 @@ export function ManagerCountersPage() {
   };
 
   const onAllowedLaneToggle = async (counterId: string, laneId: string, checked: boolean) => {
-    if (!token || !branchId) return;
+    if (!branchId) return;
     const row = rows.find((r) => r.id === counterId);
     if (!row) return;
     const next = new Set(row.allowedServiceTypeIds);
@@ -384,7 +393,7 @@ export function ManagerCountersPage() {
     }
     setBusy(true);
     try {
-      await apiManagerSetAllowedServices(token, branchId, counterId, [...next]);
+      await apiManagerSetAllowedServices(branchId, counterId, [...next]);
       await load();
       await refreshLive();
       await loadInsights();
@@ -396,10 +405,10 @@ export function ManagerCountersPage() {
   };
 
   const onStaffChange = async (counterId: string, value: string) => {
-    if (!token || !branchId) return;
+    if (!branchId) return;
     setBusy(true);
     try {
-      await apiManagerSetCounterStaff(token, branchId, counterId, value === "" ? null : value);
+      await apiManagerSetCounterStaff(branchId, counterId, value === "" ? null : value);
       await load();
       await refreshLive();
       await loadInsights();
@@ -411,10 +420,10 @@ export function ManagerCountersPage() {
   };
 
   const onDedicatedLaneChange = async (counterId: string, serviceTypeId: string) => {
-    if (!token || !branchId) return;
+    if (!branchId) return;
     setBusy(true);
     try {
-      await apiManagerSetDedicatedLane(token, branchId, counterId, serviceTypeId === "" ? null : serviceTypeId);
+      await apiManagerSetDedicatedLane(branchId, counterId, serviceTypeId === "" ? null : serviceTypeId);
       await load();
       await refreshLive();
       await loadInsights();
@@ -426,13 +435,13 @@ export function ManagerCountersPage() {
   };
 
   const saveCapacity = async () => {
-    if (!token || !branchId) return;
+    if (!branchId) return;
     setBusy(true);
     setMessage(null);
     try {
       const minRaw = formMinSlotTotal.trim();
       const maxRaw = formMaxSlotTotal.trim();
-      const s = await apiManagerPatchOperationalSettings(token, branchId, {
+      const s = await apiManagerPatchOperationalSettings(branchId, {
         onlineQuotaPercent: formOnline,
         slotDurationMinutes: formSlot,
         weeklyOperatingHours: formWeekly,

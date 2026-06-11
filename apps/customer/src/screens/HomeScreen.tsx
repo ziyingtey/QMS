@@ -17,10 +17,16 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { apiQueueStatus, apiServiceLaneSummary, type ServiceLaneSummary } from "../api";
 import { useCustomer } from "../context/CustomerContext";
+import { useMapsDistance } from "../hooks/useMapsDistance";
 import { navigationRef } from "../navigation/navigationRef";
 import { theme } from "../theme";
 import { formatBookingSlotDateTime, defaultBranchOffsetMinutes } from "../utils/dateFormat";
-import { distanceMeters, formatDistance } from "../utils/geo";
+import {
+  distanceMeters,
+  effectiveDistanceSortMeters,
+  formatBranchTravelLabel,
+  type MapsDistanceResult,
+} from "../utils/geo";
 
 type SortMode = "distance" | "wait" | "name" | "services";
 
@@ -59,6 +65,7 @@ export function HomeScreen({
     refreshProfile,
     navigateToQueueTrack,
   } = useCustomer();
+  const { distances: mapsDistances } = useMapsDistance(userCoords, branches);
   const [homeRefreshing, setHomeRefreshing] = useState(false);
   const [search, setSearch] = useState("");
   const [sortMode, setSortMode] = useState<SortMode>("distance");
@@ -160,12 +167,18 @@ export function HomeScreen({
     return true;
   });
 
-  const scored = baseFiltered.map((b) => ({
-    branch: b,
-    dist:
-      userCoords != null ? distanceMeters(userCoords.latitude, userCoords.longitude, b.latitude, b.longitude) : null,
-    wait: waitByBranchId[b.id] ?? null,
-  }));
+  const scored = baseFiltered.map((b) => {
+    const haversine =
+      userCoords != null ? distanceMeters(userCoords.latitude, userCoords.longitude, b.latitude, b.longitude) : null;
+    const mapsInfo = mapsDistances.get(b.id);
+    return {
+      branch: b,
+      dist: effectiveDistanceSortMeters(mapsInfo, haversine),
+      mapsInfo,
+      haversine,
+      wait: waitByBranchId[b.id] ?? null,
+    };
+  });
 
   const favIds = profile?.favoriteBranchIds ?? [];
   const sorted = [...scored].sort((a, b) => {
@@ -415,11 +428,13 @@ export function HomeScreen({
 
         {busy && branches.length === 0 ? <ActivityIndicator color={theme.primary} style={{ marginVertical: 24 }} /> : null}
 
-        {sorted.map(({ branch: b, dist }) => (
+        {sorted.map(({ branch: b, mapsInfo, haversine }) => (
           <NearbyBranchCard
             key={b.id}
             branch={b}
-            distanceLabel={dist != null ? formatDistance(dist) : userCoords ? "—" : "Enable location"}
+            mapsInfo={mapsInfo}
+            haversineMeters={haversine}
+            noCoordsLabel={userCoords ? "—" : "Enable location"}
             isFavorite={favIds.includes(b.id)}
             favoriteBusy={togglingFavoriteBranchId === b.id}
             onToggleFavorite={() => void toggleFavoriteBranch(b.id)}
@@ -442,7 +457,9 @@ export function HomeScreen({
 
 function NearbyBranchCard({
   branch,
-  distanceLabel,
+  mapsInfo,
+  haversineMeters,
+  noCoordsLabel,
   isFavorite,
   favoriteBusy,
   onToggleFavorite,
@@ -450,7 +467,9 @@ function NearbyBranchCard({
   onOpenDetail,
 }: {
   branch: import("../api").BranchDto;
-  distanceLabel: string;
+  mapsInfo: MapsDistanceResult | undefined;
+  haversineMeters: number | null;
+  noCoordsLabel: string;
   isFavorite: boolean;
   favoriteBusy: boolean;
   onToggleFavorite: () => void;
@@ -480,6 +499,9 @@ function NearbyBranchCard({
   const crowdColor =
     lane == null ? theme.textMutedOnLight : lane.crowdLevel === "Low" ? theme.success : lane.crowdLevel === "Medium" ? theme.warning : theme.danger;
 
+  const travelLine = formatBranchTravelLabel(mapsInfo, haversineMeters, { noCoordsLabel });
+  const distIconName = mapsInfo ? "car-outline" : "navigate-circle-outline";
+
   return (
     <Pressable style={styles.branchCard} onPress={onOpenDetail}>
       {branch.imageUrl ? (
@@ -506,8 +528,8 @@ function NearbyBranchCard({
         ) : null}
         <View style={styles.branchMetaRow}>
           <View style={styles.branchMetaItem}>
-            <Ionicons name="location-outline" size={13} color="#4a90d9" />
-            <Text style={styles.branchMetaText}>{distanceLabel}</Text>
+            <Ionicons name={distIconName} size={13} color="#4a90d9" />
+            <Text style={styles.branchMetaText} numberOfLines={2}>{travelLine}</Text>
           </View>
           {crowdLabel ? (
             <View style={styles.branchMetaItem}>
