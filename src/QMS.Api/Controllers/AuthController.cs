@@ -35,13 +35,18 @@ public sealed class AuthController(
             || await db.StaffMembers.AnyAsync(s => s.Email == email, cancellationToken))
             return Conflict(new { message = "An account with this email already exists." });
 
-        var baseUrl = publicUrls.Value.ApiPublicBaseUrl.Trim().TrimEnd('/');
+        var baseUrl = TryResolveApiPublicBaseUrl();
         if (string.IsNullOrWhiteSpace(baseUrl))
+        {
             return BadRequest(new
             {
                 message =
-                    "Server is missing PublicUrls:ApiPublicBaseUrl (the public HTTPS base URL of this API). It is required so verification links in emails work.",
+                    "Could not build the email verification link. Set PublicUrls:ApiPublicBaseUrl to your public API URL (HTTPS in production), or register from a client that reaches the API with a normal Host header (e.g. your PC's LAN IP, not an invalid host).",
             });
+        }
+
+        if (string.IsNullOrWhiteSpace(publicUrls.Value.ApiPublicBaseUrl?.Trim()))
+            log.LogInformation("Using inferred API base URL for verification links: {BaseUrl}", baseUrl);
 
         var token = EmailVerificationToken.Create();
         var customer = new Customer
@@ -136,9 +141,9 @@ public sealed class AuthController(
             return BadRequest(new { message = "Email is required." });
 
         var email = request.Email.Trim();
-        var baseUrl = publicUrls.Value.ApiPublicBaseUrl.Trim().TrimEnd('/');
+        var baseUrl = TryResolveApiPublicBaseUrl();
         if (string.IsNullOrWhiteSpace(baseUrl))
-            return BadRequest(new { message = "Server is missing PublicUrls:ApiPublicBaseUrl." });
+            return BadRequest(new { message = "Could not build the verification link. Set PublicUrls:ApiPublicBaseUrl." });
 
         var customer = await db.Customers.FirstOrDefaultAsync(c => c.Email == email, cancellationToken);
         if (customer is null || customer.EmailVerified)
@@ -223,6 +228,38 @@ public sealed class AuthController(
 
         await sessions.TryRevokeAsync(request.RefreshToken.Trim(), cancellationToken);
         return NoContent();
+    }
+
+    /// <summary>
+    /// Prefer <see cref="PublicUrlOptions.ApiPublicBaseUrl"/>; if unset, infer <c>scheme://host</c> from this HTTP request
+    /// (works for local dev when the app calls <c>http://192.168.x.x:5154</c>).
+    /// </summary>
+    private string? TryResolveApiPublicBaseUrl()
+    {
+        var configured = publicUrls.Value.ApiPublicBaseUrl?.Trim().TrimEnd('/');
+        if (!string.IsNullOrWhiteSpace(configured))
+            return configured;
+
+        var req = HttpContext.Request;
+        var forwardedHost = FirstCsvValue(req.Headers["X-Forwarded-Host"].ToString());
+        var host = !string.IsNullOrWhiteSpace(forwardedHost) ? forwardedHost : req.Host.Value;
+        if (string.IsNullOrWhiteSpace(host))
+            return null;
+
+        var forwardedProto = FirstCsvValue(req.Headers["X-Forwarded-Proto"].ToString());
+        var scheme = !string.IsNullOrWhiteSpace(forwardedProto) ? forwardedProto : req.Scheme;
+        if (!string.Equals(scheme, "http", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(scheme, "https", StringComparison.OrdinalIgnoreCase))
+            scheme = req.Scheme;
+
+        return $"{scheme}://{host}".TrimEnd('/');
+    }
+
+    private static string? FirstCsvValue(string? header)
+    {
+        if (string.IsNullOrWhiteSpace(header)) return null;
+        var comma = header.IndexOf(',');
+        return (comma >= 0 ? header[..comma] : header).Trim();
     }
 
     private static string HtmlMessage(string title, string body)
