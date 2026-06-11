@@ -4,6 +4,8 @@
     <TargetFramework>net8.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <!-- Enables `dotnet user-secrets` so SMTP password is not stored in appsettings (see docs/real-email-verification-smtp.md). -->
+    <UserSecretsId>qms-api-smtp-9a3f2c1e-8b7d-4e6a-9c0d-1f2e3d4b5a6c</UserSecretsId>
   </PropertyGroup>
 
   <ItemGroup>

@@ -60,12 +60,21 @@ public sealed class AuthController(
                 return BadRequest(new
                 {
                     message =
-                        "Smtp:Host is not configured. To test registration without real email, set \"Smtp\": { \"DryRun\": true } in appsettings.Development.json (verification URL is printed in the API console).",
+                        "Smtp:Host is not configured. Use e.g. smtp.gmail.com (see docs/real-email-verification-smtp.md). Optional: set Smtp:DryRun to true only if you intentionally want no mail (demo).",
                 });
             }
 
             if (string.IsNullOrWhiteSpace(smtp.FromEmail))
-                return BadRequest(new { message = "Smtp:FromEmail is not configured." });
+                return BadRequest(new { message = "Smtp:FromEmail is not configured (for Gmail, use the same address as Smtp:User)." });
+
+            if (string.IsNullOrWhiteSpace(smtp.User) || string.IsNullOrWhiteSpace(smtp.Password))
+            {
+                return BadRequest(new
+                {
+                    message =
+                        "For real outbound email, set Smtp:User and Smtp:Password (Gmail: your address + 16-character app password, not your login password). See docs/real-email-verification-smtp.md.",
+                });
+            }
         }
 
         var token = EmailVerificationToken.Create();
@@ -99,7 +108,7 @@ public sealed class AuthController(
                 new
                 {
                     message =
-                        "Could not send the verification email. Check Smtp host, port, UseStartTls, user, password, and that your provider allows SMTP. If you are only testing locally, set Smtp:DryRun to true so no mail is sent (link is logged on the API). No account was created.",
+                        "Could not send the verification email. Check host, port, UseStartTls, user, password, and that your provider allows SMTP (Gmail needs an app password). No account was created. See docs/real-email-verification-smtp.md.",
                 });
         }
 
@@ -179,7 +188,15 @@ public sealed class AuthController(
             {
                 return BadRequest(new
                 {
-                    message = "SMTP is not fully configured on the server. For local testing without mail, set Smtp:DryRun to true.",
+                    message = "SMTP is not fully configured (Host, FromEmail, User, Password). See docs/real-email-verification-smtp.md.",
+                });
+            }
+
+            if (string.IsNullOrWhiteSpace(smtp.User) || string.IsNullOrWhiteSpace(smtp.Password))
+            {
+                return BadRequest(new
+                {
+                    message = "Smtp:User and Smtp:Password are required for resend when DryRun is false.",
                 });
             }
         }

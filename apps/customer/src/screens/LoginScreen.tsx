@@ -67,8 +67,11 @@ export function LoginScreen() {
             <Text style={styles.sentEmail}>{em}</Text>
             {pendingVerification.usedDryRun ? (
               <Text style={styles.dryRunHint}>
-                Development mode (SMTP dry-run): no real email was sent. Check the API terminal for the verification URL,
-                open it in Safari, then tap Continue to Sign in below.
+                No email was sent to Gmail (or anywhere). The API is in SMTP dry-run mode: nothing is delivered to Inbox or Spam.
+                {"\n\n"}
+                To verify without mail: open the terminal where the API is running, copy the verification URL from the log, paste it into Safari, then tap Continue to Sign in.
+                {"\n\n"}
+                To get a real message in Gmail: set Smtp:DryRun to false and add real SMTP settings (see docs/real-email-verification-smtp.md in the repo).
               </Text>
             ) : (
               <Text style={styles.sentHint}>Open your inbox, tap the link in the email, then return here to sign in.</Text>
