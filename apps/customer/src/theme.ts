@@ -23,4 +23,9 @@ export const theme = {
   danger: "#ef4444",
   chip: "rgba(37,99,235,0.2)",
   promoBanner: "rgba(124,58,237,0.45)",
+  /** Auth / verification surfaces (warm neutral + navy actions) */
+  authWarmBg: "#f4f1eb",
+  authCard: "#ffffff",
+  authOtpBorder: "#e2e8f0",
+  authOtpFocus: "#04336b",
 };

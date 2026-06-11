@@ -229,6 +229,32 @@ export async function apiVerifyEmailOtp(email: string, otp: string): Promise<{ m
   return (await res.json()) as { message: string };
 }
 
+export type ForgotPasswordResponse = {
+  message: string;
+  usedDryRun?: boolean;
+  resetUrl?: string | null;
+};
+
+export async function apiForgotPassword(email: string): Promise<ForgotPasswordResponse> {
+  const res = await fetch(`${API_BASE}/api/auth/forgot-password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email }),
+  });
+  if (!res.ok) throw new Error(await parseError(res));
+  return (await res.json()) as ForgotPasswordResponse;
+}
+
+export async function apiResetPassword(token: string, newPassword: string): Promise<{ message: string }> {
+  const res = await fetch(`${API_BASE}/api/auth/reset-password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token: token.trim(), newPassword }),
+  });
+  if (!res.ok) throw new Error(await parseError(res));
+  return (await res.json()) as { message: string };
+}
+
 export async function apiLogin(email: string, password: string): Promise<LoginResponse> {
   const res = await fetch(`${API_BASE}/api/auth/login`, {
     method: "POST",

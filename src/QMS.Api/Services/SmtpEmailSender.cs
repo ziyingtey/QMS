@@ -119,4 +119,62 @@ public sealed class SmtpEmailSender(IOptions<SmtpOptions> smtpOptions, ILogger<S
         await client.SendAsync(message, cancellationToken).ConfigureAwait(false);
         await client.DisconnectAsync(true, cancellationToken).ConfigureAwait(false);
     }
+
+    public async Task SendCustomerPasswordResetEmailAsync(
+        string toEmail,
+        string recipientDisplayName,
+        string resetUrl,
+        int validMinutes,
+        CancellationToken cancellationToken = default)
+    {
+        if (_smtp.DryRun)
+        {
+            log.LogWarning(
+                "SMTP DryRun is ON — no email sent. Password reset link for {ToEmail}: {ResetUrl} (valid {Minutes} min)",
+                toEmail,
+                resetUrl,
+                validMinutes);
+            await Task.CompletedTask.ConfigureAwait(false);
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_smtp.Host))
+            throw new InvalidOperationException("Smtp:Host is not configured.");
+        if (string.IsNullOrWhiteSpace(_smtp.FromEmail))
+            throw new InvalidOperationException("Smtp:FromEmail is not configured.");
+
+        var message = new MimeMessage();
+        message.From.Add(new MailboxAddress(_smtp.FromName, _smtp.FromEmail));
+        message.To.Add(new MailboxAddress(string.IsNullOrWhiteSpace(recipientDisplayName) ? toEmail : recipientDisplayName, toEmail));
+        message.Subject = "Reset your QGo password";
+
+        var body =
+            "You asked to reset your QGo (Smart Queue Management) password.\r\n\r\n"
+            + "Open this link in your browser (expires in "
+            + validMinutes
+            + " minutes):\r\n"
+            + resetUrl
+            + "\r\n\r\n"
+            + "Or open the QGo app → Forgot password → paste the token from the end of that link into \"Reset token\".\r\n\r\n"
+            + "If you did not request this, you can ignore this email.\r\n";
+
+        message.Body = new TextPart("plain") { Text = body };
+
+        using var client = new SmtpClient();
+        var secure =
+            _smtp.Port == 465 && !_smtp.UseStartTls
+                ? SecureSocketOptions.SslOnConnect
+                : _smtp.UseStartTls
+                    ? SecureSocketOptions.StartTls
+                    : SecureSocketOptions.Auto;
+
+        log.LogInformation("SMTP connect {Host}:{Port} ({Secure})", _smtp.Host, _smtp.Port, secure);
+        await client.ConnectAsync(_smtp.Host, _smtp.Port, secure, cancellationToken).ConfigureAwait(false);
+
+        if (!string.IsNullOrWhiteSpace(_smtp.User))
+            await client.AuthenticateAsync(_smtp.User, _smtp.Password ?? "", cancellationToken).ConfigureAwait(false);
+
+        await client.SendAsync(message, cancellationToken).ConfigureAwait(false);
+        await client.DisconnectAsync(true, cancellationToken).ConfigureAwait(false);
+    }
 }

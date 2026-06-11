@@ -122,6 +122,7 @@ app.UseCors("Dev");
 // Expo / React Native call http://<host>:5154; redirecting to HTTPS breaks dev (certs, POST body).
 if (!app.Environment.IsDevelopment())
     app.UseHttpsRedirection();
+app.UseStaticFiles();
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();

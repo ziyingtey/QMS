@@ -212,7 +212,7 @@ public sealed class AuthController(
             return Content(
                 HtmlMessage(
                     "Link expired",
-                    "Request a new code from the app (Sign in → Resend verification code), or use the 6-digit code flow if you registered with OTP."),
+                    "Request a new code from the QGo app: open the email verification step (after registering) and use Resend code, or register again with the same email if your pending account was removed."),
                 "text/html; charset=utf-8");
         }
 
@@ -318,7 +318,8 @@ public sealed class AuthController(
             {
                 return BadRequest(new
                 {
-                    message = "Please verify your email first. Enter the code from your email, or tap Resend verification.",
+                    message =
+                        "Please verify your email before signing in. Use the verification screen in the app with the code we sent, or open the verification link from your email.",
                 });
             }
 
@@ -358,6 +359,122 @@ public sealed class AuthController(
 
         await sessions.TryRevokeAsync(request.RefreshToken.Trim(), cancellationToken);
         return NoContent();
+    }
+
+    private const int PasswordResetValidMinutes = 15;
+
+    /// <summary>Always returns the same message when the email is unknown (enumeration-safe). Sends mail only for verified customers.</summary>
+    [AllowAnonymous]
+    [HttpPost("forgot-password")]
+    public async Task<ActionResult<object>> ForgotPassword([FromBody] ForgotPasswordRequest? request, CancellationToken cancellationToken)
+    {
+        const string publicMessage = "If an account exists for that email, we sent password reset instructions.";
+        if (request is null || string.IsNullOrWhiteSpace(request.Email))
+            return Ok(new { message = publicMessage });
+
+        var email = request.Email.Trim();
+        if (!EmailFormat.IsValid(email))
+            return Ok(new { message = publicMessage });
+
+        var customer = await db.Customers.FirstOrDefaultAsync(c => c.Email == email && c.EmailVerified, cancellationToken);
+        if (customer is null)
+            return Ok(new { message = publicMessage });
+
+        var smtp = smtpOptions.Value;
+        if (!smtp.DryRun)
+        {
+            if (string.IsNullOrWhiteSpace(smtp.Host) || string.IsNullOrWhiteSpace(smtp.FromEmail))
+            {
+                log.LogWarning("Forgot-password skipped for {Email}: SMTP Host/FromEmail not configured.", email);
+                return Ok(new { message = publicMessage });
+            }
+
+            if (string.IsNullOrWhiteSpace(smtp.User) || string.IsNullOrWhiteSpace(smtp.Password))
+            {
+                log.LogWarning("Forgot-password skipped for {Email}: SMTP credentials not configured.", email);
+                return Ok(new { message = publicMessage });
+            }
+        }
+
+        var baseUrl = TryResolveApiPublicBaseUrl();
+        if (string.IsNullOrWhiteSpace(baseUrl))
+        {
+            log.LogWarning("Forgot-password skipped for {Email}: public API base URL unknown.", email);
+            return Ok(new { message = publicMessage });
+        }
+
+        var (plain, tokenHash) = ResetToken.Create();
+        var resetUrl = $"{baseUrl}/reset-password.html?t={Uri.EscapeDataString(plain)}";
+
+        var now = DateTimeOffset.UtcNow;
+        var stale = await db.CustomerPasswordResetTokens
+            .Where(t => t.Email == email && t.UsedAt == null && t.ExpiresAt > now)
+            .ToListAsync(cancellationToken);
+        foreach (var s in stale)
+            s.UsedAt = now;
+
+        var row = new CustomerPasswordResetToken
+        {
+            Id = Guid.NewGuid(),
+            Email = email,
+            TokenHash = tokenHash,
+            ExpiresAt = now.AddMinutes(PasswordResetValidMinutes),
+            UsedAt = null,
+            CreatedAt = now,
+        };
+        db.CustomerPasswordResetTokens.Add(row);
+
+        await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+        try
+        {
+            await db.SaveChangesAsync(cancellationToken);
+            await emailSender.SendCustomerPasswordResetEmailAsync(
+                customer.Email,
+                customer.Name,
+                resetUrl,
+                PasswordResetValidMinutes,
+                cancellationToken);
+            await tx.CommitAsync(cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            log.LogError(ex, "Forgot-password email failed for {Email}.", email);
+            return Ok(new { message = publicMessage });
+        }
+
+        return Ok(new
+        {
+            message = publicMessage,
+            usedDryRun = smtp.DryRun,
+            resetUrl = smtp.DryRun ? resetUrl : null,
+        });
+    }
+
+    [AllowAnonymous]
+    [HttpPost("reset-password")]
+    public async Task<IActionResult> ResetPassword([FromBody] ResetPasswordRequest? request, CancellationToken cancellationToken)
+    {
+        if (request is null || string.IsNullOrWhiteSpace(request.Token) || string.IsNullOrWhiteSpace(request.NewPassword))
+            return BadRequest(new { message = "Token and new password are required." });
+
+        if (!PasswordPolicy.IsValid(request.NewPassword, out var pwdMsg))
+            return BadRequest(new { message = pwdMsg });
+
+        var hash = ResetToken.HashPlain(request.Token);
+        var row = await db.CustomerPasswordResetTokens.FirstOrDefaultAsync(t => t.TokenHash == hash, cancellationToken);
+        var now = DateTimeOffset.UtcNow;
+        if (row is null || row.UsedAt is not null || row.ExpiresAt < now)
+            return BadRequest(new { message = "This reset link is invalid or has expired. Request a new reset from the app." });
+
+        var customer = await db.Customers.FirstOrDefaultAsync(c => c.Email == row.Email && c.EmailVerified, cancellationToken);
+        if (customer is null)
+            return BadRequest(new { message = "This reset link is invalid or has expired." });
+
+        customer.PasswordHash = passwordHasher.HashPassword(row.Email, request.NewPassword);
+        row.UsedAt = now;
+        await db.SaveChangesAsync(cancellationToken);
+        return Ok(new { message = "Your password has been updated. You can sign in." });
     }
 
     private static void ClearCustomerOtp(Customer c)

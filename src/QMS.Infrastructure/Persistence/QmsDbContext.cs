@@ -23,6 +23,7 @@ public sealed class QmsDbContext : DbContext
     public DbSet<AnalyticsSummary> AnalyticsSummaries => Set<AnalyticsSummary>();
     public DbSet<MlTrainingObservation> MlTrainingObservations => Set<MlTrainingObservation>();
     public DbSet<RefreshSession> RefreshSessions => Set<RefreshSession>();
+    public DbSet<CustomerPasswordResetToken> CustomerPasswordResetTokens => Set<CustomerPasswordResetToken>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -169,6 +170,15 @@ public sealed class QmsDbContext : DbContext
             e.ToTable("REFRESH_SESSIONS");
             e.HasIndex(x => x.TokenHash).IsUnique();
             e.Property(x => x.TokenHash).HasMaxLength(64);
+        });
+
+        modelBuilder.Entity<CustomerPasswordResetToken>(e =>
+        {
+            e.ToTable("CUSTOMER_PASSWORD_RESET_TOKENS");
+            e.HasIndex(x => x.TokenHash).IsUnique();
+            e.Property(x => x.Email).HasMaxLength(256);
+            e.Property(x => x.TokenHash).HasMaxLength(64);
+            e.Property(x => x.CreatedAt).HasDefaultValueSql("TODATETIMEOFFSET(SYSUTCDATETIME(), '+00:00')");
         });
     }
 }
