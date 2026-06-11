@@ -17,8 +17,14 @@ public class Customer
     public string? EmailOtpCode { get; set; }
     public DateTimeOffset? EmailOtpExpiresAt { get; set; }
     public int EmailOtpAttempts { get; set; }
-    /// <summary>Used for resend cooldown.</summary>
+    /// <summary>Used for resend cooldown (email verification).</summary>
     public DateTimeOffset? EmailOtpLastSentAt { get; set; }
+    /// <summary>6-digit OTP for forgot-password flow (separate from email verification OTP).</summary>
+    public string? PasswordResetOtpCode { get; set; }
+    public DateTimeOffset? PasswordResetOtpExpiresAt { get; set; }
+    public int PasswordResetOtpAttempts { get; set; }
+    /// <summary>Used for forgot-password resend cooldown.</summary>
+    public DateTimeOffset? PasswordResetOtpLastSentAt { get; set; }
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public ICollection<CustomerFavoriteBranch> FavoriteBranches { get; set; } = new List<CustomerFavoriteBranch>();
     public ICollection<Booking> Bookings { get; set; } = new List<Booking>();

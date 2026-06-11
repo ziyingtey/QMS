@@ -13,10 +13,11 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  type TextInputProps,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { apiForgotPassword, apiResetPassword, userFacingApiError } from "../api";
+import { apiForgotPassword, apiResetPassword, apiVerifyPasswordResetOtp, userFacingApiError } from "../api";
 import { useCustomer } from "../context/CustomerContext";
 import { theme } from "../theme";
 import { describePasswordPolicyFailure, getPasswordRuleChecks, passwordMeetsPolicy } from "../utils/passwordPolicy";
@@ -25,30 +26,18 @@ const qgoWordmark = require("../../assets/qgo-wordmark.png") as number;
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-/** Accept raw token or full reset URL from email. */
-function normalizeResetTokenInput(raw: string): string {
-  const t = raw.trim();
-  if (!t) return "";
-  try {
-    const u = new URL(t);
-    const q = u.searchParams.get("t");
-    if (q && q.trim()) return q.trim();
-  } catch {
-    /* not a valid absolute URL */
-  }
-  const idx = t.indexOf("?t=");
-  if (idx >= 0) {
-    const rest = t.slice(idx + 3);
-    const cut = rest.indexOf("&");
-    const slice = cut >= 0 ? rest.slice(0, cut) : rest;
-    try {
-      return decodeURIComponent(slice);
-    } catch {
-      return slice;
-    }
-  }
-  return t;
-}
+/** Reduce iOS Keychain / Android Autofill pre-filling auth fields. */
+const noAutofillEmail: TextInputProps = Platform.select({
+  ios: { textContentType: "none", autoCorrect: false },
+  android: { autoComplete: "off", importantForAutofill: "no" },
+  default: {},
+});
+
+const noAutofillPassword: TextInputProps = Platform.select({
+  ios: { textContentType: "none" },
+  android: { autoComplete: "off", importantForAutofill: "no" },
+  default: {},
+});
 
 /** Empty is valid (optional). Otherwise digits + spaces, +, -, (); 8–15 digits. */
 function isOptionalPhoneValid(phone: string): boolean {
@@ -60,7 +49,9 @@ function isOptionalPhoneValid(phone: string): boolean {
   return digits >= 8 && digits <= 15;
 }
 
-type FieldErrors = Partial<Record<"email" | "password" | "confirm" | "phone" | "token" | "resetPassword" | "resetConfirm", string>>;
+type FieldErrors = Partial<Record<"email" | "password" | "confirm" | "phone" | "resetPassword" | "resetConfirm", string>>;
+
+type ForgotFlowStep = "email" | "otp" | "reset";
 
 function PasswordRuleHints({ password }: { password: string }) {
   const c = getPasswordRuleChecks(password);
@@ -131,6 +122,8 @@ function OtpSixInputs({
           editable={!disabled}
           selectTextOnFocus
           textAlign="center"
+          {...(Platform.OS === "ios" ? { textContentType: "none" as const } : {})}
+          {...(Platform.OS === "android" ? { autoComplete: "off" as const, importantForAutofill: "no" as const } : {})}
         />
       ))}
     </View>
@@ -166,10 +159,11 @@ export function LoginScreen() {
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
 
   const [forgotOpen, setForgotOpen] = useState(false);
-  const [forgotSent, setForgotSent] = useState(false);
+  const [forgotStep, setForgotStep] = useState<ForgotFlowStep>("email");
   const [forgotBusy, setForgotBusy] = useState(false);
   const [forgotError, setForgotError] = useState<string | null>(null);
-  const [forgotDryUrl, setForgotDryUrl] = useState<string | null>(null);
+  const [forgotDryOtp, setForgotDryOtp] = useState<string | null>(null);
+  const [forgotOtp, setForgotOtp] = useState("");
   const [resetToken, setResetToken] = useState("");
   const [resetPassword, setResetPassword] = useState("");
   const [resetConfirm, setResetConfirm] = useState("");
@@ -225,14 +219,27 @@ export function LoginScreen() {
 
   const closeForgot = () => {
     setForgotOpen(false);
-    setForgotSent(false);
+    setForgotStep("email");
     setForgotError(null);
-    setForgotDryUrl(null);
+    setForgotDryOtp(null);
+    setForgotOtp("");
     setResetToken("");
     setResetPassword("");
     setResetConfirm("");
     setResetConfirmVisible(false);
     setResetNewPwdVisible(false);
+    setFieldErrors({});
+  };
+
+  const openForgotPassword = () => {
+    setForgotOpen(true);
+    setForgotStep("email");
+    setForgotError(null);
+    setForgotDryOtp(null);
+    setForgotOtp("");
+    setResetToken("");
+    setResetPassword("");
+    setResetConfirm("");
     setFieldErrors({});
   };
 
@@ -246,8 +253,29 @@ export function LoginScreen() {
     setForgotBusy(true);
     try {
       const res = await apiForgotPassword(em);
-      setForgotSent(true);
-      setForgotDryUrl(typeof res.resetUrl === "string" ? res.resetUrl : null);
+      setForgotStep("otp");
+      setForgotOtp("");
+      setForgotDryOtp(typeof res.otp === "string" ? res.otp : null);
+    } catch (e) {
+      setForgotError(userFacingApiError(e));
+    } finally {
+      setForgotBusy(false);
+    }
+  };
+
+  const submitForgotOtp = async () => {
+    const code = forgotOtp.replace(/\D/g, "");
+    if (code.length !== 6) {
+      setForgotError("Enter the 6-digit code from your email.");
+      return;
+    }
+    setForgotBusy(true);
+    setForgotError(null);
+    try {
+      const { resetToken: tok } = await apiVerifyPasswordResetOtp(email.trim(), code);
+      setResetToken(tok);
+      setForgotStep("reset");
+      setForgotDryOtp(null);
     } catch (e) {
       setForgotError(userFacingApiError(e));
     } finally {
@@ -256,9 +284,12 @@ export function LoginScreen() {
   };
 
   const submitPasswordReset = async () => {
+    const tok = resetToken.trim();
+    if (!tok) {
+      setForgotError("Session expired. Go back and verify the code again.");
+      return;
+    }
     const next: FieldErrors = {};
-    const tok = normalizeResetTokenInput(resetToken);
-    if (!tok) next.token = "Paste the reset token from your email (or paste the full reset link).";
     const rp = resetPassword;
     const rc = resetConfirm;
     const fail = describePasswordPolicyFailure(rp);
@@ -311,71 +342,97 @@ export function LoginScreen() {
             </View>
             <Text style={styles.verifyTitle}>Forgot password</Text>
             <Text style={styles.verifySubtitle}>
-              {forgotSent
-                ? "If that email matches a verified account, check your inbox for a reset link and token. Then set a new password below."
-                : "Enter your account email. We will send reset instructions if a verified account exists."}
+              {forgotStep === "email"
+                ? "Enter your account email. If a verified account exists, we will email a 6-digit code."
+                : forgotStep === "otp"
+                  ? "Enter the 6-digit code from your email. When it is correct, you can set a new password."
+                  : "Choose a strong new password for your account."}
             </Text>
 
-            <Text style={styles.fieldLabel}>Email</Text>
-            <View style={[styles.inputRow, fieldErrors.email ? styles.inputRowError : null]}>
-              <Ionicons name="mail-outline" size={18} color="#94a3b8" style={styles.inputIcon} />
-              <TextInput
-                style={styles.input}
-                placeholder="you@example.com"
-                placeholderTextColor="#94a3b8"
-                value={email}
-                onChangeText={(t) => {
-                  setEmail(t);
-                  setFieldErrors((x) => ({ ...x, email: undefined }));
-                  setForgotError(null);
-                }}
-                autoCapitalize="none"
-                keyboardType="email-address"
-                autoCorrect={false}
-                editable={!forgotBusy}
-              />
-            </View>
+            {forgotStep !== "email" ? <Text style={styles.sentEmail}>{email.trim()}</Text> : null}
 
-            {!forgotSent ? (
-              <Pressable
-                style={[styles.submitBtn, { marginTop: 16 }, (forgotBusy || busy) && { opacity: 0.6 }]}
-                onPress={() => void sendForgotInstructions()}
-                disabled={forgotBusy || busy}
-              >
-                <Text style={styles.submitText}>{forgotBusy ? "Please wait…" : "Send reset instructions"}</Text>
-              </Pressable>
-            ) : null}
-
-            {forgotDryUrl ? (
-              <Text style={styles.dryRunHint} selectable>
-                SMTP dry-run: reset link (tap to open in browser):{"\n"}
-                {forgotDryUrl}
-              </Text>
-            ) : null}
-
-            {forgotSent ? (
+            {forgotStep === "email" ? (
               <>
-                <Text style={[styles.fieldLabel, { marginTop: 20 }]}>Reset token</Text>
-                <View style={[styles.inputRow, fieldErrors.token ? styles.inputRowError : null]}>
-                  <Ionicons name="link-outline" size={18} color="#94a3b8" style={styles.inputIcon} />
+                <Text style={styles.fieldLabel}>Email</Text>
+                <View style={[styles.inputRow, fieldErrors.email ? styles.inputRowError : null]}>
+                  <Ionicons name="mail-outline" size={18} color="#94a3b8" style={styles.inputIcon} />
                   <TextInput
                     style={styles.input}
-                    placeholder="Paste from email"
+                    placeholder="you@example.com"
                     placeholderTextColor="#94a3b8"
-                    value={resetToken}
+                    value={email}
                     onChangeText={(t) => {
-                      setResetToken(t);
-                      setFieldErrors((x) => ({ ...x, token: undefined }));
+                      setEmail(t);
+                      setFieldErrors((x) => ({ ...x, email: undefined }));
                       setForgotError(null);
                     }}
                     autoCapitalize="none"
+                    keyboardType="email-address"
                     autoCorrect={false}
                     editable={!forgotBusy}
+                    {...noAutofillEmail}
                   />
                 </View>
-                {fieldErrors.token ? <Text style={styles.fieldError}>{fieldErrors.token}</Text> : null}
+                <Pressable
+                  style={[styles.submitBtn, { marginTop: 16 }, (forgotBusy || busy) && { opacity: 0.6 }]}
+                  onPress={() => void sendForgotInstructions()}
+                  disabled={forgotBusy || busy}
+                >
+                  <Text style={styles.submitText}>{forgotBusy ? "Please wait…" : "Submit"}</Text>
+                </Pressable>
+              </>
+            ) : null}
 
-                <Text style={[styles.fieldLabel, { marginTop: 12 }]}>New password</Text>
+            {forgotStep === "otp" ? (
+              <>
+                <Text style={styles.otpLabel}>Verification code</Text>
+                <OtpSixInputs value={forgotOtp} onChange={setForgotOtp} disabled={forgotBusy} />
+                {forgotDryOtp ? (
+                  <Text style={styles.dryRunHint} selectable>
+                    SMTP dry-run: use this code: {forgotDryOtp}
+                  </Text>
+                ) : (
+                  <Text style={styles.sentHint}>Check your inbox and spam folder for the code.</Text>
+                )}
+                <Pressable
+                  style={[
+                    styles.submitBtn,
+                    { marginTop: 20 },
+                    (forgotBusy || busy || forgotOtp.replace(/\D/g, "").length !== 6) && { opacity: 0.55 },
+                  ]}
+                  onPress={() => void submitForgotOtp()}
+                  disabled={forgotBusy || busy || forgotOtp.replace(/\D/g, "").length !== 6}
+                >
+                  <Text style={styles.submitText}>{forgotBusy ? "Please wait…" : "Submit"}</Text>
+                </Pressable>
+                <Pressable
+                  style={[styles.secondaryBtn, { marginTop: 12 }, (forgotBusy || busy) && { opacity: 0.6 }]}
+                  onPress={() => void sendForgotInstructions()}
+                  disabled={forgotBusy || busy}
+                >
+                  <Ionicons name="refresh-outline" size={20} color={theme.headerNavy} style={{ marginRight: 8 }} />
+                  <Text style={styles.secondaryBtnText}>{forgotBusy ? "Please wait…" : "Resend code"}</Text>
+                </Pressable>
+                <Text style={styles.changeEmailRow}>
+                  Wrong email?{" "}
+                  <Text
+                    style={styles.changeEmailLink}
+                    onPress={() => {
+                      setForgotStep("email");
+                      setForgotOtp("");
+                      setForgotDryOtp(null);
+                      setForgotError(null);
+                    }}
+                  >
+                    Change here
+                  </Text>
+                </Text>
+              </>
+            ) : null}
+
+            {forgotStep === "reset" ? (
+              <>
+                <Text style={[styles.fieldLabel, { marginTop: 8 }]}>New password</Text>
                 <View style={[styles.inputRow, fieldErrors.resetPassword ? styles.inputRowError : null]}>
                   <Ionicons name="lock-closed-outline" size={18} color="#94a3b8" style={styles.inputIcon} />
                   <TextInput
@@ -390,6 +447,7 @@ export function LoginScreen() {
                     }}
                     secureTextEntry={!resetNewPwdVisible}
                     editable={!forgotBusy}
+                    {...noAutofillPassword}
                   />
                   <Pressable
                     onPress={() => setResetNewPwdVisible((v) => !v)}
@@ -419,6 +477,7 @@ export function LoginScreen() {
                     }}
                     secureTextEntry={!resetConfirmVisible}
                     editable={!forgotBusy}
+                    {...noAutofillPassword}
                   />
                   <Pressable
                     onPress={() => setResetConfirmVisible((v) => !v)}
@@ -640,6 +699,7 @@ export function LoginScreen() {
                 autoCapitalize="none"
                 keyboardType="email-address"
                 autoCorrect={false}
+                {...noAutofillEmail}
               />
             </View>
             {fieldErrors.email ? <Text style={styles.fieldError}>{fieldErrors.email}</Text> : null}
@@ -659,6 +719,7 @@ export function LoginScreen() {
                   clearFieldErrors();
                 }}
                 secureTextEntry={!passwordVisible}
+                {...noAutofillPassword}
               />
               <Pressable
                 onPress={() => setPasswordVisible((v) => !v)}
@@ -673,7 +734,7 @@ export function LoginScreen() {
             {fieldErrors.password ? <Text style={styles.fieldError}>{fieldErrors.password}</Text> : null}
             {authMode === "register" ? <PasswordRuleHints password={password} /> : null}
             {authMode === "login" ? (
-              <Pressable style={styles.forgotRow} onPress={() => setForgotOpen(true)} hitSlop={8}>
+              <Pressable style={styles.forgotRow} onPress={() => openForgotPassword()} hitSlop={8}>
                 <Text style={styles.forgotLink}>Forgot password?</Text>
               </Pressable>
             ) : null}
@@ -694,6 +755,7 @@ export function LoginScreen() {
                     clearFieldErrors();
                   }}
                   secureTextEntry={!confirmPasswordVisible}
+                  {...noAutofillPassword}
                 />
                 <Pressable
                   onPress={() => setConfirmPasswordVisible((v) => !v)}

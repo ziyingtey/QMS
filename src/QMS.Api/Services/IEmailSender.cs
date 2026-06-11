@@ -21,4 +21,11 @@ public interface IEmailSender
         string resetUrl,
         int validMinutes,
         CancellationToken cancellationToken = default);
+
+    Task SendPasswordResetOtpEmailAsync(
+        string toEmail,
+        string recipientDisplayName,
+        string otpCode,
+        int validMinutes,
+        CancellationToken cancellationToken = default);
 }

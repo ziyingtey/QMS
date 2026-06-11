@@ -232,7 +232,8 @@ export async function apiVerifyEmailOtp(email: string, otp: string): Promise<{ m
 export type ForgotPasswordResponse = {
   message: string;
   usedDryRun?: boolean;
-  resetUrl?: string | null;
+  /** Present only when SMTP dry-run is enabled (dev). */
+  otp?: string | null;
 };
 
 export async function apiForgotPassword(email: string): Promise<ForgotPasswordResponse> {
@@ -243,6 +244,19 @@ export async function apiForgotPassword(email: string): Promise<ForgotPasswordRe
   });
   if (!res.ok) throw new Error(await parseError(res));
   return (await res.json()) as ForgotPasswordResponse;
+}
+
+export async function apiVerifyPasswordResetOtp(
+  email: string,
+  otp: string
+): Promise<{ message: string; resetToken: string; expiresInMinutes?: number }> {
+  const res = await fetch(`${API_BASE}/api/auth/verify-password-reset-otp`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, otp }),
+  });
+  if (!res.ok) throw new Error(await parseError(res));
+  return (await res.json()) as { message: string; resetToken: string; expiresInMinutes?: number };
 }
 
 export async function apiResetPassword(token: string, newPassword: string): Promise<{ message: string }> {

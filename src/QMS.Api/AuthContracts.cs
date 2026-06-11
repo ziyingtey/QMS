@@ -8,4 +8,5 @@ public sealed record ResendVerificationRequest(string Email);
 public sealed record VerifyEmailOtpRequest(string Email, string Otp);
 public sealed record RefreshRequest(string RefreshToken);
 public sealed record ForgotPasswordRequest(string Email);
+public sealed record VerifyPasswordResetOtpRequest(string Email, string Otp);
 public sealed record ResetPasswordRequest(string Token, string NewPassword);

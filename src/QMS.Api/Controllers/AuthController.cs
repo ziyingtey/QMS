@@ -361,14 +361,14 @@ public sealed class AuthController(
         return NoContent();
     }
 
-    private const int PasswordResetValidMinutes = 15;
+    private const int PasswordResetAfterOtpValidMinutes = 15;
 
-    /// <summary>Always returns the same message when the email is unknown (enumeration-safe). Sends mail only for verified customers.</summary>
+    /// <summary>Sends a 6-digit OTP (enumeration-safe generic message). Does not require a public web URL.</summary>
     [AllowAnonymous]
     [HttpPost("forgot-password")]
     public async Task<ActionResult<object>> ForgotPassword([FromBody] ForgotPasswordRequest? request, CancellationToken cancellationToken)
     {
-        const string publicMessage = "If an account exists for that email, we sent password reset instructions.";
+        const string publicMessage = "If an account exists for that email, we sent a reset code.";
         if (request is null || string.IsNullOrWhiteSpace(request.Email))
             return Ok(new { message = publicMessage });
 
@@ -379,6 +379,15 @@ public sealed class AuthController(
         var customer = await db.Customers.FirstOrDefaultAsync(c => c.Email == email && c.EmailVerified, cancellationToken);
         if (customer is null)
             return Ok(new { message = publicMessage });
+
+        var now = DateTimeOffset.UtcNow;
+        if (customer.PasswordResetOtpLastSentAt is { } lastPwd && now < lastPwd.AddSeconds(ResendOtpCooldownSeconds))
+        {
+            var waitSec = (int)Math.Ceiling((lastPwd.AddSeconds(ResendOtpCooldownSeconds) - now).TotalSeconds);
+            return StatusCode(
+                StatusCodes.Status429TooManyRequests,
+                new { message = $"Please wait {waitSec} seconds before requesting another code." });
+        }
 
         var smtp = smtpOptions.Value;
         if (!smtp.DryRun)
@@ -396,44 +405,23 @@ public sealed class AuthController(
             }
         }
 
-        var baseUrl = TryResolveApiPublicBaseUrl();
-        if (string.IsNullOrWhiteSpace(baseUrl))
-        {
-            log.LogWarning("Forgot-password skipped for {Email}: public API base URL unknown.", email);
-            return Ok(new { message = publicMessage });
-        }
+        var otp = OtpCode.CreateSixDigits();
+        customer.PasswordResetOtpCode = otp;
+        customer.PasswordResetOtpExpiresAt = now.AddMinutes(OtpValidMinutes);
+        customer.PasswordResetOtpAttempts = 0;
+        customer.PasswordResetOtpLastSentAt = now;
 
-        var (plain, tokenHash) = ResetToken.Create();
-        var resetUrl = $"{baseUrl}/reset-password.html?t={Uri.EscapeDataString(plain)}";
-
-        var now = DateTimeOffset.UtcNow;
-        var stale = await db.CustomerPasswordResetTokens
+        var staleTokens = await db.CustomerPasswordResetTokens
             .Where(t => t.Email == email && t.UsedAt == null && t.ExpiresAt > now)
             .ToListAsync(cancellationToken);
-        foreach (var s in stale)
+        foreach (var s in staleTokens)
             s.UsedAt = now;
-
-        var row = new CustomerPasswordResetToken
-        {
-            Id = Guid.NewGuid(),
-            Email = email,
-            TokenHash = tokenHash,
-            ExpiresAt = now.AddMinutes(PasswordResetValidMinutes),
-            UsedAt = null,
-            CreatedAt = now,
-        };
-        db.CustomerPasswordResetTokens.Add(row);
 
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
         try
         {
             await db.SaveChangesAsync(cancellationToken);
-            await emailSender.SendCustomerPasswordResetEmailAsync(
-                customer.Email,
-                customer.Name,
-                resetUrl,
-                PasswordResetValidMinutes,
-                cancellationToken);
+            await emailSender.SendPasswordResetOtpEmailAsync(customer.Email, customer.Name, otp, OtpValidMinutes, cancellationToken);
             await tx.CommitAsync(cancellationToken);
         }
         catch (Exception ex)
@@ -447,7 +435,76 @@ public sealed class AuthController(
         {
             message = publicMessage,
             usedDryRun = smtp.DryRun,
-            resetUrl = smtp.DryRun ? resetUrl : null,
+            otp = smtp.DryRun ? otp : null,
+        });
+    }
+
+    /// <summary>After OTP is correct, returns a short-lived <c>resetToken</c> for <see cref="ResetPassword"/>.</summary>
+    [AllowAnonymous]
+    [HttpPost("verify-password-reset-otp")]
+    public async Task<ActionResult<object>> VerifyPasswordResetOtp(
+        [FromBody] VerifyPasswordResetOtpRequest? request,
+        CancellationToken cancellationToken)
+    {
+        if (request is null || string.IsNullOrWhiteSpace(request.Email) || string.IsNullOrWhiteSpace(request.Otp))
+            return BadRequest(new { message = "Email and verification code are required." });
+
+        var email = request.Email.Trim();
+        if (!EmailFormat.IsValid(email))
+            return BadRequest(new { message = "Invalid or expired code." });
+
+        var otpIn = request.Otp.Trim();
+        if (otpIn.Length != 6 || !otpIn.All(char.IsDigit))
+            return BadRequest(new { message = "Enter the 6-digit code from your email." });
+
+        var customer = await db.Customers.FirstOrDefaultAsync(c => c.Email == email && c.EmailVerified, cancellationToken);
+        if (customer is null || string.IsNullOrWhiteSpace(customer.PasswordResetOtpCode))
+            return BadRequest(new { message = "Invalid or expired code." });
+
+        if (customer.PasswordResetOtpExpiresAt is null || customer.PasswordResetOtpExpiresAt < DateTimeOffset.UtcNow)
+            return BadRequest(new { message = "Invalid or expired code." });
+
+        if (customer.PasswordResetOtpAttempts >= MaxOtpAttempts)
+        {
+            return StatusCode(
+                StatusCodes.Status403Forbidden,
+                new { message = "Too many incorrect attempts. Request a new code from Forgot password." });
+        }
+
+        if (!string.Equals(customer.PasswordResetOtpCode, otpIn, StringComparison.Ordinal))
+        {
+            customer.PasswordResetOtpAttempts++;
+            await db.SaveChangesAsync(cancellationToken);
+            return BadRequest(new { message = "Invalid or expired code." });
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        var stale = await db.CustomerPasswordResetTokens
+            .Where(t => t.Email == email && t.UsedAt == null && t.ExpiresAt > now)
+            .ToListAsync(cancellationToken);
+        foreach (var s in stale)
+            s.UsedAt = now;
+
+        var (plain, tokenHash) = ResetToken.Create();
+        var row = new CustomerPasswordResetToken
+        {
+            Id = Guid.NewGuid(),
+            Email = email,
+            TokenHash = tokenHash,
+            ExpiresAt = now.AddMinutes(PasswordResetAfterOtpValidMinutes),
+            UsedAt = null,
+            CreatedAt = now,
+        };
+        db.CustomerPasswordResetTokens.Add(row);
+
+        ClearCustomerPasswordResetOtp(customer);
+        await db.SaveChangesAsync(cancellationToken);
+
+        return Ok(new
+        {
+            message = "Code accepted. You can set a new password.",
+            resetToken = plain,
+            expiresInMinutes = PasswordResetAfterOtpValidMinutes,
         });
     }
 
@@ -483,6 +540,14 @@ public sealed class AuthController(
         c.EmailOtpExpiresAt = null;
         c.EmailOtpAttempts = 0;
         c.EmailOtpLastSentAt = null;
+    }
+
+    private static void ClearCustomerPasswordResetOtp(Customer c)
+    {
+        c.PasswordResetOtpCode = null;
+        c.PasswordResetOtpExpiresAt = null;
+        c.PasswordResetOtpAttempts = 0;
+        c.PasswordResetOtpLastSentAt = null;
     }
 
     /// <summary>
