@@ -18,6 +18,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { BranchDto } from "../api";
 import { MALAYSIA_STATE_FILTERS } from "../constants/malaysiaStates";
 import { useCustomer } from "../context/CustomerContext";
+import { useMapsDistance } from "../hooks/useMapsDistance";
 import type { RootStackParamList } from "../navigation/navigationRef";
 import { theme } from "../theme";
 import { distanceMeters, formatDistance } from "../utils/geo";
@@ -41,6 +42,7 @@ export function MapBranchesScreen({ navigation }: Props) {
   const insets = useSafeAreaInsets();
   const topPad = Platform.OS === "android" ? (RNStatusBar.currentHeight ?? 0) + 8 : Math.max(insets.top, 12);
   const { branches, userCoords, requestLocation, loadBranches } = useCustomer();
+  const { distances: mapsDistances } = useMapsDistance(userCoords, branches);
   const [search, setSearch] = useState("");
   const [stateFilter, setStateFilter] = useState<string>("All");
   const [filtersVisible, setFiltersVisible] = useState(false);
@@ -231,6 +233,7 @@ export function MapBranchesScreen({ navigation }: Props) {
           contentContainerStyle={{ gap: 12, paddingHorizontal: 4 }}
           renderItem={({ item: { b, dist } }) => {
             const branchOpen = getBranchOpenStatus(b) === "Open";
+            const mapsInfo = mapsDistances.get(b.id);
             return (
               <Pressable style={styles.miniCard} onPress={() => goBranchDetail(b)}>
                 <Text style={styles.miniTitle} numberOfLines={1}>{b.name}</Text>
@@ -242,7 +245,11 @@ export function MapBranchesScreen({ navigation }: Props) {
                   <Text style={[styles.miniOpen, { color: branchOpen ? "#16a34a" : "#dc2626" }]}>
                     {branchOpen ? "Open" : "Closed"}
                   </Text>
-                  {dist != null ? <Text style={styles.miniDist}>{formatDistance(dist)}</Text> : null}
+                  {mapsInfo ? (
+                    <Text style={styles.miniDist}>{mapsInfo.distanceText} · {mapsInfo.durationText}</Text>
+                  ) : dist != null ? (
+                    <Text style={styles.miniDist}>{formatDistance(dist)}</Text>
+                  ) : null}
                 </View>
                 <View style={styles.miniActions}>
                   <Pressable style={styles.miniActionBtn} onPress={() => goBookBranch(b.id)}>

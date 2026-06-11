@@ -7,6 +7,7 @@ import { useFocusEffect } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { navigationRef, type BookingStackParamList } from "../navigation/navigationRef";
 import { useCustomer } from "../context/CustomerContext";
+import { useMapsDistance } from "../hooks/useMapsDistance";
 import { theme } from "../theme";
 import { getBranchOpenStatus, getTodayHoursLabel } from "../utils/branchStatus";
 import { distanceMeters, formatDistance } from "../utils/geo";
@@ -17,6 +18,7 @@ export function BookingBranchesScreen({ navigation }: Props) {
   const insets = useSafeAreaInsets();
   const topPad = Platform.OS === "android" ? (RNStatusBar.currentHeight ?? 0) + 8 : Math.max(insets.top, 12);
   const { branches, busy, loadBranches, userCoords, profile } = useCustomer();
+  const { distances: mapsDistances } = useMapsDistance(userCoords, branches);
   const [listRefreshing, setListRefreshing] = useState(false);
   const [search, setSearch] = useState("");
   const favIds = profile?.favoriteBranchIds ?? [];
@@ -107,7 +109,9 @@ export function BookingBranchesScreen({ navigation }: Props) {
             progressBackgroundColor="#ffffff"
           />
         }
-        renderItem={({ item: { b, dist } }) => (
+        renderItem={({ item: { b, dist } }) => {
+          const mapsInfo = mapsDistances.get(b.id);
+          return (
           <Pressable style={styles.card} onPress={() => { if (navigationRef.isReady()) navigationRef.navigate("BranchDetail", { branch: b }); }}>
             <View style={styles.cardTop}>
               {/* Left icon */}
@@ -132,10 +136,16 @@ export function BookingBranchesScreen({ navigation }: Props) {
                   <Text style={styles.addr} numberOfLines={1}>{b.address}</Text>
                 ) : null}
                 <View style={styles.metaRow}>
-                  <Ionicons name="location-outline" size={13} color="#4a90d9" />
+                  <Ionicons name="car-outline" size={13} color="#4a90d9" />
                   <Text style={styles.metaText}>
-                    {dist != null ? formatDistance(dist) : "—"}
+                    {mapsInfo ? mapsInfo.distanceText : dist != null ? formatDistance(dist) : "—"}
                   </Text>
+                  {mapsInfo ? (
+                    <>
+                      <Ionicons name="time-outline" size={13} color="#4a90d9" />
+                      <Text style={styles.metaText}>{mapsInfo.durationText}</Text>
+                    </>
+                  ) : null}
                   <Ionicons name="time-outline" size={13} color="#4a90d9" />
                   <Text style={styles.metaText}>{getTodayHoursLabel(b) ?? "—"}</Text>
                   <View style={[styles.openChip, getBranchOpenStatus(b) === "Closed" && styles.closedChip]}>
@@ -173,7 +183,8 @@ export function BookingBranchesScreen({ navigation }: Props) {
               </Pressable>
             </View>
           </Pressable>
-        )}
+          );
+        }}
         ListEmptyComponent={
           busy ? (
             <Text style={styles.emptyText}>Loading…</Text>

@@ -1,13 +1,13 @@
 import { Ionicons } from "@expo/vector-icons";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { StatusBar } from "expo-status-bar";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Platform, Pressable, ScrollView, StatusBar as RNStatusBar, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useCustomer } from "../context/CustomerContext";
 import type { RootStackParamList } from "../navigation/navigationRef";
 import { theme } from "../theme";
-import { distanceMeters, formatDistance } from "../utils/geo";
+import { distanceMeters, formatDistance, fetchMapsDistance, type MapsDistanceResult } from "../utils/geo";
 import { getBranchOpenStatus, getTodayHoursLabel } from "../utils/branchStatus";
 
 type Props = NativeStackScreenProps<RootStackParamList, "BranchDetail">;
@@ -21,9 +21,16 @@ export function BranchDetailScreen({ navigation, route }: Props) {
   const favoriteBusy = togglingFavoriteBranchId === branch.id;
   const distM =
     userCoords != null ? distanceMeters(userCoords.latitude, userCoords.longitude, branch.latitude, branch.longitude) : null;
+  const [mapsInfo, setMapsInfo] = useState<MapsDistanceResult | null>(null);
   const isOpen = getBranchOpenStatus(branch) === "Open";
   const todayHours = getTodayHoursLabel(branch) ?? branch.operatingHours ?? "—";
   const [servicesExpanded, setServicesExpanded] = useState(false);
+
+  useEffect(() => {
+    if (!userCoords) return;
+    fetchMapsDistance(userCoords.latitude, userCoords.longitude, branch.latitude, branch.longitude)
+      .then(setMapsInfo);
+  }, [userCoords?.latitude, userCoords?.longitude, branch.latitude, branch.longitude]);
 
   return (
     <View style={styles.root}>
@@ -70,12 +77,23 @@ export function BranchDetailScreen({ navigation, route }: Props) {
             </View>
           </View>
 
-          {/* Distance */}
-          {distM != null ? (
+          {/* Distance — prefer Maps API (driving), fallback to Haversine (straight-line) */}
+          {(mapsInfo || distM != null) ? (
             <View style={styles.infoRow}>
-              <Ionicons name="navigate-circle-outline" size={16} color={theme.textMutedOnLight} />
+              <Ionicons name={mapsInfo ? "car-outline" : "navigate-circle-outline"} size={16} color={theme.textMutedOnLight} />
               <Text style={styles.infoText}>
-                <Text style={styles.infoStrong}>{formatDistance(distM)}</Text> from you
+                {mapsInfo ? (
+                  <>
+                    <Text style={styles.infoStrong}>{mapsInfo.distanceText}</Text>
+                    {" · "}
+                    <Text style={styles.infoStrong}>{mapsInfo.durationText}</Text>
+                    {" drive from you"}
+                  </>
+                ) : (
+                  <>
+                    <Text style={styles.infoStrong}>{formatDistance(distM!)}</Text> from you
+                  </>
+                )}
               </Text>
             </View>
           ) : null}
