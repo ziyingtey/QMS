@@ -8,6 +8,7 @@ using QMS.Api.Services;
 using QMS.Domain.Entities;
 using QMS.Infrastructure.Persistence;
 using System.Net;
+using System.Linq;
 
 namespace QMS.Api.Controllers;
 
@@ -22,35 +23,37 @@ public sealed class AuthController(
     IOptions<SmtpOptions> smtpOptions,
     ILogger<AuthController> log) : ControllerBase
 {
+    private const int OtpValidMinutes = 5;
+    private const int MaxOtpAttempts = 5;
+    private const int ResendOtpCooldownSeconds = 30;
+
     [AllowAnonymous]
     [HttpPost("register")]
     public async Task<ActionResult<RegisterPendingResponse>> Register([FromBody] RegisterRequest request, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(request.Email) || string.IsNullOrWhiteSpace(request.Password))
             return BadRequest(new { message = "Email and password are required." });
-        if (request.Password.Length < 6)
-            return BadRequest(new { message = "Password must be at least 6 characters." });
+        if (!PasswordPolicy.IsValid(request.Password, out var pwdMsg))
+            return BadRequest(new { message = pwdMsg });
 
         var email = request.Email.Trim();
         if (!EmailFormat.IsValid(email))
             return BadRequest(new { message = "Enter a valid email address." });
 
+        string? phone = string.IsNullOrWhiteSpace(request.Phone) ? null : request.Phone.Trim();
+        if (phone is not null)
+        {
+            if (phone.Length > 32)
+                return BadRequest(new { message = "Phone number is too long." });
+
+            var digitCount = phone.Count(char.IsDigit);
+            if (digitCount < 8 || digitCount > 15 || !phone.All(c => char.IsDigit(c) || " +()-".Contains(c, StringComparison.Ordinal)))
+                return BadRequest(new { message = "Enter a valid phone number, or leave the field empty." });
+        }
+
         if (await db.Customers.AnyAsync(u => u.Email == email, cancellationToken)
             || await db.StaffMembers.AnyAsync(s => s.Email == email, cancellationToken))
             return Conflict(new { message = "An account with this email already exists." });
-
-        var baseUrl = TryResolveApiPublicBaseUrl();
-        if (string.IsNullOrWhiteSpace(baseUrl))
-        {
-            return BadRequest(new
-            {
-                message =
-                    "Could not build the email verification link. Set PublicUrls:ApiPublicBaseUrl to your public API URL (HTTPS in production), or register from a client that reaches the API with a normal Host header (e.g. your PC's LAN IP, not an invalid host).",
-            });
-        }
-
-        if (string.IsNullOrWhiteSpace(publicUrls.Value.ApiPublicBaseUrl?.Trim()))
-            log.LogInformation("Using inferred API base URL for verification links: {BaseUrl}", baseUrl);
 
         var smtp = smtpOptions.Value;
         if (!smtp.DryRun)
@@ -77,26 +80,30 @@ public sealed class AuthController(
             }
         }
 
-        var token = EmailVerificationToken.Create();
+        var otp = OtpCode.CreateSixDigits();
+        var now = DateTimeOffset.UtcNow;
         var customer = new Customer
         {
             Id = Guid.NewGuid(),
             Email = email,
+            Phone = phone,
             Name = string.IsNullOrWhiteSpace(request.Name) ? email.Split('@')[0] : request.Name.Trim(),
             PasswordHash = passwordHasher.HashPassword(email, request.Password),
             EmailVerified = false,
-            EmailVerificationToken = token,
-            EmailVerificationTokenExpiresAt = DateTimeOffset.UtcNow.AddHours(24),
+            EmailVerificationToken = null,
+            EmailVerificationTokenExpiresAt = null,
+            EmailOtpCode = otp,
+            EmailOtpExpiresAt = now.AddMinutes(OtpValidMinutes),
+            EmailOtpAttempts = 0,
+            EmailOtpLastSentAt = now,
         };
-
-        var verifyUrl = $"{baseUrl}/api/auth/verify-email?token={Uri.EscapeDataString(token)}";
 
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
         try
         {
             db.Customers.Add(customer);
             await db.SaveChangesAsync(cancellationToken);
-            await emailSender.SendCustomerVerificationEmailAsync(customer.Email, customer.Name, verifyUrl, cancellationToken);
+            await emailSender.SendCustomerOtpEmailAsync(customer.Email, customer.Name, otp, OtpValidMinutes, cancellationToken);
             await tx.CommitAsync(cancellationToken);
         }
         catch (Exception ex)
@@ -108,20 +115,69 @@ public sealed class AuthController(
                 new
                 {
                     message =
-                        "Could not send the verification email. Check host, port, UseStartTls, user, password, and that your provider allows SMTP (Gmail needs an app password). No account was created. See docs/real-email-verification-smtp.md.",
+                        "Could not send the verification code email. Check host, port, UseStartTls, user, password, and that your provider allows SMTP (Gmail needs an app password). No account was created. See docs/real-email-verification-smtp.md.",
                 });
         }
 
         var dry = smtp.DryRun;
         var msg = dry
-            ? "Account is ready. SMTP dry-run is on: no real email was sent. Open the verification link from the API console output, then return here and sign in."
-            : "We sent a verification link to your email. Open it to verify, then sign in here.";
+            ? "Account is ready. SMTP dry-run is on: no real email was sent. Check the API console for the 6-digit code, enter it below, then sign in."
+            : $"We emailed a {OtpValidMinutes}-minute verification code. Enter it in the app, then sign in.";
 
         return Ok(new RegisterPendingResponse(
             RequiresEmailVerification: true,
             Message: msg,
             EmailSent: !dry,
             UsedDryRun: dry));
+    }
+
+    /// <summary>Customer enters the 6-digit code from email (primary flow).</summary>
+    [AllowAnonymous]
+    [HttpPost("verify-otp")]
+    public async Task<IActionResult> VerifyOtp([FromBody] VerifyEmailOtpRequest request, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(request.Email) || string.IsNullOrWhiteSpace(request.Otp))
+            return BadRequest(new { message = "Email and verification code are required." });
+
+        var email = request.Email.Trim();
+        if (!EmailFormat.IsValid(email))
+            return BadRequest(new { message = "Enter a valid email address." });
+
+        var otpIn = request.Otp.Trim();
+        if (otpIn.Length != 6 || !otpIn.All(char.IsDigit))
+            return BadRequest(new { message = "Enter the 6-digit code from your email." });
+
+        var customer = await db.Customers.FirstOrDefaultAsync(c => c.Email == email, cancellationToken);
+        if (customer is null || customer.EmailVerified)
+            return BadRequest(new { message = "Invalid or expired code." });
+
+        if (string.IsNullOrWhiteSpace(customer.EmailOtpCode))
+            return BadRequest(new { message = "Invalid or expired code." });
+
+        if (customer.EmailOtpExpiresAt is null || customer.EmailOtpExpiresAt < DateTimeOffset.UtcNow)
+            return BadRequest(new { message = "This code has expired. Use Resend to get a new code." });
+
+        if (customer.EmailOtpAttempts >= MaxOtpAttempts)
+        {
+            return StatusCode(
+                StatusCodes.Status403Forbidden,
+                new { message = "Too many incorrect attempts. Use Resend for a new code." });
+        }
+
+        if (!string.Equals(customer.EmailOtpCode, otpIn, StringComparison.Ordinal))
+        {
+            customer.EmailOtpAttempts++;
+            await db.SaveChangesAsync(cancellationToken);
+            return BadRequest(new { message = "Incorrect code. Check your email and try again." });
+        }
+
+        customer.EmailVerified = true;
+        ClearCustomerOtp(customer);
+        customer.EmailVerificationToken = null;
+        customer.EmailVerificationTokenExpiresAt = null;
+        await db.SaveChangesAsync(cancellationToken);
+
+        return Ok(new { message = "Email verified. You can sign in." });
     }
 
     /// <summary>Link target from the verification email (opens in the browser).</summary>
@@ -156,13 +212,14 @@ public sealed class AuthController(
             return Content(
                 HtmlMessage(
                     "Link expired",
-                    "Request a new verification email from the app (Sign in screen → Resend verification)."),
+                    "Request a new code from the app (Sign in → Resend verification code), or use the 6-digit code flow if you registered with OTP."),
                 "text/html; charset=utf-8");
         }
 
         customer.EmailVerified = true;
         customer.EmailVerificationToken = null;
         customer.EmailVerificationTokenExpiresAt = null;
+        ClearCustomerOtp(customer);
         await db.SaveChangesAsync(cancellationToken);
 
         return Content(
@@ -201,26 +258,32 @@ public sealed class AuthController(
             }
         }
 
-        var baseUrl = TryResolveApiPublicBaseUrl();
-        if (string.IsNullOrWhiteSpace(baseUrl))
-            return BadRequest(new { message = "Could not build the verification link. Set PublicUrls:ApiPublicBaseUrl." });
-
         var customer = await db.Customers.FirstOrDefaultAsync(c => c.Email == email, cancellationToken);
         if (customer is null || customer.EmailVerified)
         {
-            // Do not reveal whether the email exists.
-            return Ok(new { message = "If that address has a pending account, we sent a new link." });
+            return Ok(new { message = "If that address has a pending account, we sent a new code." });
         }
 
-        var newToken = EmailVerificationToken.Create();
-        customer.EmailVerificationToken = newToken;
-        customer.EmailVerificationTokenExpiresAt = DateTimeOffset.UtcNow.AddHours(24);
+        var now = DateTimeOffset.UtcNow;
+        if (customer.EmailOtpLastSentAt is { } lastSent
+            && now < lastSent.AddSeconds(ResendOtpCooldownSeconds))
+        {
+            var waitSec = (int)Math.Ceiling((lastSent.AddSeconds(ResendOtpCooldownSeconds) - now).TotalSeconds);
+            return StatusCode(StatusCodes.Status429TooManyRequests, new { message = $"Please wait {waitSec} seconds before resending." });
+        }
+
+        var otp = OtpCode.CreateSixDigits();
+        customer.EmailOtpCode = otp;
+        customer.EmailOtpExpiresAt = now.AddMinutes(OtpValidMinutes);
+        customer.EmailOtpAttempts = 0;
+        customer.EmailOtpLastSentAt = now;
+        customer.EmailVerificationToken = null;
+        customer.EmailVerificationTokenExpiresAt = null;
         await db.SaveChangesAsync(cancellationToken);
 
-        var verifyUrl = $"{baseUrl}/api/auth/verify-email?token={Uri.EscapeDataString(newToken)}";
         try
         {
-            await emailSender.SendCustomerVerificationEmailAsync(customer.Email, customer.Name, verifyUrl, cancellationToken);
+            await emailSender.SendCustomerOtpEmailAsync(customer.Email, customer.Name, otp, OtpValidMinutes, cancellationToken);
         }
         catch (Exception ex)
         {
@@ -230,11 +293,11 @@ public sealed class AuthController(
                 new
                 {
                     message =
-                        "Could not send email. Check SMTP settings, or use Smtp:DryRun for local testing (link is logged on the API).",
+                        "Could not send email. Check SMTP settings, or use Smtp:DryRun for local testing (code is logged on the API).",
                 });
         }
 
-        return Ok(new { message = "If that address has a pending account, we sent a new link." });
+        return Ok(new { message = "If that address has a pending account, we sent a new code." });
     }
 
     [AllowAnonymous]
@@ -255,7 +318,7 @@ public sealed class AuthController(
             {
                 return BadRequest(new
                 {
-                    message = "Please verify your email first. Check your inbox for the link, or use Resend verification.",
+                    message = "Please verify your email first. Enter the code from your email, or tap Resend verification.",
                 });
             }
 
@@ -295,6 +358,14 @@ public sealed class AuthController(
 
         await sessions.TryRevokeAsync(request.RefreshToken.Trim(), cancellationToken);
         return NoContent();
+    }
+
+    private static void ClearCustomerOtp(Customer c)
+    {
+        c.EmailOtpCode = null;
+        c.EmailOtpExpiresAt = null;
+        c.EmailOtpAttempts = 0;
+        c.EmailOtpLastSentAt = null;
     }
 
     /// <summary>

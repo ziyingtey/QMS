@@ -105,62 +105,96 @@ export type BookingSummary = {
   ticketNumber: string | null;
 };
 
+function messageForHttpStatus(status: number): string {
+  if (status === 401 || status === 403) {
+    return "Incorrect email or password, or your session expired. Please sign in again.";
+  }
+  if (status === 404) return "We couldn’t find that. It may have been removed or the link is out of date.";
+  if (status === 409) return "An account with this email already exists.";
+  if (status === 429) return "Too many attempts. Please wait a moment and try again.";
+  if (status >= 500) return "The service is temporarily unavailable. Please try again in a few minutes.";
+  if (status === 400) return "We couldn’t complete that. Check your details and try again.";
+  return "Something went wrong. Check your internet connection and try again.";
+}
+
+/** User-facing text for failed API responses (no "HTTP 400" prefixes). */
 async function parseError(res: Response): Promise<string> {
-  const statusLine = `HTTP ${res.status}${res.statusText ? ` ${res.statusText}` : ""}`;
+  const status = res.status;
   let text = "";
   try {
     text = await res.text();
   } catch {
-    return `${statusLine}. (Could not read response body.)`;
+    return messageForHttpStatus(status);
   }
-  if (!text?.trim()) {
-    if (res.status === 401) {
-      return `${statusLine}. Login session rejected (empty body is normal for JWT). Open Profile → sign out → sign in again. If you changed Jwt:Key or switched API machines, old tokens stop working.`;
-    }
-    return `${statusLine}. Empty response — wrong route or proxy; confirm EXPO_PUBLIC_API_URL matches a running QMS API.`;
+
+  const trimmed = text?.trim();
+  if (!trimmed) {
+    return messageForHttpStatus(status);
   }
 
   try {
-    const j = JSON.parse(text) as {
+    const j = JSON.parse(trimmed) as {
       message?: string;
       detail?: string;
       title?: string;
-      errors?: Record<string, string[]>;
+      errors?: Record<string, string[] | string>;
     };
+    const title = typeof j.title === "string" ? j.title.trim() : "";
     const fromFields =
       (typeof j.detail === "string" && j.detail.trim()) ||
       (typeof j.message === "string" && j.message.trim()) ||
-      (typeof j.title === "string" && j.title.trim());
-    if (fromFields) return `${statusLine}. ${fromFields}`;
-    if (j.errors) {
-      const lines = Object.entries(j.errors).flatMap(([k, v]) => v.map((x) => `${k}: ${x}`));
-      if (lines.length) return `${statusLine}. ${lines.join("\n")}`;
+      (title && title !== "One or more validation errors occurred." ? title : "");
+    if (fromFields) return fromFields;
+
+    if (j.errors && typeof j.errors === "object") {
+      const lines = Object.entries(j.errors).flatMap(([, v]) => {
+        if (Array.isArray(v)) return v.map(String);
+        if (typeof v === "string") return [v];
+        return [];
+      });
+      if (lines.length) return lines.join(" ");
     }
   } catch {
-    /* not JSON — often HTML from a proxy or wrong host */
+    /* not JSON — proxy HTML, etc. */
   }
-  const snippet = text.length > 300 ? `${text.slice(0, 300)}…` : text;
-  return `${statusLine}. ${snippet}`;
+
+  if (trimmed.startsWith("<") || trimmed.length > 400) {
+    return messageForHttpStatus(status);
+  }
+
+  return trimmed;
 }
 
 /** Text for Alert dialogs when `fetch` or API helpers throw. */
 export function userFacingApiError(e: unknown): string {
   if (e instanceof TypeError) {
-    return `${e.message}\n\nTip: a phone or emulator often cannot use 127.0.0.1 for the API. Use your computer’s LAN IP in EXPO_PUBLIC_API_URL, or http://10.0.2.2:5154 on Android emulator.`;
+    return "We couldn’t reach the server. If you’re on a phone or emulator, use your computer’s LAN IP in EXPO_PUBLIC_API_URL (Android emulator: http://10.0.2.2:5154).";
   }
-  if (e instanceof Error && e.message.trim()) return e.message;
-  return "Unknown error. Confirm the QMS API is running and EXPO_PUBLIC_API_URL matches it.";
+  if (e instanceof Error) {
+    const raw = e.message.trim();
+    if (!raw) return "Something went wrong. Try again.";
+    const stripped = raw.replace(/^HTTP\s+\d{3}[^\n]*\.\s*/i, "").trim();
+    return stripped.length > 0 ? stripped : raw;
+  }
+  return "Something went wrong. Confirm the QMS API is running and EXPO_PUBLIC_API_URL matches it.";
 }
 
 export async function apiRegister(
   email: string,
   password: string,
   name?: string,
+  phone?: string | null,
 ): Promise<LoginResponse | RegisterPendingResponse> {
+  const p = phone?.trim();
   const res = await fetch(`${API_BASE}/api/auth/register`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password, name }),
+    body: JSON.stringify({
+      email,
+      password,
+      name,
+      phone: p && p.length > 0 ? p : null,
+    }),
   });
   if (!res.ok) throw new Error(await parseError(res));
   const json = (await res.json()) as Record<string, unknown>;
@@ -180,6 +214,16 @@ export async function apiResendVerificationEmail(email: string): Promise<{ messa
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email }),
+  });
+  if (!res.ok) throw new Error(await parseError(res));
+  return (await res.json()) as { message: string };
+}
+
+export async function apiVerifyEmailOtp(email: string, otp: string): Promise<{ message: string }> {
+  const res = await fetch(`${API_BASE}/api/auth/verify-otp`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, otp }),
   });
   if (!res.ok) throw new Error(await parseError(res));
   return (await res.json()) as { message: string };
@@ -348,7 +392,7 @@ export async function apiCreateBooking(body: {
   });
   if (!res.ok) {
     const msg = await parseError(res);
-    throw new Error(`${res.status}: ${msg}`);
+    throw new Error(msg);
   }
   return res.json() as Promise<BookingCreated>;
 }

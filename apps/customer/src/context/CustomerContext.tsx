@@ -10,6 +10,7 @@ import {
   apiMyBookings,
   apiRegister,
   apiResendVerificationEmail,
+  apiVerifyEmailOtp,
   apiToggleFavoriteBranch,
   probeCustomerSession,
   userFacingApiError,
@@ -51,6 +52,8 @@ type CustomerContextValue = {
   setPassword: (s: string) => void;
   registerName: string;
   setRegisterName: (s: string) => void;
+  registerPhone: string;
+  setRegisterPhone: (s: string) => void;
   /** After successful register: show verification sent UI until cleared. */
   pendingVerification: PendingVerification | null;
   clearPendingVerification: () => void;
@@ -66,8 +69,12 @@ type CustomerContextValue = {
   /** True while acquiring a GPS fix. */
   locationBusy: boolean;
   onLogin: () => Promise<void>;
+  /** Set when login/register API fails; cleared by the login screen when the user edits fields. */
+  authFormError: string | null;
+  clearAuthFormError: () => void;
   onLogout: () => Promise<void>;
   resendVerificationEmail: () => Promise<void>;
+  verifyEmailOtp: (otp: string) => Promise<void>;
   checkIn: (bookingId: string) => Promise<void>;
   cancelBooking: (id: string) => Promise<boolean>;
   navigateToQueueTrack: (branchId: string, ticket: string, bookingId?: string) => void;
@@ -109,7 +116,11 @@ export function CustomerProvider({ children }: { children: React.ReactNode }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [registerName, setRegisterName] = useState("");
+  const [registerPhone, setRegisterPhone] = useState("");
   const [pendingVerification, setPendingVerification] = useState<PendingVerification | null>(null);
+  const [authFormError, setAuthFormError] = useState<string | null>(null);
+
+  const clearAuthFormError = useCallback(() => setAuthFormError(null), []);
 
   useEffect(() => {
     void (async () => {
@@ -166,7 +177,7 @@ export function CustomerProvider({ children }: { children: React.ReactNode }) {
       const list = await apiBranches();
       setBranches(list);
     } catch (e) {
-      Alert.alert("Error", e instanceof Error ? e.message : String(e));
+      Alert.alert("Couldn’t load branches", userFacingApiError(e));
     } finally {
       setBusy(false);
     }
@@ -209,7 +220,7 @@ export function CustomerProvider({ children }: { children: React.ReactNode }) {
     try {
       setProfile(await apiToggleFavoriteBranch(branchId));
     } catch (e) {
-      Alert.alert("Favorite branches", e instanceof Error ? e.message : String(e));
+      Alert.alert("Favorite branches", userFacingApiError(e));
     } finally {
       setTogglingFavoriteBranchId(null);
     }
@@ -288,9 +299,15 @@ export function CustomerProvider({ children }: { children: React.ReactNode }) {
 
   const onLogin = useCallback(async () => {
     setBusy(true);
+    setAuthFormError(null);
     try {
       if (authMode === "register") {
-        const res = await apiRegister(email.trim(), password, registerName.trim() || undefined);
+        const res = await apiRegister(
+          email.trim(),
+          password,
+          registerName.trim() || undefined,
+          registerPhone.trim() || undefined,
+        );
         if (isRegisterPending(res)) {
           setPendingVerification({
             email: email.trim(),
@@ -317,32 +334,58 @@ export function CustomerProvider({ children }: { children: React.ReactNode }) {
       setToken(res.token);
       setUserEmail(email.trim());
     } catch (e) {
-      Alert.alert(authMode === "register" ? "Register failed" : "Login failed", userFacingApiError(e));
+      setAuthFormError(userFacingApiError(e));
     } finally {
       setBusy(false);
     }
-  }, [authMode, email, password, registerName]);
+  }, [authMode, email, password, registerName, registerPhone]);
 
   const clearPendingVerification = useCallback(() => {
     setPendingVerification(null);
   }, []);
 
   const resendVerificationEmail = useCallback(async () => {
-    const em = email.trim();
+    const em = (pendingVerification?.email ?? email).trim();
     if (!em) {
-      Alert.alert("Email required", "Enter your email above, then tap Resend verification.");
+      Alert.alert("Email required", "We need your account email to resend the code.");
       return;
     }
     setBusy(true);
     try {
       const { message } = await apiResendVerificationEmail(em);
-      Alert.alert("Verification email", message);
+      Alert.alert("Verification", message);
     } catch (e) {
       Alert.alert("Could not resend", userFacingApiError(e));
     } finally {
       setBusy(false);
     }
-  }, [email]);
+  }, [email, pendingVerification]);
+
+  const verifyEmailOtp = useCallback(
+    async (otp: string) => {
+      const em = (pendingVerification?.email ?? email).trim();
+      const code = otp.trim();
+      if (!em) {
+        Alert.alert("Email missing", "Go back to Sign in and use the same email you registered with.");
+        return;
+      }
+      if (code.length !== 6 || !/^\d{6}$/.test(code)) {
+        Alert.alert("Invalid code", "Enter the 6-digit code from your email.");
+        return;
+      }
+      setBusy(true);
+      try {
+        const { message } = await apiVerifyEmailOtp(em, code);
+        Alert.alert("Email verified", message);
+        setPendingVerification(null);
+      } catch (e) {
+        Alert.alert("Verification failed", userFacingApiError(e));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [email, pendingVerification],
+  );
 
   const onLogout = useCallback(async () => {
     const r = await readRefreshToken();
@@ -351,6 +394,9 @@ export function CustomerProvider({ children }: { children: React.ReactNode }) {
     setToken(null);
     setUserEmail(null);
     setPendingVerification(null);
+    setAuthFormError(null);
+    setRegisterName("");
+    setRegisterPhone("");
     setBookings([]);
     setProfile(null);
     setUserCoords(null);
@@ -367,7 +413,7 @@ export function CustomerProvider({ children }: { children: React.ReactNode }) {
         Alert.alert("Marked as arrived", "You can join the call queue for your slot. Pull down on Queue to refresh.");
         await refreshBookings();
       } catch (e) {
-        Alert.alert("Arrived", e instanceof Error ? e.message : String(e));
+        Alert.alert("Arrived", userFacingApiError(e));
       } finally {
         setBusy(false);
       }
@@ -388,7 +434,7 @@ export function CustomerProvider({ children }: { children: React.ReactNode }) {
         await refreshBookings();
         return true;
       } catch (e) {
-        Alert.alert("Cancel", e instanceof Error ? e.message : String(e));
+        Alert.alert("Cancel", userFacingApiError(e));
         return false;
       } finally {
         setBusy(false);
@@ -417,6 +463,8 @@ export function CustomerProvider({ children }: { children: React.ReactNode }) {
         setPassword,
         registerName,
         setRegisterName,
+        registerPhone,
+        setRegisterPhone,
         pendingVerification,
         clearPendingVerification,
         loadBranches,
@@ -428,8 +476,11 @@ export function CustomerProvider({ children }: { children: React.ReactNode }) {
         requestLocation,
         locationBusy,
         onLogin,
+        authFormError,
+        clearAuthFormError,
         onLogout,
         resendVerificationEmail,
+        verifyEmailOtp,
         checkIn,
         cancelBooking,
         navigateToQueueTrack,
@@ -448,6 +499,7 @@ export function CustomerProvider({ children }: { children: React.ReactNode }) {
       email,
       password,
       registerName,
+      registerPhone,
       pendingVerification,
       loadBranches,
       refreshBookings,
@@ -458,8 +510,11 @@ export function CustomerProvider({ children }: { children: React.ReactNode }) {
       requestLocation,
       locationBusy,
       onLogin,
+      authFormError,
+      clearAuthFormError,
       onLogout,
       resendVerificationEmail,
+      verifyEmailOtp,
       clearPendingVerification,
       checkIn,
       cancelBooking,

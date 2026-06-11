@@ -72,14 +72,14 @@ The API **does not** insert demo branches or demo users on startup. After `Ensur
 2. Set **`PublicUrls:ApiPublicBaseUrl`** to the **public HTTPS URL** of this API for production (e.g. `https://api.yourdomain.com`). If you leave it empty, the API **infers** `http(s)://Host` from each incoming request (fine when your Expo app uses your PC’s **LAN IP** and port, e.g. `http://192.168.0.12:5154` — the verification link matches that host). For real users on the public internet, set the explicit HTTPS URL behind your reverse proxy.
 3. Set **`Smtp`** (`Host`, `Port`, `UseStartTls`, `User`, `Password`, `FromEmail`, `FromName`) for real outbound mail. Port **587** + `UseStartTls: true` is typical; port **465** often uses `UseStartTls: false` (implicit SSL). Gmail / Outlook usually require an **app password** or SMTP relay.
 
-   **Development** defaults to **real SMTP** (`Smtp:DryRun` is `false`, `Host` is `smtp.gmail.com`). Fill **`User`**, **`Password`** (Gmail **app password**), and **`FromEmail`** in `appsettings.Development.json` (or [user secrets](https://learn.microsoft.com/en-us/aspnet/core/security/app-secrets)) — see **[docs/real-email-verification-smtp.md](docs/real-email-verification-smtp.md)**. Set **`DryRun` to `true` only** if you intentionally want no mail (URL in API logs only).
+   **Development** defaults to **real SMTP** (`Smtp:DryRun` is `false`, `Host` is `smtp.gmail.com`). Fill **`User`**, **`Password`** (Gmail **app password**), and **`FromEmail`** in `appsettings.Development.json` (or [user secrets](https://learn.microsoft.com/en-us/aspnet/core/security/app-secrets)) — see **[docs/real-email-verification-smtp.md](docs/real-email-verification-smtp.md)** and the **[step-by-step checklist](docs/email-setup-step-by-step.md)**. Set **`DryRun` to `true` only** if you intentionally want no mail (URL in API logs only).
 
 There are **no** pre-seeded accounts like `customer@qms.demo` unless you insert them yourself.
 
 ## Key HTTP endpoints
 
 - `POST /api/auth/login` — JWT for SignalR (`?access_token=...`) and `[Authorize]` APIs.
-- `POST /api/auth/register` — Create **customer** account; sends verification email when SMTP is configured, or **dry-run** in Development (link in API logs). No JWT until the user opens the link and then signs in. Staff unchanged.
+- `POST /api/auth/register` — Create **customer** account; sends verification email when SMTP is configured, or **dry-run** in Development (link in API logs). No JWT until the user opens the link and then signs in. Staff unchanged. **Password policy:** at least **6** characters with **uppercase**, **lowercase**, **digit**, and **symbol** (e.g. `@#%`); the customer app shows the same rules while registering.
 - `GET /api/auth/verify-email?token=` — Link from the email (browser); marks the customer verified.
 - `POST /api/auth/resend-verification` — JSON `{ "email" }` to send a new link (pending accounts only).
 - `GET /api/branches` — Branches + services (includes **geofence**, **service day window** for slot generation).

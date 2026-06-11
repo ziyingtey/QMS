@@ -34,6 +34,7 @@ public sealed class QmsDbContext : DbContext
             e.Property(x => x.Email).HasMaxLength(256);
             e.Property(x => x.Name).HasMaxLength(200);
             e.Property(x => x.EmailVerificationToken).HasMaxLength(128);
+            e.Property(x => x.EmailOtpCode).HasMaxLength(6);
             e.Property(x => x.CreatedAt).HasDefaultValueSql("TODATETIMEOFFSET(SYSUTCDATETIME(), '+00:00')");
         });
 

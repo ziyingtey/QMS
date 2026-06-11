@@ -1,7 +1,8 @@
 import { Ionicons } from "@expo/vector-icons";
 import { StatusBar } from "expo-status-bar";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
+  Image,
   KeyboardAvoidingView,
   Linking,
   Platform,
@@ -16,6 +17,45 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useCustomer } from "../context/CustomerContext";
 import { theme } from "../theme";
+import { describePasswordPolicyFailure, getPasswordRuleChecks } from "../utils/passwordPolicy";
+
+const qgoWordmark = require("../../assets/qgo-wordmark.png") as number;
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/** Empty is valid (optional). Otherwise digits + spaces, +, -, (); 8–15 digits. */
+function isOptionalPhoneValid(phone: string): boolean {
+  const t = phone.trim();
+  if (!t) return true;
+  if (t.length > 32) return false;
+  if (!/^[\d\s+()-]+$/.test(t)) return false;
+  const digits = t.replace(/\D/g, "").length;
+  return digits >= 8 && digits <= 15;
+}
+
+type FieldErrors = Partial<Record<"email" | "password" | "confirm" | "phone", string>>;
+
+function PasswordRuleHints({ password }: { password: string }) {
+  const c = getPasswordRuleChecks(password);
+  const items: { ok: boolean; label: string }[] = [
+    { ok: c.minLength, label: "At least 6 characters" },
+    { ok: c.hasUpper, label: "Uppercase letter (A–Z)" },
+    { ok: c.hasLower, label: "Lowercase letter (a–z)" },
+    { ok: c.hasDigit, label: "Number (0–9)" },
+    { ok: c.hasSymbol, label: "Symbol (e.g. @, #, $, %)" },
+  ];
+  return (
+    <View style={styles.ruleHints}>
+      <Text style={styles.ruleHintsTitle}>Your password needs:</Text>
+      {items.map((it) => (
+        <View key={it.label} style={styles.ruleRow}>
+          <Ionicons name={it.ok ? "checkmark-circle" : "ellipse-outline"} size={17} color={it.ok ? "#00804a" : "#94a3b8"} />
+          <Text style={[styles.ruleRowText, it.ok && styles.ruleRowTextMet]}>{it.label}</Text>
+        </View>
+      ))}
+    </View>
+  );
+}
 
 export function LoginScreen() {
   const insets = useSafeAreaInsets();
@@ -28,13 +68,66 @@ export function LoginScreen() {
     setPassword,
     registerName,
     setRegisterName,
+    registerPhone,
+    setRegisterPhone,
     onLogin,
     busy,
+    authFormError,
+    clearAuthFormError,
     resendVerificationEmail,
+    verifyEmailOtp,
     pendingVerification,
     clearPendingVerification,
   } = useCustomer();
-  const [showPassword, setShowPassword] = useState(false);
+  const [passwordVisible, setPasswordVisible] = useState(false);
+  const [verificationCode, setVerificationCode] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
+
+  useEffect(() => {
+    setFieldErrors({});
+    clearAuthFormError();
+    if (authMode === "login") setConfirmPassword("");
+  }, [authMode, clearAuthFormError]);
+
+  useEffect(() => {
+    if (pendingVerification) {
+      setConfirmPassword("");
+      setFieldErrors({});
+    }
+  }, [pendingVerification]);
+
+  const clearFieldErrors = () => {
+    setFieldErrors({});
+    clearAuthFormError();
+  };
+
+  const validateAndSubmit = () => {
+    const next: FieldErrors = {};
+    const em = email.trim();
+    if (!em) next.email = "Email is required.";
+    else if (!EMAIL_RE.test(em)) next.email = "Enter a valid email address.";
+
+    if (!password) next.password = "Password is required.";
+    else if (authMode === "register") {
+      const pwdFail = describePasswordPolicyFailure(password);
+      if (pwdFail) next.password = pwdFail;
+    }
+
+    if (authMode === "register") {
+      if (password !== confirmPassword) next.confirm = "Passwords do not match.";
+      if (!isOptionalPhoneValid(registerPhone)) {
+        next.phone = "Enter a valid phone number, or leave this blank.";
+      }
+    }
+
+    if (Object.keys(next).length > 0) {
+      setFieldErrors(next);
+      return;
+    }
+    setFieldErrors({});
+    void onLogin();
+  };
 
   const topPad =
     (Platform.OS === "android" ? (RNStatusBar.currentHeight ?? 0) + 8 : Math.max(insets.top, 20)) + 48;
@@ -54,28 +147,45 @@ export function LoginScreen() {
         >
           <StatusBar style="dark" />
           <View style={styles.brandArea}>
-            <View style={styles.logoWrap}>
-              <Ionicons name="mail-open-outline" size={28} color={theme.headerNavy} />
-            </View>
-            <Text style={styles.brandName}>QGo</Text>
+            <Image source={qgoWordmark} style={styles.wordmark} accessibilityLabel="QGo" />
             <Text style={styles.brandSub}>Skip the queue, book ahead</Text>
           </View>
 
           <View style={styles.sentCard}>
-            <Text style={styles.sentTitle}>Verification email sent</Text>
-            <Text style={styles.sentLead}>We have sent a verification link to:</Text>
+            <Text style={styles.sentTitle}>Check your email</Text>
+            <Text style={styles.sentLead}>We sent a 6-digit verification code to:</Text>
             <Text style={styles.sentEmail}>{em}</Text>
             {pendingVerification.usedDryRun ? (
               <Text style={styles.dryRunHint}>
                 No email was sent to Gmail (or anywhere). The API is in SMTP dry-run mode: nothing is delivered to Inbox or Spam.
                 {"\n\n"}
-                To verify without mail: open the terminal where the API is running, copy the verification URL from the log, paste it into Safari, then tap Continue to Sign in.
+                To verify without mail: look at the terminal where the API is running, copy the 6-digit code from the log, enter it below, then tap Verify code.
                 {"\n\n"}
                 To get a real message in Gmail: set Smtp:DryRun to false and add real SMTP settings (see docs/real-email-verification-smtp.md in the repo).
               </Text>
             ) : (
-              <Text style={styles.sentHint}>Open your inbox, tap the link in the email, then return here to sign in.</Text>
+              <Text style={styles.sentHint}>Open your inbox, copy the 6-digit code, and enter it below.</Text>
             )}
+
+            <Text style={styles.otpLabel}>Verification code</Text>
+            <TextInput
+              style={styles.otpInput}
+              placeholder="000000"
+              placeholderTextColor="#94a3b8"
+              value={verificationCode}
+              onChangeText={(t) => setVerificationCode(t.replace(/\D/g, "").slice(0, 6))}
+              keyboardType="number-pad"
+              maxLength={6}
+              editable={!busy}
+            />
+
+            <Pressable
+              style={[styles.submitBtn, { marginBottom: 12 }, busy && { opacity: 0.6 }]}
+              onPress={() => void verifyEmailOtp(verificationCode)}
+              disabled={busy}
+            >
+              <Text style={styles.submitText}>{busy ? "Please wait…" : "Verify code"}</Text>
+            </Pressable>
 
             <Pressable
               style={[styles.secondaryBtn, busy && { opacity: 0.6 }]}
@@ -92,11 +202,11 @@ export function LoginScreen() {
               disabled={busy}
             >
               <Ionicons name="refresh-outline" size={20} color={theme.headerNavy} style={{ marginRight: 8 }} />
-              <Text style={styles.secondaryBtnText}>{busy ? "Please wait…" : "Resend email"}</Text>
+              <Text style={styles.secondaryBtnText}>{busy ? "Please wait…" : "Resend code"}</Text>
             </Pressable>
 
-            <Pressable style={[styles.submitBtn, busy && { opacity: 0.6 }]} onPress={() => clearPendingVerification()} disabled={busy}>
-              <Text style={styles.submitText}>Continue to Sign in</Text>
+            <Pressable style={[styles.secondaryBtn, busy && { opacity: 0.6 }]} onPress={() => clearPendingVerification()} disabled={busy}>
+              <Text style={styles.secondaryBtnText}>Back to Sign in</Text>
             </Pressable>
           </View>
         </ScrollView>
@@ -113,10 +223,7 @@ export function LoginScreen() {
         <StatusBar style="dark" />
 
         <View style={styles.brandArea}>
-          <View style={styles.logoWrap}>
-            <Ionicons name="people" size={28} color={theme.headerNavy} />
-          </View>
-          <Text style={styles.brandName}>QGo</Text>
+          <Image source={qgoWordmark} style={styles.wordmark} accessibilityLabel="QGo" />
           <Text style={styles.brandSub}>Skip the queue, book ahead</Text>
         </View>
 
@@ -146,51 +253,119 @@ export function LoginScreen() {
                   placeholder="Your full name"
                   placeholderTextColor="#94a3b8"
                   value={registerName}
-                  onChangeText={setRegisterName}
+                  onChangeText={(t) => {
+                    setRegisterName(t);
+                    clearFieldErrors();
+                  }}
                   autoCapitalize="words"
                 />
               </View>
             </View>
           ) : null}
 
+          {authMode === "register" ? (
+            <View style={styles.fieldWrap}>
+              <Text style={styles.fieldLabel}>Phone (optional)</Text>
+              <View style={styles.inputRow}>
+                <Ionicons name="call-outline" size={18} color="#94a3b8" style={styles.inputIcon} />
+                <TextInput
+                  style={styles.input}
+                  placeholder="+60 12-345 6789"
+                  placeholderTextColor="#94a3b8"
+                  value={registerPhone}
+                  onChangeText={(t) => {
+                    setRegisterPhone(t);
+                    clearFieldErrors();
+                  }}
+                  keyboardType="phone-pad"
+                  autoCorrect={false}
+                />
+              </View>
+              {fieldErrors.phone ? <Text style={styles.fieldError}>{fieldErrors.phone}</Text> : null}
+            </View>
+          ) : null}
+
           <View style={styles.fieldWrap}>
             <Text style={styles.fieldLabel}>Email</Text>
-            <View style={styles.inputRow}>
+            <View style={[styles.inputRow, fieldErrors.email ? styles.inputRowError : null]}>
               <Ionicons name="mail-outline" size={18} color="#94a3b8" style={styles.inputIcon} />
               <TextInput
                 style={styles.input}
                 placeholder="you@example.com"
                 placeholderTextColor="#94a3b8"
                 value={email}
-                onChangeText={setEmail}
+                onChangeText={(t) => {
+                  setEmail(t);
+                  clearFieldErrors();
+                }}
                 autoCapitalize="none"
                 keyboardType="email-address"
                 autoCorrect={false}
               />
             </View>
+            {fieldErrors.email ? <Text style={styles.fieldError}>{fieldErrors.email}</Text> : null}
           </View>
 
           <View style={styles.fieldWrap}>
             <Text style={styles.fieldLabel}>Password</Text>
-            <View style={styles.inputRow}>
+            <View style={[styles.inputRow, fieldErrors.password ? styles.inputRowError : null]}>
               <Ionicons name="lock-closed-outline" size={18} color="#94a3b8" style={styles.inputIcon} />
               <TextInput
                 style={styles.input}
                 placeholder="Enter your password"
                 placeholderTextColor="#94a3b8"
                 value={password}
-                onChangeText={setPassword}
-                secureTextEntry={!showPassword}
+                onChangeText={(t) => {
+                  setPassword(t);
+                  clearFieldErrors();
+                }}
+                secureTextEntry={!passwordVisible}
               />
-              <Pressable onPress={() => setShowPassword(!showPassword)} hitSlop={8} style={styles.eyeBtn}>
-                <Ionicons name={showPassword ? "eye-off-outline" : "eye-outline"} size={20} color="#94a3b8" />
+              <Pressable
+                onPress={() => setPasswordVisible((v) => !v)}
+                hitSlop={8}
+                style={styles.eyeBtn}
+                accessibilityRole="button"
+                accessibilityLabel={passwordVisible ? "Hide password" : "Show password"}
+              >
+                <Ionicons name={passwordVisible ? "eye-outline" : "eye-off-outline"} size={20} color="#94a3b8" />
               </Pressable>
             </View>
+            {fieldErrors.password ? <Text style={styles.fieldError}>{fieldErrors.password}</Text> : null}
+            {authMode === "register" ? <PasswordRuleHints password={password} /> : null}
           </View>
+
+          {authMode === "register" ? (
+            <View style={styles.fieldWrap}>
+              <Text style={styles.fieldLabel}>Confirm password</Text>
+              <View style={[styles.inputRow, fieldErrors.confirm ? styles.inputRowError : null]}>
+                <Ionicons name="lock-closed-outline" size={18} color="#94a3b8" style={styles.inputIcon} />
+                <TextInput
+                  style={styles.input}
+                  placeholder="Re-enter your password"
+                  placeholderTextColor="#94a3b8"
+                  value={confirmPassword}
+                  onChangeText={(t) => {
+                    setConfirmPassword(t);
+                    clearFieldErrors();
+                  }}
+                  secureTextEntry={!passwordVisible}
+                />
+              </View>
+              {fieldErrors.confirm ? <Text style={styles.fieldError}>{fieldErrors.confirm}</Text> : null}
+            </View>
+          ) : null}
+
+          {authFormError ? (
+            <View style={styles.authBanner} accessibilityRole="alert">
+              <Ionicons name="alert-circle" size={20} color="#b91c1c" style={styles.authBannerIcon} />
+              <Text style={styles.authBannerText}>{authFormError}</Text>
+            </View>
+          ) : null}
 
           <Pressable
             style={[styles.submitBtn, busy && { opacity: 0.6 }]}
-            onPress={() => void onLogin()}
+            onPress={validateAndSubmit}
             disabled={busy}
           >
             <Text style={styles.submitText}>
@@ -210,7 +385,7 @@ export function LoginScreen() {
 
           {authMode === "login" ? (
             <Pressable onPress={() => void resendVerificationEmail()} disabled={busy} style={styles.resendWrap}>
-              <Text style={styles.resendText}>Resend verification email</Text>
+              <Text style={styles.resendText}>Resend verification code</Text>
             </Pressable>
           ) : null}
         </View>
@@ -227,22 +402,12 @@ const styles = StyleSheet.create({
   },
   brandArea: {
     alignItems: "center",
-    marginBottom: 40,
+    marginBottom: 32,
   },
-  logoWrap: {
-    width: 56,
+  wordmark: {
+    width: 240,
     height: 56,
-    borderRadius: 16,
-    backgroundColor: "#eef4ff",
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 14,
-  },
-  brandName: {
-    fontSize: 32,
-    fontWeight: "900",
-    color: theme.headerNavy,
-    letterSpacing: -0.5,
+    resizeMode: "contain",
   },
   brandSub: {
     fontSize: 14,
@@ -292,6 +457,28 @@ const styles = StyleSheet.create({
     lineHeight: 19,
     marginBottom: 20,
     overflow: "hidden",
+  },
+  otpLabel: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#334155",
+    marginBottom: 8,
+    alignSelf: "flex-start",
+  },
+  otpInput: {
+    width: "100%",
+    fontSize: 22,
+    fontWeight: "700",
+    letterSpacing: 6,
+    textAlign: "center",
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: "#e2e8f0",
+    backgroundColor: "#fff",
+    color: theme.headerNavy,
+    marginBottom: 8,
   },
   secondaryBtn: {
     flexDirection: "row",
@@ -345,6 +532,62 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     marginLeft: 2,
   },
+  fieldError: {
+    fontSize: 13,
+    color: "#b91c1c",
+    marginTop: 6,
+    marginLeft: 2,
+    lineHeight: 18,
+  },
+  ruleHints: {
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: "#e2e8f0",
+  },
+  ruleHintsTitle: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#64748b",
+    marginBottom: 8,
+  },
+  ruleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 6,
+  },
+  ruleRowText: {
+    fontSize: 13,
+    color: "#64748b",
+    flex: 1,
+    marginLeft: 8,
+  },
+  ruleRowTextMet: {
+    color: "#166534",
+    fontWeight: "500",
+  },
+  authBanner: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    backgroundColor: "#fef2f2",
+    borderWidth: 1,
+    borderColor: "#fecaca",
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 4,
+    marginTop: 4,
+  },
+  authBannerIcon: {
+    marginRight: 8,
+    marginTop: 1,
+  },
+  authBannerText: {
+    flex: 1,
+    fontSize: 14,
+    color: "#991b1b",
+    lineHeight: 20,
+    fontWeight: "500",
+  },
   inputRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -353,6 +596,10 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderColor: "#e2e8f0",
     paddingHorizontal: 14,
+  },
+  inputRowError: {
+    borderColor: "#f87171",
+    backgroundColor: "#fff",
   },
   inputIcon: {
     marginRight: 10,

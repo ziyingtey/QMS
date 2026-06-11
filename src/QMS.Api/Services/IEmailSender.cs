@@ -7,4 +7,11 @@ public interface IEmailSender
         string recipientDisplayName,
         string verifyUrl,
         CancellationToken cancellationToken = default);
+
+    Task SendCustomerOtpEmailAsync(
+        string toEmail,
+        string recipientDisplayName,
+        string otpCode,
+        int validMinutes,
+        CancellationToken cancellationToken = default);
 }
