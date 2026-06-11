@@ -1,3 +1,10 @@
+/** After register: server asked user to verify email (no JWT yet). */
+export type PendingVerification = {
+  email: string;
+  /** True when API used SMTP dry-run (no real mail; link in server logs). */
+  usedDryRun: boolean;
+};
+
 /** Auth API payload (camelCase from ASP.NET). */
 export type LoginResponse = {
   token: string;
@@ -13,6 +20,7 @@ export type RegisterPendingResponse = {
   requiresEmailVerification: true;
   message: string;
   emailSent: boolean;
+  usedDryRun?: boolean;
 };
 
 export function isRegisterPending(

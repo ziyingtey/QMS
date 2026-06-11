@@ -25,7 +25,7 @@ import {
   saveUserEmail,
   readRefreshToken,
 } from "../authStorage";
-import { isRegisterPending } from "../authTypes";
+import { isRegisterPending, type PendingVerification } from "../authTypes";
 import { getValidCustomerAccessToken, revokeCustomerRefreshRemote, subscribeCustomerAccessToken } from "../customerSession";
 import { navigationRef } from "../navigation/navigationRef";
 import { useBranchRealtime } from "../useBranchRealtime";
@@ -51,6 +51,9 @@ type CustomerContextValue = {
   setPassword: (s: string) => void;
   registerName: string;
   setRegisterName: (s: string) => void;
+  /** After successful register: show verification sent UI until cleared. */
+  pendingVerification: PendingVerification | null;
+  clearPendingVerification: () => void;
   loadBranches: () => Promise<void>;
   refreshBookings: () => Promise<void>;
   refreshProfile: () => Promise<void>;
@@ -106,6 +109,7 @@ export function CustomerProvider({ children }: { children: React.ReactNode }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [registerName, setRegisterName] = useState("");
+  const [pendingVerification, setPendingVerification] = useState<PendingVerification | null>(null);
 
   useEffect(() => {
     void (async () => {
@@ -288,10 +292,10 @@ export function CustomerProvider({ children }: { children: React.ReactNode }) {
       if (authMode === "register") {
         const res = await apiRegister(email.trim(), password, registerName.trim() || undefined);
         if (isRegisterPending(res)) {
-          Alert.alert(
-            "Check your email",
-            res.message + (res.emailSent ? "" : "\n\n(If you did not receive it, try Resend verification after switching to Sign in.)"),
-          );
+          setPendingVerification({
+            email: email.trim(),
+            usedDryRun: Boolean(res.usedDryRun),
+          });
           setAuthMode("login");
           setPassword("");
           return;
@@ -299,6 +303,7 @@ export function CustomerProvider({ children }: { children: React.ReactNode }) {
         await saveToken(res.token);
         if (res.refreshToken) await saveRefreshToken(res.refreshToken);
         await saveUserEmail(email.trim());
+        setPendingVerification(null);
         setToken(res.token);
         setUserEmail(email.trim());
         return;
@@ -308,6 +313,7 @@ export function CustomerProvider({ children }: { children: React.ReactNode }) {
       await saveToken(res.token);
       if (res.refreshToken) await saveRefreshToken(res.refreshToken);
       await saveUserEmail(email.trim());
+      setPendingVerification(null);
       setToken(res.token);
       setUserEmail(email.trim());
     } catch (e) {
@@ -316,6 +322,10 @@ export function CustomerProvider({ children }: { children: React.ReactNode }) {
       setBusy(false);
     }
   }, [authMode, email, password, registerName]);
+
+  const clearPendingVerification = useCallback(() => {
+    setPendingVerification(null);
+  }, []);
 
   const resendVerificationEmail = useCallback(async () => {
     const em = email.trim();
@@ -340,6 +350,7 @@ export function CustomerProvider({ children }: { children: React.ReactNode }) {
     await clearAuthStores();
     setToken(null);
     setUserEmail(null);
+    setPendingVerification(null);
     setBookings([]);
     setProfile(null);
     setUserCoords(null);
@@ -406,6 +417,8 @@ export function CustomerProvider({ children }: { children: React.ReactNode }) {
         setPassword,
         registerName,
         setRegisterName,
+        pendingVerification,
+        clearPendingVerification,
         loadBranches,
         refreshBookings,
         refreshProfile,
@@ -435,6 +448,7 @@ export function CustomerProvider({ children }: { children: React.ReactNode }) {
       email,
       password,
       registerName,
+      pendingVerification,
       loadBranches,
       refreshBookings,
       refreshProfile,
@@ -446,6 +460,7 @@ export function CustomerProvider({ children }: { children: React.ReactNode }) {
       onLogin,
       onLogout,
       resendVerificationEmail,
+      clearPendingVerification,
       checkIn,
       cancelBooking,
     ],

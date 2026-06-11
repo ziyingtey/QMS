@@ -15,6 +15,16 @@ public sealed class SmtpEmailSender(IOptions<SmtpOptions> smtpOptions, ILogger<S
         string verifyUrl,
         CancellationToken cancellationToken = default)
     {
+        if (_smtp.DryRun)
+        {
+            log.LogWarning(
+                "SMTP DryRun is ON — no email sent. Verification link for {ToEmail}: {VerifyUrl}",
+                toEmail,
+                verifyUrl);
+            await Task.CompletedTask.ConfigureAwait(false);
+            return;
+        }
+
         if (string.IsNullOrWhiteSpace(_smtp.Host))
             throw new InvalidOperationException("Smtp:Host is not configured.");
         if (string.IsNullOrWhiteSpace(_smtp.FromEmail))
@@ -26,8 +36,10 @@ public sealed class SmtpEmailSender(IOptions<SmtpOptions> smtpOptions, ILogger<S
         message.Subject = "Verify your QGo account";
 
         var body =
-            $"Welcome to QGo (Smart Queue).\r\n\r\n"
-            + $"Please verify your email by opening this link in your browser:\r\n{verifyUrl}\r\n\r\n"
+            "Welcome to QGo (Smart Queue Management).\r\n\r\n"
+            + "Please verify your email by opening this link in your browser:\r\n"
+            + verifyUrl
+            + "\r\n\r\n"
             + "This link expires in 24 hours.\r\n\r\n"
             + "If you did not create an account, you can ignore this message.\r\n";
 

@@ -3,6 +3,7 @@ import { StatusBar } from "expo-status-bar";
 import { useState } from "react";
 import {
   KeyboardAvoidingView,
+  Linking,
   Platform,
   Pressable,
   ScrollView,
@@ -30,18 +31,84 @@ export function LoginScreen() {
     onLogin,
     busy,
     resendVerificationEmail,
+    pendingVerification,
+    clearPendingVerification,
   } = useCustomer();
   const [showPassword, setShowPassword] = useState(false);
+
+  const topPad =
+    (Platform.OS === "android" ? (RNStatusBar.currentHeight ?? 0) + 8 : Math.max(insets.top, 20)) + 48;
+  const bottomPad = insets.bottom + 40;
+
+  if (pendingVerification) {
+    const em = pendingVerification.email;
+    const openMail = () => {
+      void Linking.openURL(`mailto:${encodeURIComponent(em)}`);
+    };
+
+    return (
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+        <ScrollView
+          contentContainerStyle={[styles.scroll, { paddingTop: topPad, paddingBottom: bottomPad }]}
+          keyboardShouldPersistTaps="handled"
+        >
+          <StatusBar style="dark" />
+          <View style={styles.brandArea}>
+            <View style={styles.logoWrap}>
+              <Ionicons name="mail-open-outline" size={28} color={theme.headerNavy} />
+            </View>
+            <Text style={styles.brandName}>QGo</Text>
+            <Text style={styles.brandSub}>Skip the queue, book ahead</Text>
+          </View>
+
+          <View style={styles.sentCard}>
+            <Text style={styles.sentTitle}>Verification email sent</Text>
+            <Text style={styles.sentLead}>We have sent a verification link to:</Text>
+            <Text style={styles.sentEmail}>{em}</Text>
+            {pendingVerification.usedDryRun ? (
+              <Text style={styles.dryRunHint}>
+                Development mode (SMTP dry-run): no real email was sent. Check the API terminal for the verification URL,
+                open it in Safari, then tap Continue to Sign in below.
+              </Text>
+            ) : (
+              <Text style={styles.sentHint}>Open your inbox, tap the link in the email, then return here to sign in.</Text>
+            )}
+
+            <Pressable
+              style={[styles.secondaryBtn, busy && { opacity: 0.6 }]}
+              onPress={() => void openMail()}
+              disabled={busy}
+            >
+              <Ionicons name="mail-outline" size={20} color={theme.headerNavy} style={{ marginRight: 8 }} />
+              <Text style={styles.secondaryBtnText}>Open email app</Text>
+            </Pressable>
+
+            <Pressable
+              style={[styles.secondaryBtn, busy && { opacity: 0.6 }]}
+              onPress={() => void resendVerificationEmail()}
+              disabled={busy}
+            >
+              <Ionicons name="refresh-outline" size={20} color={theme.headerNavy} style={{ marginRight: 8 }} />
+              <Text style={styles.secondaryBtnText}>{busy ? "Please wait…" : "Resend email"}</Text>
+            </Pressable>
+
+            <Pressable style={[styles.submitBtn, busy && { opacity: 0.6 }]} onPress={() => clearPendingVerification()} disabled={busy}>
+              <Text style={styles.submitText}>Continue to Sign in</Text>
+            </Pressable>
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    );
+  }
 
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
       <ScrollView
-        contentContainerStyle={[styles.scroll, { paddingTop: (Platform.OS === "android" ? (RNStatusBar.currentHeight ?? 0) + 8 : Math.max(insets.top, 20)) + 48, paddingBottom: insets.bottom + 40 }]}
+        contentContainerStyle={[styles.scroll, { paddingTop: topPad, paddingBottom: bottomPad }]}
         keyboardShouldPersistTaps="handled"
       >
         <StatusBar style="dark" />
 
-        {/* Top branding */}
         <View style={styles.brandArea}>
           <View style={styles.logoWrap}>
             <Ionicons name="people" size={28} color={theme.headerNavy} />
@@ -50,7 +117,6 @@ export function LoginScreen() {
           <Text style={styles.brandSub}>Skip the queue, book ahead</Text>
         </View>
 
-        {/* Mode toggle */}
         <View style={styles.modeRow}>
           <Pressable
             onPress={() => setAuthMode("login")}
@@ -66,16 +132,15 @@ export function LoginScreen() {
           </Pressable>
         </View>
 
-        {/* Form */}
         <View style={styles.form}>
           {authMode === "register" ? (
             <View style={styles.fieldWrap}>
-              <Text style={styles.fieldLabel}>Name</Text>
+              <Text style={styles.fieldLabel}>Full name</Text>
               <View style={styles.inputRow}>
                 <Ionicons name="person-outline" size={18} color="#94a3b8" style={styles.inputIcon} />
                 <TextInput
                   style={styles.input}
-                  placeholder="Your name"
+                  placeholder="Your full name"
                   placeholderTextColor="#94a3b8"
                   value={registerName}
                   onChangeText={setRegisterName}
@@ -157,7 +222,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 28,
     backgroundColor: "#fff",
   },
-  // Branding
   brandArea: {
     alignItems: "center",
     marginBottom: 40,
@@ -182,7 +246,66 @@ const styles = StyleSheet.create({
     color: "#64748b",
     marginTop: 6,
   },
-  // Mode toggle
+  sentCard: {
+    backgroundColor: "#f8fafc",
+    borderRadius: 16,
+    padding: 24,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+  },
+  sentTitle: {
+    fontSize: 20,
+    fontWeight: "800",
+    color: theme.headerNavy,
+    textAlign: "center",
+    marginBottom: 12,
+  },
+  sentLead: {
+    fontSize: 14,
+    color: "#64748b",
+    textAlign: "center",
+    marginBottom: 6,
+  },
+  sentEmail: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: "#0f172a",
+    textAlign: "center",
+    marginBottom: 14,
+  },
+  sentHint: {
+    fontSize: 14,
+    color: "#475569",
+    textAlign: "center",
+    lineHeight: 21,
+    marginBottom: 20,
+  },
+  dryRunHint: {
+    fontSize: 13,
+    color: "#b45309",
+    backgroundColor: "#fffbeb",
+    padding: 12,
+    borderRadius: 10,
+    lineHeight: 19,
+    marginBottom: 20,
+    overflow: "hidden",
+  },
+  secondaryBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: "#e2e8f0",
+    paddingVertical: 14,
+    marginBottom: 10,
+  },
+  secondaryBtnText: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: theme.headerNavy,
+  },
   modeRow: {
     flexDirection: "row",
     backgroundColor: "#f1f5f9",
@@ -206,7 +329,6 @@ const styles = StyleSheet.create({
   },
   modeText: { fontSize: 14, fontWeight: "600", color: "#94a3b8" },
   modeTextOn: { color: theme.headerNavy, fontWeight: "700" },
-  // Form
   form: {
     gap: 0,
   },

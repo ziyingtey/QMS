@@ -169,6 +169,7 @@ export async function apiRegister(
       requiresEmailVerification: true,
       message: String(json.message ?? "Check your email."),
       emailSent: Boolean(json.emailSent),
+      usedDryRun: Boolean(json.usedDryRun),
     };
   }
   return json as unknown as LoginResponse;

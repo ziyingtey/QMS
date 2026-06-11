@@ -19,6 +19,7 @@ public sealed class AuthController(
     AuthSessionService sessions,
     IEmailSender emailSender,
     IOptions<PublicUrlOptions> publicUrls,
+    IOptions<SmtpOptions> smtpOptions,
     ILogger<AuthController> log) : ControllerBase
 {
     [AllowAnonymous]
@@ -31,6 +32,9 @@ public sealed class AuthController(
             return BadRequest(new { message = "Password must be at least 6 characters." });
 
         var email = request.Email.Trim();
+        if (!EmailFormat.IsValid(email))
+            return BadRequest(new { message = "Enter a valid email address." });
+
         if (await db.Customers.AnyAsync(u => u.Email == email, cancellationToken)
             || await db.StaffMembers.AnyAsync(s => s.Email == email, cancellationToken))
             return Conflict(new { message = "An account with this email already exists." });
@@ -47,6 +51,22 @@ public sealed class AuthController(
 
         if (string.IsNullOrWhiteSpace(publicUrls.Value.ApiPublicBaseUrl?.Trim()))
             log.LogInformation("Using inferred API base URL for verification links: {BaseUrl}", baseUrl);
+
+        var smtp = smtpOptions.Value;
+        if (!smtp.DryRun)
+        {
+            if (string.IsNullOrWhiteSpace(smtp.Host))
+            {
+                return BadRequest(new
+                {
+                    message =
+                        "Smtp:Host is not configured. To test registration without real email, set \"Smtp\": { \"DryRun\": true } in appsettings.Development.json (verification URL is printed in the API console).",
+                });
+            }
+
+            if (string.IsNullOrWhiteSpace(smtp.FromEmail))
+                return BadRequest(new { message = "Smtp:FromEmail is not configured." });
+        }
 
         var token = EmailVerificationToken.Create();
         var customer = new Customer
@@ -79,14 +99,20 @@ public sealed class AuthController(
                 new
                 {
                     message =
-                        "Could not send the verification email. Check Smtp settings (host, port, credentials) and that the mailbox allows SMTP. No account was created.",
+                        "Could not send the verification email. Check Smtp host, port, UseStartTls, user, password, and that your provider allows SMTP. If you are only testing locally, set Smtp:DryRun to true so no mail is sent (link is logged on the API). No account was created.",
                 });
         }
 
+        var dry = smtp.DryRun;
+        var msg = dry
+            ? "Account is ready. SMTP dry-run is on: no real email was sent. Open the verification link from the API console output, then return here and sign in."
+            : "We sent a verification link to your email. Open it to verify, then sign in here.";
+
         return Ok(new RegisterPendingResponse(
             RequiresEmailVerification: true,
-            Message: "We sent a verification link to your email. Open it to verify, then sign in here.",
-            EmailSent: true));
+            Message: msg,
+            EmailSent: !dry,
+            UsedDryRun: dry));
     }
 
     /// <summary>Link target from the verification email (opens in the browser).</summary>
@@ -109,7 +135,9 @@ public sealed class AuthController(
         if (customer.EmailVerified)
         {
             return Content(
-                HtmlMessage("Already verified", "You can return to the app and sign in."),
+                HtmlVerificationInfo(
+                    "Already verified",
+                    "You can return to the QGo app and sign in with your email and password."),
                 "text/html; charset=utf-8");
         }
 
@@ -129,7 +157,7 @@ public sealed class AuthController(
         await db.SaveChangesAsync(cancellationToken);
 
         return Content(
-            HtmlMessage("Email verified", "You can return to the QGo app and sign in."),
+            HtmlVerificationSuccess(),
             "text/html; charset=utf-8");
     }
 
@@ -141,6 +169,21 @@ public sealed class AuthController(
             return BadRequest(new { message = "Email is required." });
 
         var email = request.Email.Trim();
+        if (!EmailFormat.IsValid(email))
+            return BadRequest(new { message = "Enter a valid email address." });
+
+        var smtp = smtpOptions.Value;
+        if (!smtp.DryRun)
+        {
+            if (string.IsNullOrWhiteSpace(smtp.Host) || string.IsNullOrWhiteSpace(smtp.FromEmail))
+            {
+                return BadRequest(new
+                {
+                    message = "SMTP is not fully configured on the server. For local testing without mail, set Smtp:DryRun to true.",
+                });
+            }
+        }
+
         var baseUrl = TryResolveApiPublicBaseUrl();
         if (string.IsNullOrWhiteSpace(baseUrl))
             return BadRequest(new { message = "Could not build the verification link. Set PublicUrls:ApiPublicBaseUrl." });
@@ -167,7 +210,11 @@ public sealed class AuthController(
             log.LogError(ex, "Resend verification failed for {Email}.", email);
             return StatusCode(
                 StatusCodes.Status502BadGateway,
-                new { message = "Could not send email. Check SMTP configuration on the server." });
+                new
+                {
+                    message =
+                        "Could not send email. Check SMTP settings, or use Smtp:DryRun for local testing (link is logged on the API).",
+                });
         }
 
         return Ok(new { message = "If that address has a pending account, we sent a new link." });
@@ -178,6 +225,9 @@ public sealed class AuthController(
     public async Task<ActionResult<LoginResponse>> Login([FromBody] LoginRequest request, CancellationToken cancellationToken)
     {
         var email = request.Email.Trim();
+        if (!EmailFormat.IsValid(email))
+            return BadRequest(new { message = "Enter a valid email address." });
+
         var customer = await db.Customers.AsNoTracking().FirstOrDefaultAsync(u => u.Email == email, cancellationToken);
         if (customer is not null)
         {
@@ -260,6 +310,47 @@ public sealed class AuthController(
         if (string.IsNullOrWhiteSpace(header)) return null;
         var comma = header.IndexOf(',');
         return (comma >= 0 ? header[..comma] : header).Trim();
+    }
+
+    private static string HtmlVerificationSuccess()
+    {
+        const string title = "Email verified successfully";
+        const string body = "Your account has been activated. Return to the QGo app and sign in with your email and password.";
+        var safeTitle = WebUtility.HtmlEncode(title);
+        var safeBody = WebUtility.HtmlEncode(body);
+        return string.Concat(
+            "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\"/><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"/><title>",
+            safeTitle,
+            "</title><style>",
+            "body{font-family:system-ui,-apple-system,sans-serif;margin:0;padding:32px 20px;background:#f5f5f5;color:#1a1a1a}",
+            ".card{max-width:28rem;margin:0 auto;background:#fff;border-radius:16px;padding:28px;box-shadow:0 2px 12px rgba(0,0,0,.08)}",
+            ".ok{font-size:40px;text-align:center;margin-bottom:8px;line-height:1}",
+            "h1{font-size:1.35rem;margin:0 0 12px;text-align:center;font-weight:700}",
+            "p{line-height:1.55;margin:0;color:#475569;font-size:16px;text-align:center}",
+            "</style></head><body><div class=\"card\"><div class=\"ok\">✅</div><h1>",
+            safeTitle,
+            "</h1><p>",
+            safeBody,
+            "</p></div></body></html>");
+    }
+
+    private static string HtmlVerificationInfo(string title, string body)
+    {
+        var safeTitle = WebUtility.HtmlEncode(title);
+        var safeBody = WebUtility.HtmlEncode(body);
+        return string.Concat(
+            "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\"/><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"/><title>",
+            safeTitle,
+            "</title><style>",
+            "body{font-family:system-ui,-apple-system,sans-serif;margin:0;padding:32px 20px;background:#f5f5f5;color:#1a1a1a}",
+            ".card{max-width:28rem;margin:0 auto;background:#fff;border-radius:16px;padding:28px;box-shadow:0 2px 12px rgba(0,0,0,.08)}",
+            "h1{font-size:1.2rem;margin:0 0 12px}",
+            "p{line-height:1.55;margin:0;color:#475569;font-size:15px}",
+            "</style></head><body><div class=\"card\"><h1>",
+            safeTitle,
+            "</h1><p>",
+            safeBody,
+            "</p></div></body></html>");
     }
 
     private static string HtmlMessage(string title, string body)
