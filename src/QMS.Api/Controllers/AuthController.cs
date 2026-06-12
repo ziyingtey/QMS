@@ -121,8 +121,8 @@ public sealed class AuthController(
 
         var dry = smtp.DryRun;
         var msg = dry
-            ? "Account is ready. SMTP dry-run is on: no real email was sent. Check the API console for the 6-digit code, enter it below, then sign in."
-            : $"We emailed a {OtpValidMinutes}-minute verification code. Enter it in the app, then sign in.";
+            ? "Account is ready. SMTP dry-run is on: no real email was sent. Check the API console for the 6-digit code and enter it in the app to verify your email."
+            : $"We emailed a {OtpValidMinutes}-minute verification code. Enter it in the app to verify your email.";
 
         return Ok(new RegisterPendingResponse(
             RequiresEmailVerification: true,
@@ -312,15 +312,11 @@ public sealed class AuthController(
         if (customer is not null)
         {
             var ok = passwordHasher.VerifyHashedPassword(email, customer.PasswordHash, request.Password);
-            if (ok == PasswordVerificationResult.Failed) return Unauthorized();
-
-            if (!customer.EmailVerified)
+            if (ok == PasswordVerificationResult.Failed)
             {
-                return BadRequest(new
-                {
-                    message =
-                        "Please verify your email before signing in. Use the verification screen in the app with the code we sent, or open the verification link from your email.",
-                });
+                return StatusCode(
+                    StatusCodes.Status401Unauthorized,
+                    new { message = "Wrong password." });
             }
 
             const string role = "Customer";
@@ -328,10 +324,20 @@ public sealed class AuthController(
         }
 
         var staff = await db.StaffMembers.AsNoTracking().FirstOrDefaultAsync(s => s.Email == email, cancellationToken);
-        if (staff is null) return Unauthorized();
+        if (staff is null)
+        {
+            return StatusCode(
+                StatusCodes.Status401Unauthorized,
+                new { message = "Incorrect email or password." });
+        }
 
         var staffOk = passwordHasher.VerifyHashedPassword(email, staff.PasswordHash, request.Password);
-        if (staffOk == PasswordVerificationResult.Failed) return Unauthorized();
+        if (staffOk == PasswordVerificationResult.Failed)
+        {
+            return StatusCode(
+                StatusCodes.Status401Unauthorized,
+                new { message = "Wrong password." });
+        }
 
         var staffRole = staff.Role.ToString();
         return Ok(await sessions.CreateSessionAsync(staff.Id, staff.Email, staffRole, staff.BranchId, cancellationToken));

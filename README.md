@@ -64,7 +64,7 @@ Default dev server: `http://localhost:5173`.
 The API **does not** insert demo branches or demo users on startup. After `EnsureCreated`, tables are **empty** until you load data:
 
 - **Branches / services / counters / staff:** use SQL scripts under `database/` (e.g. `schema.sql`, `insert-branches-*.sql`, `insert-service-types-all-branches.sql`) in SSMS or your pipeline, or add your own **admin/import** flow later.
-- **Customers:** `POST /api/auth/register` (then verify via email), or insert into `CUSTOMERS` with a valid password hash **and** `EmailVerified = 1` if you script test users (otherwise login is blocked until verified).
+- **Customers:** `POST /api/auth/register` (sends a verification code; sign-in still works with email/password if `EmailVerified` is false), or insert into `CUSTOMERS` with a valid password hash. Set `EmailVerified = 1` when you want the account treated as verified (e.g. scripted test users or after they complete OTP / link verification).
 
 ### Customer email verification (SMTP)
 
@@ -80,7 +80,7 @@ There are **no** pre-seeded accounts like `customer@qms.demo` unless you insert 
 ## Key HTTP endpoints
 
 - `POST /api/auth/login` — JWT for SignalR (`?access_token=...`) and `[Authorize]` APIs.
-- `POST /api/auth/register` — Create **customer** account; sends verification email when SMTP is configured, or **dry-run** in Development (link in API logs). No JWT until the user opens the link and then signs in. Staff unchanged. **Password policy:** at least **6** characters with **uppercase**, **lowercase**, **digit**, and **symbol** (e.g. `@#%`); the customer app shows the same rules while registering.
+- `POST /api/auth/register` — Create **customer** account; sends a verification code when SMTP is configured, or **dry-run** in Development (code in API logs). Response is **pending verification** (no JWT from register); the user can **sign in** with `POST /api/auth/login` using the same email/password without completing verification first. Staff unchanged. **Password policy:** at least **6** characters with **uppercase**, **lowercase**, **digit**, and **symbol** (e.g. `@#%`); the customer app shows the same rules while registering.
 - `GET /api/auth/verify-email?token=` — Link from the email (browser); marks the customer verified.
 - `POST /api/auth/verify-otp` — JSON `{ "email", "otp" }` for the 6-digit in-app verification flow.
 - `POST /api/auth/resend-verification` — JSON `{ "email" }` to send a new link (pending accounts only).

@@ -144,7 +144,13 @@ async function parseError(res: Response): Promise<string> {
       (typeof j.detail === "string" && j.detail.trim()) ||
       (typeof j.message === "string" && j.message.trim()) ||
       (title && title !== "One or more validation errors occurred." ? title : "");
-    if (fromFields) return fromFields;
+    if (fromFields) {
+      // ASP.NET ProblemDetails often uses title "Unauthorized" with no message — not helpful in-app.
+      if ((status === 401 || status === 403) && /^(unauthorized|forbidden)$/i.test(fromFields)) {
+        return messageForHttpStatus(status);
+      }
+      return fromFields;
+    }
 
     if (j.errors && typeof j.errors === "object") {
       const lines = Object.entries(j.errors).flatMap(([, v]) => {
