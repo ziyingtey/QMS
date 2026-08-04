@@ -10,7 +10,7 @@ Backend reference implementation for your specification: **unified queue**, **on
 | `QMS.Application` | Pure logic: capacity engine, wait-time estimator, hybrid dispatch selector. |
 | `QMS.Infrastructure` | EF Core `QmsDbContext`, in-memory dispatch round state (swap for Redis in production). |
 | `QMS.Api` | REST API, SignalR `QueueHub`, `QmsQueueService`, **background late / no-show policy**. |
-| `apps/customer` | **Expo (React Native)** — booking, walk-in, **SignalR live refresh**, optional **GPS check-in**, queue tracking. |
+| `apps/customer` | **Expo (React Native)** — booking, walk-in, **branch search**, **Google Maps Distance Matrix** (driving distance/duration; Haversine fallback), **Directions** in external maps, **SignalR live refresh**, optional **GPS check-in**, queue tracking. |
 | `apps/staff-web` | **Vite + React + TypeScript** — teller deck & manager console, **SignalR** live KPIs and queues. |
 
 ## Run locally
@@ -68,10 +68,9 @@ The API **does not** insert demo branches or demo users on startup. After `Ensur
 
 ### Customer email verification (SMTP)
 
-1. Run `database/add-customer-email-verification.sql` on your SQL Server if the database already existed before this feature (`EnsureCreated` only applies on empty databases).
-2. Run `database/add-customer-password-reset.sql` if you need **forgot password** on an existing database (otherwise `EnsureCreated` on an empty DB picks up `schema.sql` / model changes when applicable).
-3. Set **`PublicUrls:ApiPublicBaseUrl`** to the **public HTTPS URL** of this API for production (e.g. `https://api.yourdomain.com`). If you leave it empty, the API **infers** `http(s)://Host` from each incoming request (fine when your Expo app uses your PC’s **LAN IP** and port, e.g. `http://192.168.0.12:5154` — the verification link matches that host). For real users on the public internet, set the explicit HTTPS URL behind your reverse proxy.
-4. Set **`Smtp`** (`Host`, `Port`, `UseStartTls`, `User`, `Password`, `FromEmail`, `FromName`) for real outbound mail. Port **587** + `UseStartTls: true` is typical; port **465** often uses `UseStartTls: false` (implicit SSL). Gmail / Outlook usually require an **app password** or SMTP relay.
+1. For a **new** SQL Server database, either run `dotnet run` once (`EnsureCreated`) or run `database/schema.sql` in SSMS (same structure as EF). Then load seed data with `insert-*.sql` as needed.
+2. Set **`PublicUrls:ApiPublicBaseUrl`** to the **public HTTPS URL** of this API for production (e.g. `https://api.yourdomain.com`). If you leave it empty, the API **infers** `http(s)://Host` from each incoming request (fine when your Expo app uses your PC’s **LAN IP** and port, e.g. `http://192.168.0.12:5154` — the verification link matches that host). For real users on the public internet, set the explicit HTTPS URL behind your reverse proxy.
+3. Set **`Smtp`** (`Host`, `Port`, `UseStartTls`, `User`, `Password`, `FromEmail`, `FromName`) for real outbound mail. Port **587** + `UseStartTls: true` is typical; port **465** often uses `UseStartTls: false` (implicit SSL). Gmail / Outlook usually require an **app password** or SMTP relay.
 
    **Development** defaults to **real SMTP** (`Smtp:DryRun` is `false`, `Host` is `smtp.gmail.com`). Fill **`User`**, **`Password`** (Gmail **app password**), and **`FromEmail`** in `appsettings.Development.json` (or [user secrets](https://learn.microsoft.com/en-us/aspnet/core/security/app-secrets)) — see **[docs/real-email-verification-smtp.md](docs/real-email-verification-smtp.md)** and the **[step-by-step checklist](docs/email-setup-step-by-step.md)**. Set **`DryRun` to `true` only** if you intentionally want no mail (URL in API logs only).
 
