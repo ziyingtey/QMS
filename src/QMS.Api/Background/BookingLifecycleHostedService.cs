@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using QMS.Api.Hubs;
+using QMS.Api.Services;
 using QMS.Domain.Enums;
 using QMS.Infrastructure.Persistence;
 
@@ -40,6 +41,7 @@ public sealed class BookingLifecycleHostedService(
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<QmsDbContext>();
         var hub = scope.ServiceProvider.GetRequiredService<IHubContext<QueueHub>>();
+        var notifications = scope.ServiceProvider.GetRequiredService<CustomerNotificationService>();
         var now = DateTimeOffset.UtcNow;
 
         // Called tickets that exceeded grace window → Missed
@@ -50,6 +52,7 @@ public sealed class BookingLifecycleHostedService(
             .ToListAsync(ct);
 
         var branchIds = new HashSet<Guid>();
+        var missedForNotify = new List<(Guid CustomerId, Guid? BookingId, string Ticket, Guid BranchId)>();
 
         foreach (var q in calledEntries)
         {
@@ -63,6 +66,9 @@ public sealed class BookingLifecycleHostedService(
             if (q.Booking is { } bk && bk.Status is BookingStatus.Confirmed or BookingStatus.CheckedIn)
                 bk.Status = BookingStatus.Cancelled;
 
+            if (q.Booking?.CustomerId is Guid cid)
+                missedForNotify.Add((cid, q.BookingId, q.TicketNumber, q.BranchId));
+
             branchIds.Add(q.BranchId);
         }
 
@@ -70,6 +76,17 @@ public sealed class BookingLifecycleHostedService(
             return;
 
         await db.SaveChangesAsync(ct);
+        foreach (var (customerId, bookingId, ticket, branchId) in missedForNotify)
+        {
+            await notifications.NotifyAsync(
+                customerId,
+                NotificationKind.Missed,
+                $"Ticket {ticket} was missed after the grace period. Please take a new queue number if you still need service.",
+                bookingId,
+                ticket,
+                branchId,
+                ct);
+        }
         foreach (var bid in branchIds)
             await hub.Clients.Group(QueueHub.BranchGroup(bid)).SendAsync("QueueUpdated", bid, ct);
     }

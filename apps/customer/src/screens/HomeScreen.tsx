@@ -64,6 +64,8 @@ export function HomeScreen({
     refreshBookings,
     refreshProfile,
     navigateToQueueTrack,
+    unreadNotificationCount,
+    refreshUnreadNotificationCount,
   } = useCustomer();
   const { distances: mapsDistances } = useMapsDistance(userCoords, branches);
   const [homeRefreshing, setHomeRefreshing] = useState(false);
@@ -85,11 +87,11 @@ export function HomeScreen({
   const onHomeRefresh = useCallback(async () => {
     setHomeRefreshing(true);
     try {
-      await Promise.all([loadBranches(), refreshBookings(), refreshProfile(), requestLocation()]);
+      await Promise.all([loadBranches(), refreshBookings(), refreshProfile(), refreshUnreadNotificationCount(), requestLocation()]);
     } finally {
       setHomeRefreshing(false);
     }
-  }, [loadBranches, refreshBookings, refreshProfile, requestLocation]);
+  }, [loadBranches, refreshBookings, refreshProfile, refreshUnreadNotificationCount, requestLocation]);
 
   const primaryBooking = bookings.find(
     (b) => b.ticketNumber && b.status !== "Cancelled" && b.status !== "Completed" && b.status !== "NoShow",
@@ -237,11 +239,21 @@ export function HomeScreen({
             </View>
             <Pressable
               accessibilityLabel="Notifications"
-              onPress={() => navigation.navigate("Notifications" as never)}
+              onPress={() => {
+                void refreshUnreadNotificationCount();
+                navigation.navigate("Notifications" as never);
+              }}
               style={styles.notifBtn}
               hitSlop={8}
             >
               <Ionicons name="notifications-outline" size={22} color="rgba(255,255,255,0.85)" />
+              {unreadNotificationCount > 0 ? (
+                <View style={styles.notifBadge}>
+                  <Text style={styles.notifBadgeText}>
+                    {unreadNotificationCount > 99 ? "99+" : String(unreadNotificationCount)}
+                  </Text>
+                </View>
+              ) : null}
             </Pressable>
           </View>
         </View>
@@ -574,7 +586,22 @@ const styles = StyleSheet.create({
   avatarLetter: { fontSize: 18, fontWeight: "800", color: "#fff" },
   hello: { fontSize: 18, fontWeight: "800", color: "#fff" },
   addressLine: { fontSize: 12, color: "rgba(255,255,255,0.75)", marginTop: 3, lineHeight: 16 },
-  notifBtn: { padding: 8 },
+  notifBtn: { padding: 8, position: "relative" },
+  notifBadge: {
+    position: "absolute",
+    top: 2,
+    right: 2,
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: theme.danger,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 4,
+    borderWidth: 2,
+    borderColor: theme.headerNavy,
+  },
+  notifBadgeText: { color: "#fff", fontSize: 10, fontWeight: "800", lineHeight: 12 },
   /* Search bar row — search + filter icon */
   searchRow: {
     flexDirection: "row",

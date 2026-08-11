@@ -8,6 +8,7 @@ import {
   apiCustomerMe,
   apiLogin,
   apiMyBookings,
+  apiNotificationsUnreadCount,
   apiRegister,
   apiResendVerificationEmail,
   apiVerifyEmailOtp,
@@ -30,6 +31,8 @@ import { isRegisterPending, type PendingVerification } from "../authTypes";
 import { getValidCustomerAccessToken, revokeCustomerRefreshRemote, subscribeCustomerAccessToken } from "../customerSession";
 import { navigationRef } from "../navigation/navigationRef";
 import { useBranchRealtime } from "../useBranchRealtime";
+import { useCustomerNotifications } from "../useCustomerNotifications";
+import { useNotificationTapHandler } from "../useNotificationTapHandler";
 
 type CustomerContextValue = {
   /** False until SecureStore has been read (and optional session probe finished). */
@@ -78,6 +81,8 @@ type CustomerContextValue = {
   checkIn: (bookingId: string) => Promise<void>;
   cancelBooking: (id: string) => Promise<boolean>;
   navigateToQueueTrack: (branchId: string, ticket: string, bookingId?: string) => void;
+  unreadNotificationCount: number;
+  refreshUnreadNotificationCount: () => Promise<void>;
 };
 
 const CustomerContext = createContext<CustomerContextValue | null>(null);
@@ -119,8 +124,22 @@ export function CustomerProvider({ children }: { children: React.ReactNode }) {
   const [registerPhone, setRegisterPhone] = useState("");
   const [pendingVerification, setPendingVerification] = useState<PendingVerification | null>(null);
   const [authFormError, setAuthFormError] = useState<string | null>(null);
+  const [unreadNotificationCount, setUnreadNotificationCount] = useState(0);
 
   const clearAuthFormError = useCallback(() => setAuthFormError(null), []);
+
+  const refreshUnreadNotificationCount = useCallback(async () => {
+    const t = await getValidCustomerAccessToken();
+    if (!t) {
+      setUnreadNotificationCount(0);
+      return;
+    }
+    try {
+      setUnreadNotificationCount(await apiNotificationsUnreadCount());
+    } catch {
+      /* ignore */
+    }
+  }, []);
 
   useEffect(() => {
     void (async () => {
@@ -165,6 +184,7 @@ export function CustomerProvider({ children }: { children: React.ReactNode }) {
         setUserEmail(null);
         setBookings([]);
         setProfile(null);
+        setUnreadNotificationCount(0);
         return;
       }
       setToken(next);
@@ -231,10 +251,26 @@ export function CustomerProvider({ children }: { children: React.ReactNode }) {
       void loadBranches();
       void refreshBookings();
       void refreshProfile();
+      void refreshUnreadNotificationCount();
     }
-  }, [token, loadBranches, refreshBookings, refreshProfile]);
+  }, [token, loadBranches, refreshBookings, refreshProfile, refreshUnreadNotificationCount]);
 
   const watchedBranchIds = useMemo(() => (token && branches.length > 0 ? branches.map((b) => b.id) : []), [token, branches]);
+
+  useCustomerNotifications({
+    enabled: Boolean(token),
+    accessToken: token,
+    onIncoming: () => {
+      void refreshUnreadNotificationCount();
+      void refreshBookings();
+    },
+    onOpenQueue: navigateToQueueTrack,
+  });
+
+  useNotificationTapHandler({
+    enabled: Boolean(token),
+    onOpenQueue: navigateToQueueTrack,
+  });
 
   useBranchRealtime({
     branchIds: watchedBranchIds,
@@ -399,6 +435,7 @@ export function CustomerProvider({ children }: { children: React.ReactNode }) {
     setRegisterPhone("");
     setBookings([]);
     setProfile(null);
+    setUnreadNotificationCount(0);
     setUserCoords(null);
     setUserLocationLabel(null);
   }, []);
@@ -484,6 +521,8 @@ export function CustomerProvider({ children }: { children: React.ReactNode }) {
         checkIn,
         cancelBooking,
         navigateToQueueTrack,
+        unreadNotificationCount,
+        refreshUnreadNotificationCount,
       }) satisfies CustomerContextValue,
     [
       authReady,
@@ -518,6 +557,8 @@ export function CustomerProvider({ children }: { children: React.ReactNode }) {
       clearPendingVerification,
       checkIn,
       cancelBooking,
+      unreadNotificationCount,
+      refreshUnreadNotificationCount,
     ],
   );
 

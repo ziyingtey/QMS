@@ -19,6 +19,7 @@ public sealed class CustomersController(QmsDbContext db) : ControllerBase
         var row = await db.Customers.AsNoTracking()
             .Where(c => c.Id == userId)
             .Select(c => new CustomerMeDto(
+                c.Id,
                 c.Email,
                 c.Name,
                 c.Phone,
@@ -44,6 +45,7 @@ public sealed class CustomersController(QmsDbContext db) : ControllerBase
         await db.SaveChangesAsync(cancellationToken);
 
         return Ok(new CustomerMeDto(
+            customer.Id,
             customer.Email,
             customer.Name,
             customer.Phone,
@@ -73,6 +75,7 @@ public sealed class CustomersController(QmsDbContext db) : ControllerBase
         await db.SaveChangesAsync(cancellationToken);
 
         return Ok(new CustomerMeDto(
+            customer.Id,
             customer.Email,
             customer.Name,
             customer.Phone,
@@ -80,7 +83,7 @@ public sealed class CustomersController(QmsDbContext db) : ControllerBase
     }
 }
 
-public sealed record CustomerMeDto(string Email, string Name, string? Phone, IReadOnlyList<Guid> FavoriteBranchIds);
+public sealed record CustomerMeDto(Guid Id, string Email, string Name, string? Phone, IReadOnlyList<Guid> FavoriteBranchIds);
 
 public sealed record UpdateProfileRequest(string? Name, string? Phone);
 

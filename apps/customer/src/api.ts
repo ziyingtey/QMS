@@ -338,6 +338,7 @@ export async function apiBranches(): Promise<BranchDto[]> {
 }
 
 export type CustomerProfile = {
+  id: string;
   email: string;
   name: string;
   phone: string | null;
@@ -352,6 +353,7 @@ function parseGuidIdList(raw: unknown): string[] {
 
 function parseCustomerProfile(o: Record<string, unknown>): CustomerProfile {
   return {
+    id: String(o.id ?? o.Id ?? ""),
     email: String(o.email ?? o.Email ?? ""),
     name: String(o.name ?? o.Name ?? ""),
     phone: o.phone != null ? String(o.phone) : o.Phone != null ? String(o.Phone) : null,
@@ -529,4 +531,63 @@ export async function apiWalkIn(branchId: string, serviceTypeId: string): Promis
   });
   if (!res.ok) throw new Error(await parseError(res));
   return res.json() as Promise<WalkInResult>;
+}
+
+export type CustomerNotificationDto = {
+  id: string;
+  type: string;
+  message: string;
+  bookingId: string | null;
+  sentAt: string;
+  isRead: boolean;
+  ticketNumber: string | null;
+  branchId: string | null;
+};
+
+function parseCustomerNotification(o: Record<string, unknown>): CustomerNotificationDto {
+  return {
+    id: String(o.id ?? o.Id ?? ""),
+    type: String(o.type ?? o.Type ?? "Reminder"),
+    message: String(o.message ?? o.Message ?? ""),
+    bookingId: o.bookingId != null ? String(o.bookingId) : o.BookingId != null ? String(o.BookingId) : null,
+    sentAt: String(o.sentAt ?? o.SentAt ?? ""),
+    isRead: Boolean(o.isRead ?? o.IsRead ?? false),
+    ticketNumber:
+      o.ticketNumber != null ? String(o.ticketNumber) : o.TicketNumber != null ? String(o.TicketNumber) : null,
+    branchId: o.branchId != null ? String(o.branchId) : o.BranchId != null ? String(o.BranchId) : null,
+  };
+}
+
+export async function apiListNotifications(limit = 50): Promise<CustomerNotificationDto[]> {
+  const res = await fetch(`${API_BASE}/api/customers/me/notifications?limit=${limit}`, {
+    headers: await customerAuthHeaders(),
+  });
+  if (!res.ok) throw new Error(await parseError(res));
+  const rows = (await res.json()) as Record<string, unknown>[];
+  return rows.map(parseCustomerNotification);
+}
+
+export async function apiNotificationsUnreadCount(): Promise<number> {
+  const res = await fetch(`${API_BASE}/api/customers/me/notifications/unread-count`, {
+    headers: await customerAuthHeaders(),
+  });
+  if (!res.ok) throw new Error(await parseError(res));
+  const o = (await res.json()) as Record<string, unknown>;
+  return Number(o.count ?? o.Count ?? 0);
+}
+
+export async function apiMarkNotificationRead(notificationId: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/customers/me/notifications/${notificationId}/read`, {
+    method: "PATCH",
+    headers: await customerAuthHeaders(),
+  });
+  if (!res.ok) throw new Error(await parseError(res));
+}
+
+export async function apiMarkAllNotificationsRead(): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/customers/me/notifications/read-all`, {
+    method: "POST",
+    headers: await customerAuthHeaders(),
+  });
+  if (!res.ok) throw new Error(await parseError(res));
 }

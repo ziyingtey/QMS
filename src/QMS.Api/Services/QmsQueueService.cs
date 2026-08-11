@@ -17,7 +17,8 @@ public sealed class QmsQueueService(
     QmsDbContext db,
     ICapacityEngine capacityEngine,
     IHubContext<QueueHub> hubContext,
-    IBdsReportingBridge bds)
+    IBdsReportingBridge bds,
+    CustomerNotificationService notifications)
 {
     // ─────────────────────────────────────────────────────────────────────
     // GET SLOTS (customer booking grid)
@@ -158,6 +159,15 @@ public sealed class QmsQueueService(
         await bds.OnTicketIssuedAsync(branch.BranchCode, ticket, entry.CreatedAt, service.Code, cancellationToken);
         await hubContext.Clients.Group(QueueHub.BranchGroup(branchId)).SendAsync("QueueUpdated", branchId, cancellationToken);
 
+        await notifications.NotifyAsync(
+            userId,
+            NotificationKind.Reminder,
+            $"Booking confirmed — ticket {ticket} at {branch.Name}. Please arrive before your slot and check in when you reach the branch.",
+            booking.Id,
+            ticket,
+            branchId,
+            cancellationToken);
+
         return new BookingCreatedDto(booking.Id, ticket, FormatIsoOffset(slotStart), FormatIsoOffset(slotEnd), service.Name);
     }
 
@@ -262,6 +272,18 @@ public sealed class QmsQueueService(
 
         await db.SaveChangesAsync(cancellationToken);
         await hubContext.Clients.Group(QueueHub.BranchGroup(booking.BranchId)).SendAsync("QueueUpdated", booking.BranchId, cancellationToken);
+
+        var ticket = booking.QueueEntry?.TicketNumber;
+        await notifications.NotifyAsync(
+            userId,
+            NotificationKind.Reminder,
+            ticket is not null
+                ? $"You're checked in at {booking.Branch.Name}. We'll call ticket {ticket} when it's your turn."
+                : $"You're checked in at {booking.Branch.Name}.",
+            booking.Id,
+            ticket,
+            booking.BranchId,
+            cancellationToken);
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -347,6 +369,16 @@ public sealed class QmsQueueService(
 
         await db.SaveChangesAsync(cancellationToken);
         await hubContext.Clients.Group(QueueHub.BranchGroup(booking.BranchId)).SendAsync("QueueUpdated", booking.BranchId, cancellationToken);
+
+        var ticket = booking.QueueEntry?.TicketNumber;
+        await notifications.NotifyAsync(
+            userId,
+            NotificationKind.BookingCancelled,
+            $"Your appointment at {booking.Branch.Name} was cancelled.",
+            booking.Id,
+            ticket,
+            booking.BranchId,
+            cancellationToken);
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -481,6 +513,18 @@ public sealed class QmsQueueService(
         await hubContext.Clients.Group(QueueHub.BranchGroup(branchId)).SendAsync("TicketCalled", next.TicketNumber, cancellationToken);
         await hubContext.Clients.Group(QueueHub.BranchGroup(branchId)).SendAsync("QueueUpdated", branchId, cancellationToken);
 
+        if (next.Booking?.CustomerId is Guid customerId)
+        {
+            await notifications.NotifyAsync(
+                customerId,
+                NotificationKind.NextTurn,
+                $"It's your turn! Ticket {next.TicketNumber} — please proceed to Counter {counter.Number}.",
+                next.BookingId,
+                next.TicketNumber,
+                branchId,
+                cancellationToken);
+        }
+
         return new CallNextDto(next.TicketNumber, counter.Number, null);
     }
 
@@ -512,6 +556,18 @@ public sealed class QmsQueueService(
         await PullForwardWalkInsAsync(entry.BranchId, entry.ServiceTypeId, cancellationToken, noShowInCurrentSlot: true);
 
         await hubContext.Clients.Group(QueueHub.BranchGroup(counter.BranchId)).SendAsync("QueueUpdated", counter.BranchId, cancellationToken);
+
+        if (entry.Booking?.CustomerId is Guid customerId)
+        {
+            await notifications.NotifyAsync(
+                customerId,
+                NotificationKind.Missed,
+                $"Ticket {entry.TicketNumber} was missed. Please take a new queue number if you still need service.",
+                entry.BookingId,
+                entry.TicketNumber,
+                entry.BranchId,
+                cancellationToken);
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -596,10 +652,19 @@ public sealed class QmsQueueService(
         }
 
         await hubContext.Clients.Group(QueueHub.BranchGroup(counter.BranchId)).SendAsync("QueueUpdated", counter.BranchId, cancellationToken);
-    }
 
-    // ─────────────────────────────────────────────────────────────────────
-    // STAFF / MANAGER QUERIES
+        if (entry.Booking?.CustomerId is Guid customerId)
+        {
+            await notifications.NotifyAsync(
+                customerId,
+                NotificationKind.Reminder,
+                $"Thank you! Service for ticket {entry.TicketNumber} is complete.",
+                entry.BookingId,
+                entry.TicketNumber,
+                entry.BranchId,
+                cancellationToken);
+        }
+    }
     // ─────────────────────────────────────────────────────────────────────
 
     public async Task<MyCounterDto> GetMyCounterAsync(Guid staffId, CancellationToken cancellationToken = default)

@@ -44,6 +44,14 @@
         {
           "locationAlwaysAndWhenInUsePermission": "IH-QMS uses your location only to verify you are near the branch when you check in."
         }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#1e4a8c",
+          "sounds": []
+        }
       ]
     ]
   }

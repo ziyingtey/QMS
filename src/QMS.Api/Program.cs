@@ -99,6 +99,7 @@ builder.Services.Configure<SmtpOptions>(builder.Configuration.GetSection("Smtp")
 builder.Services.Configure<PublicUrlOptions>(builder.Configuration.GetSection("PublicUrls"));
 builder.Services.AddSingleton<IEmailSender, SmtpEmailSender>();
 builder.Services.AddScoped<AuthSessionService>();
+builder.Services.AddScoped<CustomerNotificationService>();
 builder.Services.AddScoped<QmsQueueService>();
 builder.Services.AddHostedService<BookingLifecycleHostedService>();
 builder.Services.AddHostedService<BranchQueueDayRolloverHostedService>();
