@@ -45,22 +45,7 @@ public sealed class SmtpEmailSender(IOptions<SmtpOptions> smtpOptions, ILogger<S
 
         message.Body = new TextPart("plain") { Text = body };
 
-        using var client = new SmtpClient();
-        var secure =
-            _smtp.Port == 465 && !_smtp.UseStartTls
-                ? SecureSocketOptions.SslOnConnect
-                : _smtp.UseStartTls
-                    ? SecureSocketOptions.StartTls
-                    : SecureSocketOptions.Auto;
-
-        log.LogInformation("SMTP connect {Host}:{Port} ({Secure})", _smtp.Host, _smtp.Port, secure);
-        await client.ConnectAsync(_smtp.Host, _smtp.Port, secure, cancellationToken).ConfigureAwait(false);
-
-        if (!string.IsNullOrWhiteSpace(_smtp.User))
-            await client.AuthenticateAsync(_smtp.User, _smtp.Password ?? "", cancellationToken).ConfigureAwait(false);
-
-        await client.SendAsync(message, cancellationToken).ConfigureAwait(false);
-        await client.DisconnectAsync(true, cancellationToken).ConfigureAwait(false);
+        await SendAsync(message, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task SendCustomerOtpEmailAsync(
@@ -102,22 +87,7 @@ public sealed class SmtpEmailSender(IOptions<SmtpOptions> smtpOptions, ILogger<S
 
         message.Body = new TextPart("plain") { Text = body };
 
-        using var client = new SmtpClient();
-        var secure =
-            _smtp.Port == 465 && !_smtp.UseStartTls
-                ? SecureSocketOptions.SslOnConnect
-                : _smtp.UseStartTls
-                    ? SecureSocketOptions.StartTls
-                    : SecureSocketOptions.Auto;
-
-        log.LogInformation("SMTP connect {Host}:{Port} ({Secure})", _smtp.Host, _smtp.Port, secure);
-        await client.ConnectAsync(_smtp.Host, _smtp.Port, secure, cancellationToken).ConfigureAwait(false);
-
-        if (!string.IsNullOrWhiteSpace(_smtp.User))
-            await client.AuthenticateAsync(_smtp.User, _smtp.Password ?? "", cancellationToken).ConfigureAwait(false);
-
-        await client.SendAsync(message, cancellationToken).ConfigureAwait(false);
-        await client.DisconnectAsync(true, cancellationToken).ConfigureAwait(false);
+        await SendAsync(message, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task SendCustomerPasswordResetEmailAsync(
@@ -160,22 +130,7 @@ public sealed class SmtpEmailSender(IOptions<SmtpOptions> smtpOptions, ILogger<S
 
         message.Body = new TextPart("plain") { Text = body };
 
-        using var client = new SmtpClient();
-        var secure =
-            _smtp.Port == 465 && !_smtp.UseStartTls
-                ? SecureSocketOptions.SslOnConnect
-                : _smtp.UseStartTls
-                    ? SecureSocketOptions.StartTls
-                    : SecureSocketOptions.Auto;
-
-        log.LogInformation("SMTP connect {Host}:{Port} ({Secure})", _smtp.Host, _smtp.Port, secure);
-        await client.ConnectAsync(_smtp.Host, _smtp.Port, secure, cancellationToken).ConfigureAwait(false);
-
-        if (!string.IsNullOrWhiteSpace(_smtp.User))
-            await client.AuthenticateAsync(_smtp.User, _smtp.Password ?? "", cancellationToken).ConfigureAwait(false);
-
-        await client.SendAsync(message, cancellationToken).ConfigureAwait(false);
-        await client.DisconnectAsync(true, cancellationToken).ConfigureAwait(false);
+        await SendAsync(message, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task SendPasswordResetOtpEmailAsync(
@@ -217,7 +172,13 @@ public sealed class SmtpEmailSender(IOptions<SmtpOptions> smtpOptions, ILogger<S
 
         message.Body = new TextPart("plain") { Text = body };
 
+        await SendAsync(message, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task SendAsync(MimeMessage message, CancellationToken cancellationToken)
+    {
         using var client = new SmtpClient();
+        client.CheckCertificateRevocation = false;
         var secure =
             _smtp.Port == 465 && !_smtp.UseStartTls
                 ? SecureSocketOptions.SslOnConnect

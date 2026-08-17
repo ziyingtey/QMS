@@ -23,7 +23,7 @@ USE QMS;
 GO
 
 DECLARE @BranchId UNIQUEIDENTIFIER;
-DECLARE @BranchName NVARCHAR(200) = NULL; /* e.g. N'Bandar Sri Damansara' — NULL = first branch by BranchCode */
+DECLARE @BranchName NVARCHAR(200) = N'Bandar Sri Permaisuri'; /* e.g. N'Bandar Sri Damansara' — NULL = first branch by BranchCode */
 
 SELECT @BranchId = b.Id
 FROM dbo.BRANCHES AS b

@@ -115,7 +115,8 @@ public sealed class AuthController(
                 new
                 {
                     message =
-                        "Could not send the verification code email. Check host, port, UseStartTls, user, password, and that your provider allows SMTP (Gmail needs an app password). No account was created. See docs/real-email-verification-smtp.md.",
+                        "Could not send the verification code email. " + ex.Message
+            + (ex.InnerException is null ? "" : " | " + ex.InnerException.Message),
                 });
         }
 
