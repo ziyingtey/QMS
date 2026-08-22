@@ -103,6 +103,7 @@ builder.Services.AddScoped<CustomerNotificationService>();
 builder.Services.AddScoped<QmsQueueService>();
 builder.Services.AddHostedService<BookingLifecycleHostedService>();
 builder.Services.AddHostedService<BranchQueueDayRolloverHostedService>();
+builder.Services.AddHostedService<BranchAfterHoursCounterHostedService>();
 builder.Services.AddInfrastructure(builder.Configuration);
 
 var app = builder.Build();
