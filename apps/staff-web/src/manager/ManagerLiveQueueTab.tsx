@@ -1,0 +1,110 @@
+import type { LiveDashboard, ManagerCounterRowDto, ManagerWaitingTicket } from "../api";
+import { KpiTile } from "../components/KpiTile";
+import { ManagerCounterBoard } from "./ManagerCounterBoard";
+import type { AssignableStaffDto } from "../api";
+
+type Props = {
+  live: LiveDashboard | null;
+  waiting: ManagerWaitingTicket[];
+  rows: ManagerCounterRowDto[];
+  staffPickList: AssignableStaffDto[];
+  onGoToCounter: (counterId: string) => void;
+  onSelectWaiting?: () => void;
+};
+
+function formatMinutes(m: number): string {
+  if (m < 1) return "<1m";
+  const mins = Math.floor(m);
+  const secs = Math.round((m - mins) * 60);
+  return secs > 0 ? `${mins}m ${secs}s` : `${mins}m`;
+}
+
+function entryLabel(type: string): string {
+  if (type === "WalkIn") return "Walk-in";
+  if (type === "OnlineBooked") return "Online";
+  return type;
+}
+
+export function ManagerLiveQueueTab({ live, waiting, rows, staffPickList, onGoToCounter }: Props) {
+  const now = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+  return (
+    <div className="qgo-mgr-queue-page">
+      <header className="qgo-mgr-toolbar">
+        <div>
+          <h1>Live queue</h1>
+          <p className="qgo-muted">Whole-branch queue status and waiting customers.</p>
+        </div>
+        <span className="qgo-live-pill">
+          <span className="qgo-live-dot" /> Live · {now}
+        </span>
+      </header>
+
+      {live ? (
+        <div className="qgo-mgr-kpi-grid qgo-mgr-kpi-grid--compact">
+          <KpiTile variant="manager" label="Waiting" value={live.queueLength} foot="In queue" accent="blue" />
+          <KpiTile variant="manager" label="Serving" value={live.servingCount} foot="At counters" accent="green" />
+          <KpiTile variant="manager" label="Est. ticket→call" value={`${live.avgTicketToCallMinutes}m`} foot="Today completed" accent="amber" />
+          <KpiTile variant="manager" label="Longest" value={formatMinutes(live.longestTicketToCallMinutes)} foot="In queue now" accent="navy" />
+        </div>
+      ) : null}
+
+      <div className="qgo-mgr-dashboard__grid">
+        <section className="qgo-mgr-panel">
+          <header className="qgo-mgr-panel__head qgo-mgr-panel__head--row">
+            <div>
+              <h2>Waiting queue</h2>
+              <p className="qgo-muted">Click a row for ticket detail · FIFO order</p>
+            </div>
+            <span className="qgo-mgr-panel__meta">
+              <strong>{waiting.length}</strong> tickets
+            </span>
+          </header>
+
+          {waiting.length === 0 ? (
+            <p className="qgo-muted">No customers waiting right now.</p>
+          ) : (
+            <div className="qgo-table-wrap qgo-table-wrap--card">
+              <table className="qgo-table qgo-table--mgr">
+                <thead>
+                  <tr>
+                    <th>Ticket</th>
+                    <th>Service</th>
+                    <th>Wait</th>
+                    <th>ETA</th>
+                    <th>Type</th>
+                    <th>Online check-in</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {waiting.map((t) => (
+                    <tr key={t.ticketNumber}>
+                      <td>
+                        <strong className="qgo-table__ticket">{t.ticketNumber}</strong>
+                      </td>
+                      <td>
+                        <span className="qgo-table__lane">{t.serviceName}</span>
+                      </td>
+                      <td>{formatMinutes(t.waitingMinutes)}</td>
+                      <td>{t.estimatedWaitMinutes == null ? "—" : `${Math.round(t.estimatedWaitMinutes)} min`}</td>
+                      <td>{entryLabel(t.entryType)}</td>
+                      <td>{t.isPriority ? <span className="qgo-mgr-priority">Checked in</span> : "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+
+        <section className="qgo-mgr-panel">
+          <header className="qgo-mgr-panel__head">
+            <h2>Counters</h2>
+            <p className="qgo-muted">Serving status with current ticket</p>
+          </header>
+          <ManagerCounterBoard rows={rows} staffPickList={staffPickList} onSelect={onGoToCounter} />
+        </section>
+      </div>
+    </div>
+  );
+}

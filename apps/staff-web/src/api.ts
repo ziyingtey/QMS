@@ -49,6 +49,8 @@ export type BranchDto = {
   name: string;
   address?: string;
   state?: string;
+  openingStatus?: string;
+  serviceZoneOffsetMinutes?: number;
   services: ServiceDto[];
   weeklyOperatingHours?: BranchOperatingHourRow[];
 };
@@ -58,11 +60,111 @@ export type CallNextResponse = { ticketNumber: string | null; counterNumber: num
 export type LiveDashboard = {
   customersInBranch: number;
   queueLength: number;
-  avgWaitMinutes: number;
+  servingCount: number;
+  /** Average ticket-to-call for completed visits today (same formula as Analytics). */
+  avgTicketToCallMinutes: number;
+  longestTicketToCallMinutes: number;
   activeCounters: number;
   customersServedToday: number;
-  priorityWaiting: number;
+  walkInsToday: number;
+  appointmentsToday: number;
+  walkInsWaiting: number;
+  onlineWaiting: number;
+  ticketToCallBreaches: number;
+  /** Online bookings checked in and still waiting (not queue priority). */
+  onlineCheckInsWaiting: number;
   byService: { serviceTypeId: string; queueLength: number; estimatedWaitMinutes: number | null }[];
+};
+
+export type HourlyCount = { hourLabel: string; count: number };
+export type WaitBucket = { label: string; count: number };
+export type TimingSummary = {
+  avgMinutes: number;
+  medianMinutes: number | null;
+  longestMinutes: number | null;
+  slaMetCount: number | null;
+  slaExceededCount: number | null;
+};
+export type TicketStatusSummary = {
+  ticketsToday: number;
+  served: number;
+  waiting: number;
+  serving: number;
+  noShow: number;
+  cancelled: number;
+};
+export type ChannelAnalytics = {
+  tickets: number;
+  served: number;
+  noShows: number;
+  noShowRatePercent: number | null;
+  avgTicketToCallMinutes: number | null;
+};
+export type OperationalPeak = {
+  periodLabel: string;
+  ticketCount: number;
+  aboveAveragePercent: number | null;
+  topServiceName: string | null;
+  activeCounters: number;
+  totalCounters: number;
+};
+export type CounterUtilizationRow = {
+  counterId: string;
+  counterNumber: number;
+  staffEmail: string | null;
+  mode: string;
+  servedToday: number;
+  utilizationPercent: number;
+};
+export type LanePerformance = {
+  serviceTypeId: string;
+  serviceName: string;
+  served: number;
+  avgTicketToCallMinutes: number | null;
+  maxTicketToCallMinutes: number | null;
+  avgServiceMinutes: number | null;
+  ticketToCallSlaPercent: number | null;
+};
+
+export type BranchAnalyticsToday = {
+  ticketsToday: number;
+  customersServed: number;
+  ticketToCall: TimingSummary;
+  serviceDuration: TimingSummary;
+  ticketToCallSlaPercent: number | null;
+  slaTargetMinutes: number;
+  ticketStatus: TicketStatusSummary;
+  walkIn: ChannelAnalytics;
+  online: ChannelAnalytics;
+  ticketsByHour: HourlyCount[];
+  peak: OperationalPeak | null;
+  ticketToCallDistribution: WaitBucket[];
+  lanePerformance: LanePerformance[];
+  counterUtilization: CounterUtilizationRow[];
+  noShowsByHour: HourlyCount[];
+};
+
+export type ManagerWaitingTicket = {
+  ticketNumber: string;
+  serviceName: string;
+  entryType: string;
+  waitingMinutes: number;
+  estimatedWaitMinutes: number | null;
+  isPriority: boolean;
+};
+
+export type ManagerAppointmentsToday = {
+  statusCounts: {
+    confirmed: number;
+    checkedIn: number;
+    waiting: number;
+    serving: number;
+    completed: number;
+    noShow: number;
+    cancelled: number;
+  };
+  slotsByHour: { hourLabel: string; count: number }[];
+  appointments: { time: string; serviceName: string; status: string; ticketNumber: string | null }[];
 };
 
 export type MyCounterDto = {
@@ -97,6 +199,7 @@ export type BranchOperationalSettings = {
   walkInQuotaPercent: number;
   slotDurationMinutes: number;
   serviceZoneOffsetMinutes: number;
+  /** When true, alert if upcoming online bookings exceed configured slot capacity (monitoring only; does not auto-adjust). */
   adaptiveSlotCapacityEnabled: boolean;
   minSlotTotalCapacity: number | null;
   maxSlotTotalCapacity: number | null;
@@ -325,6 +428,14 @@ export async function apiManagerInsights(branchId: string): Promise<ManagerInsig
   });
   if (!res.ok) throw new Error(await parseError(res));
   return res.json() as Promise<ManagerInsights>;
+}
+
+export async function apiManagerAnalyticsToday(branchId: string): Promise<BranchAnalyticsToday> {
+  const res = await fetch(`${API_BASE}/api/manager/branches/${branchId}/analytics/today`, {
+    headers: await staffAuthHeaders(),
+  });
+  if (!res.ok) throw new Error(await parseError(res));
+  return res.json() as Promise<BranchAnalyticsToday>;
 }
 
 export async function apiManagerAssignableStaff(branchId: string): Promise<AssignableStaffDto[]> {

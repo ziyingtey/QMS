@@ -58,16 +58,16 @@ export function LoginPage() {
           </p>
           <div className="lp-features">
             <div className="lp-feature">
-              <span className="lp-feature-icon">⚡</span>
+              <span className="lp-feature-icon" aria-hidden />
               <span>Real-time queue updates</span>
             </div>
             <div className="lp-feature">
-              <span className="lp-feature-icon">📊</span>
-              <span>Live dashboard analytics</span>
+              <span className="lp-feature-icon" aria-hidden />
+              <span>Live branch dashboard</span>
             </div>
             <div className="lp-feature">
-              <span className="lp-feature-icon">🏢</span>
-              <span>Multi-branch support</span>
+              <span className="lp-feature-icon" aria-hidden />
+              <span>Counter & capacity control</span>
             </div>
           </div>
         </div>
@@ -122,7 +122,7 @@ export function LoginPage() {
                   type="button"
                   className="lp-eye-btn"
                   onClick={() => setShowPassword(!showPassword)}
-                  tabIndex={-1}
+                  aria-label={showPassword ? "Hide password" : "Show password"}
                 >
                   {showPassword ? "Hide" : "Show"}
                 </button>

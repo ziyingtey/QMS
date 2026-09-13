@@ -774,9 +774,14 @@ public sealed class QmsQueueService(
                           .FirstOrDefaultAsync(c => c.Id == counterId && c.BranchId == branchId, cancellationToken)
                       ?? throw new InvalidOperationException("Counter not found for this branch.");
 
-        if (mode == CounterMode.Active && counter.AllowedServices.Count == 0)
-            throw new InvalidOperationException(
-                "Assign at least one allowed lane on this counter before opening (Active).");
+        if (mode == CounterMode.Active)
+        {
+            await AssertBranchOpenForCounterOperationsAsync(branchId, cancellationToken);
+
+            if (counter.AllowedServices.Count == 0)
+                throw new InvalidOperationException(
+                    "Assign at least one allowed lane on this counter before opening (Active).");
+        }
 
         counter.Mode = mode;
         await db.SaveChangesAsync(cancellationToken);
@@ -1057,7 +1062,7 @@ public sealed class QmsQueueService(
                     branchId, svc.Id, nextStart, nextEnd, null, cancellationToken);
                 if (branchEntity.AdaptiveSlotCapacityEnabled && usedNext > effNext.OnlineCapacity)
                     alerts.Add(new ManagerInsightAlertDto("critical",
-                        $"Adaptive booking pressure: lane «{svc.Name}» has {usedNext} active online bookings in upcoming window ({FormatIsoOffset(nextStart)}) but only {effNext.OnlineCapacity} online seats."));
+                        $"Capacity monitoring: lane «{svc.Name}» has {usedNext} active online bookings in upcoming window ({FormatIsoOffset(nextStart)}) but only {effNext.OnlineCapacity} online seats."));
             }
 
             lanes.Add(new ManagerLaneAnalyticsDto(
@@ -1097,6 +1102,261 @@ public sealed class QmsQueueService(
             suggestions.DistinctBy(s => s.Title + "|" + s.Detail).Take(12).ToList(),
             lanes,
             missedToday);
+    }
+
+    public async Task<BranchAnalyticsTodayDto> GetBranchAnalyticsTodayAsync(
+        Guid branchId, CancellationToken cancellationToken = default)
+    {
+        const double slaThresholdMinutes = 15;
+        var branch = await db.Branches.AsNoTracking()
+                           .FirstOrDefaultAsync(b => b.Id == branchId, cancellationToken)
+                       ?? throw new InvalidOperationException("Branch not found.");
+
+        var zone = TimeSpan.FromMinutes(branch.ServiceZoneOffsetMinutes);
+        var nowBranch = DateTimeOffset.UtcNow.ToOffset(zone);
+        var dayStart = new DateTimeOffset(nowBranch.Date, zone);
+        var dayEnd = dayStart.AddDays(1);
+        var elapsedMinutes = Math.Max(1.0, (nowBranch - dayStart).TotalMinutes);
+
+        var services = await db.ServiceTypes.AsNoTracking()
+            .Where(s => s.BranchId == branchId).OrderBy(s => s.Name).ToListAsync(cancellationToken);
+        var serviceNameById = services.ToDictionary(s => s.Id, s => s.Name);
+
+        var ticketsTodayRows = await db.QueueEntries.AsNoTracking()
+            .Where(q => q.BranchId == branchId && q.CreatedAt >= dayStart && q.CreatedAt < dayEnd)
+            .Select(q => new { q.State, q.EntryType, q.CreatedAt, q.ServiceTypeId })
+            .ToListAsync(cancellationToken);
+
+        var hourly = new Dictionary<int, int>();
+        foreach (var e in ticketsTodayRows)
+        {
+            var h = e.CreatedAt.ToOffset(zone).Hour;
+            hourly[h] = hourly.GetValueOrDefault(h) + 1;
+        }
+
+        var ticketsByHour = hourly.OrderBy(kv => kv.Key)
+            .Select(kv => new HourlyCountDto($"{kv.Key:00}:00", kv.Value))
+            .ToList();
+
+        OperationalPeakDto? peak = null;
+        if (hourly.Count > 0)
+        {
+            var peakKv = hourly.OrderByDescending(kv => kv.Value).First();
+            var avgHourly = hourly.Values.Average();
+            var aboveAvg = avgHourly > 0
+                ? Math.Round((peakKv.Value - avgHourly) / avgHourly * 100.0, 0)
+                : (double?)null;
+            var peakHourTickets = ticketsTodayRows
+                .Where(t => t.CreatedAt.ToOffset(zone).Hour == peakKv.Key)
+                .GroupBy(t => t.ServiceTypeId)
+                .OrderByDescending(g => g.Count())
+                .FirstOrDefault();
+            var topSvc = peakHourTickets != null && serviceNameById.TryGetValue(peakHourTickets.Key, out var nm) ? nm : null;
+            var activeCounters = await db.Counters.CountAsync(
+                c => c.BranchId == branchId && c.Mode == CounterMode.Active, cancellationToken);
+            var totalCounters = await db.Counters.CountAsync(c => c.BranchId == branchId, cancellationToken);
+            peak = new OperationalPeakDto(
+                $"{peakKv.Key:00}:00 – {(peakKv.Key + 1) % 24:00}:00",
+                peakKv.Value,
+                aboveAvg,
+                topSvc,
+                activeCounters,
+                totalCounters);
+        }
+
+        var completed = await db.QueueEntries.AsNoTracking()
+            .Where(q => q.BranchId == branchId
+                        && q.State == QueueEntryState.Completed
+                        && q.ServingEndedAt >= dayStart
+                        && q.ServingEndedAt < dayEnd
+                        && q.CalledAt != null)
+            .Select(q => new
+            {
+                q.EntryType,
+                q.ServiceTypeId,
+                q.CalledAt,
+                q.CreatedAt,
+                q.AssignedSlotStart,
+                CheckedInAt = q.Booking != null ? q.Booking.CheckedInAt : null,
+            })
+            .ToListAsync(cancellationToken);
+
+        var ticketToCallList = completed
+            .Select(c => TicketToCallMetrics.MinutesToCall(
+                c.CalledAt!.Value, c.EntryType, c.CreatedAt, c.CheckedInAt, c.AssignedSlotStart))
+            .ToList();
+        var slaMet = ticketToCallList.Count(w => w <= slaThresholdMinutes);
+        var slaPercent = ticketToCallList.Count > 0
+            ? Math.Round(slaMet * 100.0 / ticketToCallList.Count, 1)
+            : (double?)null;
+
+        var ticketToCall = new TimingSummaryDto(
+            ticketToCallList.Count > 0 ? Math.Round(ticketToCallList.Average(), 1) : 0,
+            MedianMinutes(ticketToCallList),
+            ticketToCallList.Count > 0 ? Math.Round(ticketToCallList.Max(), 1) : null,
+            slaMet,
+            ticketToCallList.Count - slaMet);
+
+        var buckets = new int[5];
+        foreach (var w in ticketToCallList)
+        {
+            if (w < 5) buckets[0]++;
+            else if (w < 10) buckets[1]++;
+            else if (w < 15) buckets[2]++;
+            else if (w < 20) buckets[3]++;
+            else buckets[4]++;
+        }
+
+        var ticketToCallDistribution = new List<WaitBucketDto>
+        {
+            new("0–5 min", buckets[0]),
+            new("5–10 min", buckets[1]),
+            new("10–15 min", buckets[2]),
+            new("15–20 min", buckets[3]),
+            new("20+ min", buckets[4]),
+        };
+
+        var serviceDurationSeconds = await db.ServiceSessionLogs.AsNoTracking()
+            .Where(l => l.EndedAt >= dayStart && l.EndedAt < dayEnd && l.ServiceType.BranchId == branchId)
+            .Select(l => (double)l.DurationSeconds)
+            .ToListAsync(cancellationToken);
+        var serviceMinutes = serviceDurationSeconds.Select(s => s / 60.0).ToList();
+        var serviceDuration = new TimingSummaryDto(
+            serviceMinutes.Count > 0 ? Math.Round(serviceMinutes.Average(), 1) : 0,
+            MedianMinutes(serviceMinutes),
+            serviceMinutes.Count > 0 ? Math.Round(serviceMinutes.Max(), 1) : null,
+            null,
+            null);
+
+        var cancelledBookings = await db.Bookings.CountAsync(
+            b => b.BranchId == branchId
+                 && b.Status == BookingStatus.Cancelled
+                 && b.SlotStart >= dayStart
+                 && b.SlotStart < dayEnd,
+            cancellationToken);
+
+        var ticketStatus = new TicketStatusSummaryDto(
+            ticketsTodayRows.Count,
+            ticketsTodayRows.Count(t => t.State == QueueEntryState.Completed),
+            ticketsTodayRows.Count(t => t.State == QueueEntryState.Waiting),
+            ticketsTodayRows.Count(t => t.State == QueueEntryState.Serving),
+            ticketsTodayRows.Count(t => t.State == QueueEntryState.Missed),
+            cancelledBookings);
+
+        var walkInToday = ticketsTodayRows.Where(t => t.EntryType == QueueEntryType.WalkIn).ToList();
+        var onlineToday = ticketsTodayRows.Where(t => t.EntryType == QueueEntryType.OnlineBooked).ToList();
+        var walkInCompleted = completed.Where(c => c.EntryType == QueueEntryType.WalkIn).ToList();
+        var onlineCompleted = completed.Where(c => c.EntryType == QueueEntryType.OnlineBooked).ToList();
+
+        ChannelAnalyticsDto ChannelStats(
+            int tickets,
+            int served,
+            int noShows,
+            IReadOnlyList<double> toCallMinutes)
+        {
+            var rate = tickets > 0 ? Math.Round(noShows * 100.0 / tickets, 1) : (double?)null;
+            double? avg = toCallMinutes.Count > 0 ? Math.Round(toCallMinutes.Average(), 1) : null;
+            return new ChannelAnalyticsDto(tickets, served, noShows, rate, avg);
+        }
+
+        var walkInChannel = ChannelStats(
+            walkInToday.Count,
+            walkInToday.Count(t => t.State == QueueEntryState.Completed),
+            walkInToday.Count(t => t.State == QueueEntryState.Missed),
+            walkInCompleted.Select(c => TicketToCallMetrics.MinutesToCall(
+                c.CalledAt!.Value, c.EntryType, c.CreatedAt, c.CheckedInAt, c.AssignedSlotStart)).ToList());
+
+        var onlineChannel = ChannelStats(
+            onlineToday.Count,
+            onlineToday.Count(t => t.State == QueueEntryState.Completed),
+            onlineToday.Count(t => t.State == QueueEntryState.Missed),
+            onlineCompleted.Select(c => TicketToCallMetrics.MinutesToCall(
+                c.CalledAt!.Value, c.EntryType, c.CreatedAt, c.CheckedInAt, c.AssignedSlotStart)).ToList());
+
+        var laneRows = new List<LanePerformanceDto>();
+        foreach (var svc in services)
+        {
+            var laneCompleted = completed.Where(c => c.ServiceTypeId == svc.Id).ToList();
+            var toCall = laneCompleted
+                .Select(c => TicketToCallMetrics.MinutesToCall(
+                    c.CalledAt!.Value, c.EntryType, c.CreatedAt, c.CheckedInAt, c.AssignedSlotStart))
+                .ToList();
+            var avgCall = toCall.Count > 0 ? Math.Round(toCall.Average(), 1) : (double?)null;
+            var maxCall = toCall.Count > 0 ? Math.Round(toCall.Max(), 1) : (double?)null;
+            var avgSvc = await db.ServiceSessionLogs.AsNoTracking()
+                .Where(l => l.ServiceTypeId == svc.Id && l.EndedAt >= dayStart && l.EndedAt < dayEnd)
+                .AverageAsync(l => (double?)l.DurationSeconds, cancellationToken);
+            var avgSvcMin = avgSvc.HasValue ? Math.Round(avgSvc.Value / 60.0, 1) : (double?)null;
+            double? laneSla = toCall.Count > 0
+                ? Math.Round(toCall.Count(w => w <= slaThresholdMinutes) * 100.0 / toCall.Count, 0)
+                : null;
+            laneRows.Add(new LanePerformanceDto(
+                svc.Id, svc.Name, laneCompleted.Count, avgCall, maxCall, avgSvcMin, laneSla));
+        }
+
+        var missedRows = await db.QueueEntries.AsNoTracking()
+            .Where(q => q.BranchId == branchId
+                        && q.State == QueueEntryState.Missed
+                        && q.CalledAt >= dayStart
+                        && q.CalledAt < dayEnd)
+            .Select(q => q.CalledAt!.Value)
+            .ToListAsync(cancellationToken);
+        var noShowHourly = new Dictionary<int, int>();
+        foreach (var at in missedRows)
+        {
+            var h = at.ToOffset(zone).Hour;
+            noShowHourly[h] = noShowHourly.GetValueOrDefault(h) + 1;
+        }
+        var noShowsByHour = noShowHourly.OrderBy(kv => kv.Key)
+            .Select(kv => new HourlyCountDto($"{kv.Key:00}:00", kv.Value))
+            .ToList();
+
+        var counters = await db.Counters.AsNoTracking()
+            .Include(c => c.AssignedStaff)
+            .Where(c => c.BranchId == branchId)
+            .OrderBy(c => c.Number)
+            .ToListAsync(cancellationToken);
+
+        var sessionByCounter = await db.ServiceSessionLogs.AsNoTracking()
+            .Where(l => l.CounterId != null && l.EndedAt >= dayStart && l.EndedAt < dayEnd)
+            .Where(l => l.ServiceType.BranchId == branchId)
+            .GroupBy(l => l.CounterId!.Value)
+            .Select(g => new { CounterId = g.Key, TotalSeconds = g.Sum(x => x.DurationSeconds), Served = g.Count() })
+            .ToListAsync(cancellationToken);
+        var sessionLookup = sessionByCounter.ToDictionary(x => x.CounterId);
+
+        var counterUtilization = counters.Select(c =>
+        {
+            sessionLookup.TryGetValue(c.Id, out var stats);
+            var served = stats?.Served ?? 0;
+            var util = stats != null
+                ? Math.Round(Math.Min(100.0, stats.TotalSeconds / (elapsedMinutes * 60.0) * 100.0), 0)
+                : 0.0;
+            return new CounterUtilizationRowDto(
+                c.Id,
+                c.Number,
+                c.AssignedStaff?.Email,
+                c.Mode.ToString(),
+                served,
+                util);
+        }).ToList();
+
+        return new BranchAnalyticsTodayDto(
+            ticketsTodayRows.Count,
+            completed.Count,
+            ticketToCall,
+            serviceDuration,
+            slaPercent,
+            slaThresholdMinutes,
+            ticketStatus,
+            walkInChannel,
+            onlineChannel,
+            ticketsByHour,
+            peak,
+            ticketToCallDistribution,
+            laneRows,
+            counterUtilization,
+            noShowsByHour);
     }
 
     public async Task<ServiceLaneSummaryDto> GetServiceLaneSummaryAsync(
@@ -1396,6 +1656,16 @@ public sealed class QmsQueueService(
             dynamicPlan, branch.MinSlotTotalCapacity, branch.MaxCapacity, branch.OnlineQuotaPercent);
     }
 
+    private static double? MedianMinutes(IReadOnlyList<double> values)
+    {
+        if (values.Count == 0) return null;
+        var sorted = values.OrderBy(v => v).ToList();
+        var mid = sorted.Count / 2;
+        return sorted.Count % 2 == 0
+            ? Math.Round((sorted[mid - 1] + sorted[mid]) / 2.0, 1)
+            : Math.Round(sorted[mid], 1);
+    }
+
     private static DateTimeOffset AlignSlot(DateTimeOffset now, int slotMinutes, DateTimeOffset? anchor = null)
     {
         if (anchor is { } a)
@@ -1469,6 +1739,26 @@ public sealed class QmsQueueService(
                 CloseTime = r.IsClosed ? null : TimeSpan.FromMinutes(r.CloseMinutesFromMidnight!.Value),
             });
         }
+    }
+
+    public async Task<bool> IsBranchOpenForOperationsAsync(Guid branchId, CancellationToken cancellationToken = default)
+    {
+        var branch = await db.Branches.AsNoTracking().FirstOrDefaultAsync(b => b.Id == branchId, cancellationToken);
+        if (branch is null)
+            return false;
+
+        var hours = await db.BranchOperatingHours.AsNoTracking()
+            .Where(h => h.BranchId == branchId)
+            .ToListAsync(cancellationToken);
+
+        return BranchHoursEvaluator.IsBranchOpenNow(branch, hours, DateTimeOffset.UtcNow);
+    }
+
+    private async Task AssertBranchOpenForCounterOperationsAsync(Guid branchId, CancellationToken cancellationToken)
+    {
+        if (!await IsBranchOpenForOperationsAsync(branchId, cancellationToken))
+            throw new InvalidOperationException(
+                "Counters cannot be opened outside branch operating hours. Update Schedule & capacity or wait until the branch opens.");
     }
 
     private async Task<(DateTimeOffset Start, DateTimeOffset End)?> GetBranchLocalServiceWindowAsync(
@@ -1550,3 +1840,64 @@ public sealed record ManagerInsightsDto(
     IReadOnlyList<ManagerSuggestionDto> Suggestions,
     IReadOnlyList<ManagerLaneAnalyticsDto> Lanes,
     int MissedToday);
+
+public sealed record HourlyCountDto(string HourLabel, int Count);
+public sealed record WaitBucketDto(string Label, int Count);
+public sealed record TimingSummaryDto(
+    double AvgMinutes,
+    double? MedianMinutes,
+    double? LongestMinutes,
+    int? SlaMetCount,
+    int? SlaExceededCount);
+public sealed record TicketStatusSummaryDto(
+    int TicketsToday,
+    int Served,
+    int Waiting,
+    int Serving,
+    int NoShow,
+    int Cancelled);
+public sealed record ChannelAnalyticsDto(
+    int Tickets,
+    int Served,
+    int NoShows,
+    double? NoShowRatePercent,
+    double? AvgTicketToCallMinutes);
+public sealed record OperationalPeakDto(
+    string PeriodLabel,
+    int TicketCount,
+    double? AboveAveragePercent,
+    string? TopServiceName,
+    int ActiveCounters,
+    int TotalCounters);
+public sealed record CounterUtilizationRowDto(
+    Guid CounterId,
+    int CounterNumber,
+    string? StaffEmail,
+    string Mode,
+    int ServedToday,
+    double UtilizationPercent);
+public sealed record LanePerformanceDto(
+    Guid ServiceTypeId,
+    string ServiceName,
+    int Served,
+    double? AvgTicketToCallMinutes,
+    double? MaxTicketToCallMinutes,
+    double? AvgServiceMinutes,
+    double? TicketToCallSlaPercent);
+
+public sealed record BranchAnalyticsTodayDto(
+    int TicketsToday,
+    int CustomersServed,
+    TimingSummaryDto TicketToCall,
+    TimingSummaryDto ServiceDuration,
+    double? TicketToCallSlaPercent,
+    double SlaTargetMinutes,
+    TicketStatusSummaryDto TicketStatus,
+    ChannelAnalyticsDto WalkIn,
+    ChannelAnalyticsDto Online,
+    IReadOnlyList<HourlyCountDto> TicketsByHour,
+    OperationalPeakDto? Peak,
+    IReadOnlyList<WaitBucketDto> TicketToCallDistribution,
+    IReadOnlyList<LanePerformanceDto> LanePerformance,
+    IReadOnlyList<CounterUtilizationRowDto> CounterUtilization,
+    IReadOnlyList<HourlyCountDto> NoShowsByHour);

@@ -1,17 +1,15 @@
 import * as signalR from "@microsoft/signalr";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { FormEvent } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import {
   apiBranches,
   apiCallNext,
   apiEndService,
-  apiMarkMissed,
   apiLiveDashboard,
+  apiMarkMissed,
   apiMyCounter,
   apiStartService,
   apiWaitingQueue,
-  clearStoredSession,
   getStoredEmail,
   getStoredRole,
   getStoredToken,
@@ -22,17 +20,34 @@ import {
   type MyCounterDto,
   type WaitingTicketDto,
 } from "../api";
+import { AppTopBar } from "../components/AppTopBar";
+import { CurrentCustomerPanel } from "../components/CurrentCustomerPanel";
+import { EmptyState } from "../components/EmptyState";
+import { KpiTile } from "../components/KpiTile";
+import { StatusPill } from "../components/StatusPill";
+import { useToast } from "../context/ToastContext";
 import { API_BASE } from "../config";
+import { useStaffLogout } from "../hooks/useStaffLogout";
+import {
+  clearActiveTicketSession,
+  readActiveTicketSession,
+  writeActiveTicketSession,
+} from "../staffTicketSession";
 
 export function StaffDeckPage() {
-  const navigate = useNavigate();
+  const logout = useStaffLogout();
+  const { toast } = useToast();
   const [hubToken, setHubToken] = useState<string | null>(() => getStoredToken());
-  const role = useMemo(() => getStoredRole(), []);
-  const email = useMemo(() => getStoredEmail(), []);
+  const [email, setEmail] = useState(() => getStoredEmail());
+  const [role, setRole] = useState(() => getStoredRole());
+  const [loading, setLoading] = useState(true);
+  const [notAssigned, setNotAssigned] = useState(false);
 
   useEffect(() => {
     return subscribeStaffSession(() => {
       setHubToken(getStoredToken());
+      setEmail(getStoredEmail());
+      setRole(getStoredRole());
     });
   }, []);
 
@@ -40,23 +55,28 @@ export function StaffDeckPage() {
   const [branchId, setBranchId] = useState("");
   const [serviceId, setServiceId] = useState("");
   const [ticket, setTicket] = useState("");
-  const [log, setLog] = useState<string[]>([]);
   const [live, setLive] = useState<LiveDashboard | null>(null);
   const [myCounter, setMyCounter] = useState<MyCounterDto | null>(null);
   const [waiting, setWaiting] = useState<WaitingTicketDto[]>([]);
   const [busy, setBusy] = useState(false);
-  /** True after Start service succeeds (including auto-start right after Call next). Complete is blocked until this is set. */
   const [servingActive, setServingActive] = useState(false);
 
-  const push = useCallback((line: string) => {
-    setLog((prev) => [new Date().toLocaleTimeString() + " " + line, ...prev].slice(0, 30));
-  }, []);
+  const persistTicket = useCallback(
+    (t: string, serving: boolean, bId: string, sId: string) => {
+      if (!t) {
+        clearActiveTicketSession();
+        return;
+      }
+      writeActiveTicketSession({ ticket: t, servingActive: serving, branchId: bId, serviceId: sId });
+    },
+    [],
+  );
 
   useEffect(() => {
     void (async () => {
       const t = await getValidStaffAccessToken();
       if (!t) {
-        navigate("/login");
+        logout();
         return;
       }
       setHubToken(t);
@@ -66,6 +86,7 @@ export function StaffDeckPage() {
         try {
           const mc = await apiMyCounter();
           setMyCounter(mc);
+          setNotAssigned(false);
           setBranchId(mc.branchId);
           const br = b.find((x) => x.id === mc.branchId);
           const list = br?.services ?? [];
@@ -73,26 +94,32 @@ export function StaffDeckPage() {
             !mc.allowedServiceTypeIds || mc.allowedServiceTypeIds.length === 0
               ? []
               : list.filter((s) => mc.allowedServiceTypeIds.includes(s.id));
-          const pick = filtered[0] ?? undefined;
-          if (pick) setServiceId(pick.id);
-          else setServiceId("");
-        } catch {
-          if (b.length > 0) {
-            setBranchId(b[0].id);
-            if (b[0].services[0]) setServiceId(b[0].services[0].id);
+          const saved = readActiveTicketSession();
+          const pick =
+            saved?.branchId === mc.branchId && filtered.some((s) => s.id === saved.serviceId)
+              ? saved.serviceId
+              : (filtered[0]?.id ?? "");
+          setServiceId(pick);
+          if (saved?.branchId === mc.branchId && saved.ticket) {
+            setTicket(saved.ticket);
+            setServingActive(saved.servingActive);
           }
+        } catch {
+          setNotAssigned(true);
+          setMyCounter(null);
         }
       } catch (e) {
-        push(e instanceof Error ? e.message : String(e));
+        toast(e instanceof Error ? e.message : String(e), "error");
+      } finally {
+        setLoading(false);
       }
     })();
-  }, [navigate, push]);
+  }, [logout, toast]);
 
   const refreshWaiting = useCallback(async () => {
     if (!branchId || !serviceId) return;
     try {
-      const w = await apiWaitingQueue(branchId, serviceId);
-      setWaiting(w);
+      setWaiting(await apiWaitingQueue(branchId, serviceId));
     } catch {
       setWaiting([]);
     }
@@ -101,12 +128,11 @@ export function StaffDeckPage() {
   const refreshLive = useCallback(async () => {
     if (!branchId) return;
     try {
-      const d = await apiLiveDashboard(branchId);
-      setLive(d);
-    } catch (e) {
-      push(e instanceof Error ? e.message : String(e));
+      setLive(await apiLiveDashboard(branchId));
+    } catch {
+      setLive(null);
     }
-  }, [branchId, push]);
+  }, [branchId]);
 
   useEffect(() => {
     if (!hubToken || !branchId) return;
@@ -116,49 +142,34 @@ export function StaffDeckPage() {
       .configureLogging(signalR.LogLevel.None)
       .build();
 
-    conn.on("QueueUpdated", () => {
-      push("QueueUpdated");
+    const bump = () => {
       void refreshWaiting();
       void refreshLive();
-    });
-    conn.on("TicketCalled", (ticket: string) => {
-      push(`TicketCalled ${ticket}`);
-      void refreshWaiting();
-      void refreshLive();
-    });
+    };
+
+    conn.on("QueueUpdated", bump);
+    conn.on("TicketCalled", bump);
     conn.on("CountersUpdated", () => {
-      push("CountersUpdated");
-      void refreshLive();
-      void (async () => {
-        try {
-          const mc = await apiMyCounter();
-          setMyCounter(mc);
-        } catch {
-          /* ignore */
-        }
-      })();
+      bump();
+      void apiMyCounter()
+        .then(setMyCounter)
+        .catch(() => {});
     });
 
     void conn
       .start()
       .then(() => conn.invoke("WatchBranch", branchId))
-      .catch((e) => {
-        const msg = String(e);
-        push(`SignalR: ${msg}`);
-        if (msg.includes("Failed to fetch") || msg.includes("NetworkError"))
-          push("Hint: is the API running? Set VITE_API_URL in staff-web to match (e.g. http://127.0.0.1:5154).");
-      });
+      .catch(() => toast("Live updates disconnected — data still refreshes every 8s.", "error"));
 
     conn.onreconnected(() => {
       void conn.invoke("WatchBranch", branchId).catch(() => {});
-      void refreshWaiting();
-      void refreshLive();
+      bump();
     });
 
     return () => {
       void conn.stop();
     };
-  }, [hubToken, branchId, push, refreshWaiting, refreshLive]);
+  }, [hubToken, branchId, refreshWaiting, refreshLive, toast]);
 
   useEffect(() => {
     void refreshLive();
@@ -171,13 +182,11 @@ export function StaffDeckPage() {
   }, [refreshLive, refreshWaiting]);
 
   const branch = branches.find((b) => b.id === branchId);
-
   const selectableServices = useMemo(() => {
     const list = branch?.services ?? [];
     if (!myCounter) return list;
-    if (!myCounter.allowedServiceTypeIds || myCounter.allowedServiceTypeIds.length === 0) return [];
-    const filtered = list.filter((s) => myCounter.allowedServiceTypeIds.includes(s.id));
-    return filtered.length > 0 ? filtered : [];
+    if (!myCounter.allowedServiceTypeIds?.length) return [];
+    return list.filter((s) => myCounter.allowedServiceTypeIds.includes(s.id));
   }, [branch?.services, myCounter]);
 
   useEffect(() => {
@@ -189,15 +198,14 @@ export function StaffDeckPage() {
     });
   }, [branch, myCounter, selectableServices]);
 
-  const onLogout = () => {
-    clearStoredSession();
-    navigate("/login");
-  };
+  const counterMode = myCounter?.mode ?? "Closed";
+  const counterActive = counterMode.toLowerCase() === "active";
+  const lanesConfigured = (myCounter?.allowedServiceTypeIds?.length ?? 0) > 0;
+  const canCallNext = Boolean(lanesConfigured && serviceId && counterActive && !ticket);
+  const serviceName = branch?.services.find((s) => s.id === serviceId)?.name ?? "Service";
 
-  const onCallNext = async (e?: FormEvent) => {
-    e?.preventDefault();
-    if (!branchId || !serviceId) return;
-    if (!myCounter?.allowedServiceTypeIds?.length) return;
+  const onCallNext = async () => {
+    if (!branchId || !serviceId || !canCallNext) return;
     setBusy(true);
     try {
       const r = await apiCallNext(branchId, serviceId);
@@ -207,18 +215,19 @@ export function StaffDeckPage() {
         try {
           await apiStartService(r.ticketNumber);
           setServingActive(true);
-          push(`Next: ${r.ticketNumber} — service started`);
-        } catch (startErr) {
-          push(startErr instanceof Error ? startErr.message : String(startErr));
-          push("Press Start service when the customer is at the counter.");
+          persistTicket(r.ticketNumber, true, branchId, serviceId);
+          toast(`Now serving ${r.ticketNumber}${r.counterNumber ? ` at counter ${r.counterNumber}` : ""}`, "success");
+        } catch {
+          persistTicket(r.ticketNumber, false, branchId, serviceId);
+          toast(`${r.ticketNumber} called — tap Start service when the customer arrives.`, "info");
         }
       } else {
-        push(r.message ?? "No ticket");
+        toast(r.message ?? "No customers waiting in this lane.", "info");
       }
       await refreshWaiting();
       await refreshLive();
-    } catch (err) {
-      push(err instanceof Error ? err.message : String(err));
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), "error");
     } finally {
       setBusy(false);
     }
@@ -230,9 +239,10 @@ export function StaffDeckPage() {
     try {
       await apiStartService(ticket);
       setServingActive(true);
-      push(`Start ${ticket}`);
+      persistTicket(ticket, true, branchId, serviceId);
+      toast(`Service started for ${ticket}`, "success");
     } catch (e) {
-      push(e instanceof Error ? e.message : String(e));
+      toast(e instanceof Error ? e.message : String(e), "error");
     } finally {
       setBusy(false);
     }
@@ -243,13 +253,14 @@ export function StaffDeckPage() {
     setBusy(true);
     try {
       await apiMarkMissed(ticket);
-      push(`No show: ${ticket}`);
+      toast(`Marked ${ticket} as no-show`, "info");
       setTicket("");
       setServingActive(false);
+      clearActiveTicketSession();
       await refreshWaiting();
       await refreshLive();
     } catch (e) {
-      push(e instanceof Error ? e.message : String(e));
+      toast(e instanceof Error ? e.message : String(e), "error");
     } finally {
       setBusy(false);
     }
@@ -260,193 +271,102 @@ export function StaffDeckPage() {
     setBusy(true);
     try {
       await apiEndService(ticket);
-      push(`Complete ${ticket}`);
+      toast(`Completed ${ticket}`, "success");
       setTicket("");
       setServingActive(false);
+      clearActiveTicketSession();
       await refreshWaiting();
       await refreshLive();
     } catch (e) {
-      push(e instanceof Error ? e.message : String(e));
+      toast(e instanceof Error ? e.message : String(e), "error");
     } finally {
       setBusy(false);
     }
   };
 
-  const displayName = email?.split("@")[0] ?? "Staff";
-  const staffIdDisplay = email?.replace(/@.+/, "") ?? "—";
-  const laneBadge =
-    myCounter?.serviceLaneName?.split(",")[0]?.trim() ||
-    branch?.services.find((s) => s.id === serviceId)?.name ||
-    "Service";
-  const showLanePicker = selectableServices.length > 1;
-  const lanesConfigured = (myCounter?.allowedServiceTypeIds?.length ?? 0) > 0;
-  const canCallNext = Boolean(lanesConfigured && serviceId);
-  const serviceNameForTicket = branch?.services.find((s) => s.id === serviceId)?.name ?? laneBadge;
+  if (loading) {
+    return (
+      <div className="qgo-shell">
+        <AppTopBar variant="staff" email={email} role={role} live={false} onLogout={logout} />
+        <div className="qgo-loading">Loading workspace…</div>
+      </div>
+    );
+  }
 
-  return (
-    <div className="deck-page deck-page--staff">
-      <header className="deck-topbar deck-topbar--bank">
-        <div className="brand-inline brand-inline--bank">
-          <span className="brand-mark brand-mark--pbb" title="Demo brand mark" />
-          <span className="brand-text brand-text--bank">IH-QMS</span>
-        </div>
-        <div className="topbar-actions topbar-actions--spread">
-          <span className="live-pill" title="Live queue updates">
-            <span className="live-dot" /> Live
-          </span>
-          <div className="dash-user-block">
-            <span className="dash-staff-id">{staffIdDisplay}</span>
-            <span className="dash-avatar" aria-hidden title={email ?? ""}>
-              {(displayName[0] ?? "?").toUpperCase()}
-            </span>
-          </div>
+  if (notAssigned || !myCounter) {
+    return (
+      <div className="qgo-shell">
+        <AppTopBar variant="staff" email={email} role={role} onLogout={logout} />
+        <div className="qgo-blocked">
+          <EmptyState
+            title="No counter assigned"
+            body="Your branch manager must assign you to a counter and configure at least one service lane before you can serve customers."
+            icon="!"
+          />
           {role === "Manager" ? (
-            <Link to="/manager" className="link-muted" title="Assign tellers, lanes, and counter modes">
-              Manager console
+            <Link to="/manager" className="qgo-btn-primary qgo-blocked__cta">
+              Open manager console
             </Link>
           ) : null}
-          <button type="button" className="btn-ghost" onClick={() => void onLogout()}>
-            Log out
-          </button>
-        </div>
-      </header>
-
-      <div className="dash-identity-card">
-        <div className="dash-identity-main">
-          <h1 className="dash-counter-title">Counter {myCounter?.counterNumber ?? "—"}</h1>
-          <p className="dash-counter-name">{displayName}</p>
-        </div>
-        <span className="dash-branch-badge">{myCounter?.branchName ?? branch?.name ?? "Branch"}</span>
-      </div>
-
-      <div className="deck-kpi-row">
-        <div className="kpi-card">
-          <div className="kpi-icon kpi-green" />
-          <div>
-            <div className="kpi-label">Customer served</div>
-            <div className="kpi-value">{live?.customersServedToday ?? "—"}</div>
-            <div className="kpi-foot">Today</div>
-          </div>
-        </div>
-        <div className="kpi-card">
-          <div className="kpi-icon kpi-blue" />
-          <div>
-            <div className="kpi-label">In queue</div>
-            <div className="kpi-value">{live?.queueLength ?? "—"}</div>
-            <div className="kpi-foot">Waiting customers</div>
-          </div>
-        </div>
-        <div className="kpi-card">
-          <div className="kpi-icon kpi-amber" />
-          <div>
-            <div className="kpi-label">Avg wait time</div>
-            <div className="kpi-value">{live?.avgWaitMinutes ?? "—"}</div>
-            <div className="kpi-foot">Minutes</div>
-          </div>
-        </div>
-        <div className="kpi-card">
-          <div className="kpi-icon kpi-gold" />
-          <div>
-            <div className="kpi-label">Priority customers</div>
-            <div className="kpi-value">{live?.priorityWaiting ?? "—"}</div>
-            <div className="kpi-foot">Checked-in online</div>
-          </div>
         </div>
       </div>
+    );
+  }
 
-      <div className="deck-grid">
-        <section className="deck-main-col">
-          <div className="panel current-customer-panel">
-            <div className="panel-header-indigo">
-              <h2>Current customer</h2>
-            </div>
-            <div className="current-body">
-              {ticket ? (
-                <>
-                  <div className="ticket-hero">{ticket}</div>
-                  <div className="ticket-sub">{serviceNameForTicket}</div>
-                  {servingActive ? (
-                    <p className="ticket-serving-badge">Serving — tap Complete when the visit is finished.</p>
-                  ) : (
-                    <p className="ticket-serving-warn">
-                      Service not started yet — use <strong>Start service</strong> in the sidebar if needed.
-                    </p>
-                  )}
-                </>
-              ) : (
-                <div className="dash-empty-customer">
-                  <div className="dash-empty-icon-wrap">
-                    <span className="dash-empty-icon">👤</span>
-                  </div>
-                  <div className="ticket-placeholder-title">No customer being served</div>
-                  <div className="ticket-placeholder-sub">
-                    {waiting.length} customer{waiting.length === 1 ? "" : "s"} waiting in your queue
-                  </div>
-                </div>
-              )}
-            </div>
-            {!ticket ? (
-              <div className="call-next-below-card">
-                <button
-                  type="button"
-                  className="btn-call-next btn-call-next--below"
-                  disabled={busy || !canCallNext}
-                  title={!lanesConfigured ? "Ask your manager to assign at least one lane to this counter, then Open it." : undefined}
-                  onClick={() => void onCallNext()}
-                >
-                  Call next customer
-                </button>
-              </div>
-            ) : (
-              <div className="current-actions">
-                <button type="button" className="btn-complete" disabled={busy || !servingActive} onClick={() => void onComplete()}>
-                  Complete service
-                </button>
-                <button
-                  type="button"
-                  className="btn-skip"
-                  disabled={busy || !ticket}
-                  title="Mark customer as no show (missed their turn)"
-                  onClick={() => void onNoShow()}
-                >
-                  No Show
-                </button>
-              </div>
-            )}
-          </div>
+  return (
+    <div className="qgo-shell qgo-shell--staff">
+      <AppTopBar variant="staff" email={email} role={role} onLogout={logout} />
 
-          <div className="panel queue-panel">
-            <div className="queue-head">
-              <h2>Queue overview</h2>
-              <span className="queue-sub">{waiting.length} customers waiting</span>
-            </div>
-            <div className="queue-progress" aria-hidden />
-            <ul className="queue-list">
-              {waiting.map((w) => (
-                <li key={w.ticketNumber} className="queue-row">
-                  <span className="queue-idx">{w.position}</span>
-                  <div className="queue-main">
-                    <div className="queue-ticket">{w.ticketNumber}</div>
-                    <div className="queue-meta">
-                      <span className="queue-lane-badge">{laneBadge}</span>
-                      <span className="queue-entry-type">{w.entryType}</span>
-                    </div>
-                  </div>
-                  <div className="queue-eta">{w.estimatedWaitMinutes == null ? "—" : `${w.estimatedWaitMinutes} min`}</div>
-                </li>
-              ))}
-            </ul>
-          </div>
+      <div className="qgo-staff-hero">
+        <div>
+          <p className="qgo-staff-hero__eyebrow">{myCounter.branchName}</p>
+          <h1 className="qgo-staff-hero__title">Counter {myCounter.counterNumber}</h1>
+          <p className="qgo-staff-hero__lane">{myCounter.serviceLaneName || serviceName}</p>
+        </div>
+        <StatusPill mode={counterMode} size="md" />
+      </div>
 
-          {myCounter && !lanesConfigured ? (
-            <p className="lane-assigned-note lane-assigned-note--warn">
-              No service lane is assigned to this counter yet. Your branch manager must tick at least one allowed lane and set the counter to{" "}
-              <strong>Open</strong> before you can call customers.
-            </p>
-          ) : showLanePicker ? (
-            <label className="lane-select">
-              Service lane (manager assigns allowed lanes for this counter)
-              <span className="field-hint">Call next and the list below use the lane you pick.</span>
+      {!counterActive ? (
+        <div className="qgo-banner qgo-banner--warn" role="status">
+          Counter is <strong>{counterMode}</strong>. Ask your manager to set it to <strong>Open</strong> before calling customers.
+        </div>
+      ) : null}
+
+      {!lanesConfigured ? (
+        <div className="qgo-banner qgo-banner--warn" role="status">
+          No service lanes assigned to this counter. Your manager must enable at least one lane in the manager console.
+        </div>
+      ) : null}
+
+      <div className="qgo-kpi-row">
+        <KpiTile label="Served today" value={live?.customersServedToday ?? "—"} foot="Branch total" accent="green" />
+        <KpiTile label="In queue" value={live?.queueLength ?? "—"} foot="All lanes" accent="blue" />
+        <KpiTile label="Avg ticket→call" value={live ? `${live.avgTicketToCallMinutes}m` : "—"} foot="Today completed" accent="amber" />
+        <KpiTile label="In branch" value={live?.customersInBranch ?? "—"} foot={`${live?.activeCounters ?? "—"} active counters`} accent="navy" />
+      </div>
+
+      <div className="qgo-staff-grid">
+        <CurrentCustomerPanel
+          ticket={ticket}
+          servingActive={servingActive}
+          serviceName={serviceName}
+          waitingCount={waiting.length}
+          busy={busy}
+          canCallNext={canCallNext}
+          onCallNext={onCallNext}
+          onComplete={onComplete}
+          onNoShow={onNoShow}
+          onStart={onStart}
+        />
+
+        <aside className="qgo-panel qgo-panel--queue">
+          <header className="qgo-panel__head qgo-panel__head--split">
+            <h2>Queue</h2>
+            <span className="qgo-muted">{waiting.length} waiting</span>
+          </header>
+          {selectableServices.length > 1 ? (
+            <label className="qgo-field qgo-field--compact">
+              <span>Service lane</span>
               <select
                 value={serviceId}
                 onChange={(e) => {
@@ -461,78 +381,27 @@ export function StaffDeckPage() {
                 ))}
               </select>
             </label>
-          ) : myCounter && selectableServices.length === 1 ? (
-            <p className="lane-assigned-note">
-              Lane for this counter: <strong>{selectableServices[0]?.name}</strong> (set by branch manager).
+          ) : (
+            <p className="qgo-lane-note">
+              Lane: <strong>{selectableServices[0]?.name ?? "—"}</strong>
             </p>
-          ) : null}
-        </section>
-
-        <aside className="deck-side-col">
-          <div className="panel side-status-panel">
-            <h2 className="side-title">My counter status</h2>
-            <div className="side-card">
-              <div className="side-label">Counter number</div>
-              <div className="side-value-lg side-value--accent">{myCounter?.counterNumber ?? "—"}</div>
-            </div>
-            <div className="side-card">
-              <div className="side-label">Service type / lane</div>
-              <div className="side-value">{myCounter?.serviceLaneName ?? "—"}</div>
-            </div>
-            <div className="side-card">
-              <div className="side-label">Status</div>
-              <div className="side-value">{myCounter?.mode ?? "—"}</div>
-              <p className="side-hint">Managers set Open / Break / Closed and assign staff to counters (up to 8 per branch).</p>
-            </div>
-            <div className="side-counter-actions">
-              {role === "Manager" ? (
-                <Link to="/manager" className="btn-counter-mode btn-counter-mode--close">
-                  Close / Break (manager)
-                </Link>
-              ) : (
-                <>
-                  <button
-                    type="button"
-                    className="btn-counter-mode btn-counter-mode--close"
-                    onClick={() =>
-                      window.alert(
-                        "Ask your branch manager to set this counter to Closed or Break from the Manager screen.",
-                      )
-                    }
-                  >
-                    Close
-                  </button>
-                  <button
-                    type="button"
-                    className="btn-counter-mode btn-counter-mode--break"
-                    onClick={() =>
-                      window.alert(
-                        "Ask your branch manager to set this counter to Break from the Manager screen.",
-                      )
-                    }
-                  >
-                    Break
-                  </button>
-                </>
-              )}
-            </div>
-            <div className="side-actions">
-              <button
-                type="button"
-                className="btn-secondary-lg"
-                disabled={busy || !ticket || servingActive}
-                onClick={() => void onStart()}
-              >
-                {servingActive ? "Service started" : "Start service"}
-              </button>
-              <p className="side-hint">Call next usually starts service automatically; use this if it did not.</p>
-            </div>
-          </div>
-
-          <details className="panel log-panel log-panel--details">
-            <summary>Technical log</summary>
-            <pre className="log-pre">{log.join("\n")}</pre>
-          </details>
+          )}
+          <ul className="qgo-queue-list">
+            {waiting.length === 0 ? (
+              <li className="qgo-queue-empty">Queue is empty for this lane.</li>
+            ) : (
+              waiting.map((w) => (
+                <li key={w.ticketNumber} className="qgo-queue-item">
+                  <span className="qgo-queue-pos">{w.position}</span>
+                  <div className="qgo-queue-main">
+                    <strong>{w.ticketNumber}</strong>
+                    <span className="qgo-muted">{w.entryType}</span>
+                  </div>
+                  <span className="qgo-queue-eta">{w.estimatedWaitMinutes == null ? "—" : `${w.estimatedWaitMinutes}m`}</span>
+                </li>
+              ))
+            )}
+          </ul>
         </aside>
       </div>
     </div>

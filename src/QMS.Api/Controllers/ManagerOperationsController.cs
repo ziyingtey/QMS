@@ -96,6 +96,54 @@ public sealed class ManagerOperationsController(QmsQueueService queue, QmsDbCont
 
         return Ok(await queue.GetManagerInsightsAsync(branchId, cancellationToken));
     }
+
+    [HttpGet("branches/{branchId:guid}/analytics/today")]
+    public async Task<ActionResult<BranchAnalyticsTodayDto>> AnalyticsToday(
+        Guid branchId,
+        CancellationToken cancellationToken)
+    {
+        if (!await OwnsBranch(branchId, cancellationToken)) return Forbid();
+        try
+        {
+            return Ok(await queue.GetBranchAnalyticsTodayAsync(branchId, cancellationToken));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return NotFound(new { message = ex.Message });
+        }
+    }
+
+    [HttpGet("branches/{branchId:guid}/waiting-queue")]
+    public async Task<ActionResult<IReadOnlyList<ManagerWaitingTicketDto>>> WaitingQueue(
+        Guid branchId,
+        CancellationToken cancellationToken)
+    {
+        if (!await OwnsBranch(branchId, cancellationToken)) return Forbid();
+        try
+        {
+            return Ok(await queue.ListBranchWaitingQueueForManagerAsync(branchId, cancellationToken));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return NotFound(new { message = ex.Message });
+        }
+    }
+
+    [HttpGet("branches/{branchId:guid}/appointments/today")]
+    public async Task<ActionResult<ManagerAppointmentsTodayDto>> AppointmentsToday(
+        Guid branchId,
+        CancellationToken cancellationToken)
+    {
+        if (!await OwnsBranch(branchId, cancellationToken)) return Forbid();
+        try
+        {
+            return Ok(await queue.GetManagerAppointmentsTodayAsync(branchId, cancellationToken));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return NotFound(new { message = ex.Message });
+        }
+    }
 }
 
 public sealed record ManagerBranchSettingsPatch(

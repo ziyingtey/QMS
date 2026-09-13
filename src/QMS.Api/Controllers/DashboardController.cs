@@ -16,6 +16,12 @@ public sealed class DashboardController(QmsDbContext db, QmsQueueService queue) 
     [HttpGet("live")]
     public async Task<ActionResult<LiveDashboardDto>> Live(Guid branchId, CancellationToken cancellationToken)
     {
+        var now = DateTimeOffset.UtcNow;
+        var dayStart = now.ToUniversalTime().Date;
+        var dayEnd = dayStart.AddDays(1);
+        var dayStartOffset = new DateTimeOffset(dayStart, TimeSpan.Zero);
+        var dayEndOffset = new DateTimeOffset(dayEnd, TimeSpan.Zero);
+
         var waiting = await db.QueueEntries.CountAsync(
             q => q.BranchId == branchId && q.State == QueueEntryState.Waiting,
             cancellationToken);
@@ -24,16 +30,59 @@ public sealed class DashboardController(QmsDbContext db, QmsQueueService queue) 
             q => q.BranchId == branchId && q.State == QueueEntryState.Serving,
             cancellationToken);
 
+        var walkInsWaiting = await db.QueueEntries.CountAsync(
+            q => q.BranchId == branchId && q.State == QueueEntryState.Waiting && q.EntryType == QueueEntryType.WalkIn,
+            cancellationToken);
+
+        var onlineWaiting = await db.QueueEntries.CountAsync(
+            q => q.BranchId == branchId && q.State == QueueEntryState.Waiting && q.EntryType == QueueEntryType.OnlineBooked,
+            cancellationToken);
+
+        var waitingRows = await db.QueueEntries.AsNoTracking()
+            .Where(q => q.BranchId == branchId && q.State == QueueEntryState.Waiting)
+            .Select(q => new
+            {
+                q.EntryType,
+                q.CreatedAt,
+                q.AssignedSlotStart,
+                CheckedInAt = q.Booking != null ? q.Booking.CheckedInAt : null,
+            })
+            .ToListAsync(cancellationToken);
+
+        var waitingMinutes = waitingRows
+            .Select(q => TicketToCallMetrics.MinutesInQueueNow(
+                now, q.EntryType, q.CreatedAt, q.CheckedInAt, q.AssignedSlotStart))
+            .ToList();
+        const double ticketToCallTargetMinutes = 15;
+        var longestTicketToCallMinutes = waitingMinutes.Count > 0 ? waitingMinutes.Max() : 0.0;
+        var ticketToCallBreaches = waitingMinutes.Count(m => m > ticketToCallTargetMinutes);
+
         var activeCounters = await db.Counters.CountAsync(
             c => c.BranchId == branchId && c.Mode == CounterMode.Active,
             cancellationToken);
 
-        var waitEntries = await db.QueueEntries.AsNoTracking()
-            .Where(q => q.BranchId == branchId && q.State == QueueEntryState.Completed && q.CalledAt != null)
-            .Select(q => new { q.CalledAt, q.CreatedAt })
+        var completedToday = await db.QueueEntries.AsNoTracking()
+            .Where(q => q.BranchId == branchId
+                        && q.State == QueueEntryState.Completed
+                        && q.CalledAt != null
+                        && q.ServingEndedAt >= dayStartOffset
+                        && q.ServingEndedAt < dayEndOffset)
+            .Select(q => new
+            {
+                q.EntryType,
+                q.CreatedAt,
+                q.CalledAt,
+                q.AssignedSlotStart,
+                CheckedInAt = q.Booking != null ? q.Booking.CheckedInAt : null,
+            })
             .ToListAsync(cancellationToken);
-        var avgWaitSeconds = waitEntries.Count > 0
-            ? waitEntries.Average(q => (q.CalledAt!.Value - q.CreatedAt).TotalSeconds)
+
+        var ticketToCallToday = completedToday
+            .Select(q => TicketToCallMetrics.MinutesToCall(
+                q.CalledAt!.Value, q.EntryType, q.CreatedAt, q.CheckedInAt, q.AssignedSlotStart))
+            .ToList();
+        var avgTicketToCallMinutes = ticketToCallToday.Count > 0
+            ? Math.Round(ticketToCallToday.Average(), 1)
             : 0.0;
 
         var services = await db.ServiceTypes.AsNoTracking()
@@ -52,17 +101,29 @@ public sealed class DashboardController(QmsDbContext db, QmsQueueService queue) 
             etaByService.Add(new ServiceEtaDto(s.Id, ahead, double.IsInfinity(eta) ? null : Math.Round(eta, 1)));
         }
 
-        var dayStart = DateTimeOffset.UtcNow.ToUniversalTime().Date;
-        var dayEnd = dayStart.AddDays(1);
         var customersServedToday = await db.QueueEntries.CountAsync(
             q => q.BranchId == branchId
                  && q.State == QueueEntryState.Completed
                  && q.ServingEndedAt != null
-                 && q.ServingEndedAt >= dayStart
-                 && q.ServingEndedAt < dayEnd,
+                 && q.ServingEndedAt >= dayStartOffset
+                 && q.ServingEndedAt < dayEndOffset,
             cancellationToken);
 
-        var priorityWaiting = await db.QueueEntries.CountAsync(
+        var walkInsToday = await db.QueueEntries.CountAsync(
+            q => q.BranchId == branchId
+                 && q.EntryType == QueueEntryType.WalkIn
+                 && q.CreatedAt >= dayStartOffset
+                 && q.CreatedAt < dayEndOffset,
+            cancellationToken);
+
+        var appointmentsToday = await db.QueueEntries.CountAsync(
+            q => q.BranchId == branchId
+                 && q.EntryType == QueueEntryType.OnlineBooked
+                 && q.CreatedAt >= dayStartOffset
+                 && q.CreatedAt < dayEndOffset,
+            cancellationToken);
+
+        var onlineCheckInsWaiting = await db.QueueEntries.CountAsync(
             q => q.BranchId == branchId
                  && q.State == QueueEntryState.Waiting
                  && q.EntryType == QueueEntryType.OnlineBooked
@@ -73,10 +134,17 @@ public sealed class DashboardController(QmsDbContext db, QmsQueueService queue) 
         return Ok(new LiveDashboardDto(
             waiting + serving,
             waiting,
-            Math.Round(avgWaitSeconds / 60.0, 1),
+            serving,
+            avgTicketToCallMinutes,
+            Math.Round(longestTicketToCallMinutes, 1),
             activeCounters,
             customersServedToday,
-            priorityWaiting,
+            walkInsToday,
+            appointmentsToday,
+            walkInsWaiting,
+            onlineWaiting,
+            ticketToCallBreaches,
+            onlineCheckInsWaiting,
             etaByService));
     }
 }
@@ -85,8 +153,15 @@ public sealed record ServiceEtaDto(Guid ServiceTypeId, int QueueLength, double? 
 public sealed record LiveDashboardDto(
     int CustomersInBranch,
     int QueueLength,
-    double AvgWaitMinutes,
+    int ServingCount,
+    double AvgTicketToCallMinutes,
+    double LongestTicketToCallMinutes,
     int ActiveCounters,
     int CustomersServedToday,
-    int PriorityWaiting,
+    int WalkInsToday,
+    int AppointmentsToday,
+    int WalkInsWaiting,
+    int OnlineWaiting,
+    int TicketToCallBreaches,
+    int OnlineCheckInsWaiting,
     IReadOnlyList<ServiceEtaDto> ByService);

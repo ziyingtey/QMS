@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
@@ -112,6 +113,11 @@ using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<QmsDbContext>();
     await db.Database.EnsureCreatedAsync();
+    await BranchOperatingHoursBackfill.EnsureDefaultsAsync(db);
+
+    var hub = scope.ServiceProvider.GetRequiredService<IHubContext<QueueHub>>();
+    var startupLogger = scope.ServiceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("Startup");
+    await BranchAfterHoursCounterSweep.RunAsync(db, hub, startupLogger);
 }
 
 if (app.Environment.IsDevelopment())
