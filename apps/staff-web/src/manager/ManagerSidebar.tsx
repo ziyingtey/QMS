@@ -1,3 +1,5 @@
+import { LayoutDashboard, Monitor, Clock, BarChart3 } from "lucide-react";
+
 export type ManagerTab = "dashboard" | "counters" | "capacity" | "analytics";
 
 type Props = {
@@ -8,11 +10,11 @@ type Props = {
   alertCount: number;
 };
 
-const NAV: { id: ManagerTab; label: string; icon: string }[] = [
-  { id: "dashboard", label: "Dashboard", icon: "◫" },
-  { id: "counters", label: "Counters", icon: "▣" },
-  { id: "capacity", label: "Schedule & capacity", icon: "◷" },
-  { id: "analytics", label: "Analytics", icon: "▤" },
+const NAV: { id: ManagerTab; label: string; Icon: typeof LayoutDashboard }[] = [
+  { id: "dashboard", label: "Dashboard", Icon: LayoutDashboard },
+  { id: "counters", label: "Counters", Icon: Monitor },
+  { id: "capacity", label: "Schedule & capacity", Icon: Clock },
+  { id: "analytics", label: "Analytics", Icon: BarChart3 },
 ];
 
 export function ManagerSidebar({ active, onChange, branchName, branchOpen, alertCount }: Props) {
@@ -37,9 +39,7 @@ export function ManagerSidebar({ active, onChange, branchName, branchOpen, alert
             className={`qgo-mgr-sidebar__link${active === item.id ? " is-active" : ""}`}
             onClick={() => onChange(item.id)}
           >
-            <span className="qgo-mgr-sidebar__icon" aria-hidden>
-              {item.icon}
-            </span>
+            <item.Icon size={18} strokeWidth={2.2} className="qgo-mgr-sidebar__icon" aria-hidden />
             <span>{item.label}</span>
             {item.id === "analytics" && alertCount > 0 ? (
               <span className="qgo-mgr-sidebar__badge">{alertCount}</span>

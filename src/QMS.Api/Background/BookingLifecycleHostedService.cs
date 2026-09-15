@@ -10,7 +10,8 @@ using QMS.Infrastructure.Persistence;
 namespace QMS.Api.Background;
 
 /// <summary>
-/// Periodic queue attendance: marks Called tickets as Missed after the branch grace window expires.
+/// Periodic queue attendance: marks Called tickets as Missed after the branch grace window expires,
+/// then triggers Pull Forward to backfill freed capacity.
 /// </summary>
 public sealed class BookingLifecycleHostedService(
     IServiceScopeFactory scopeFactory,
@@ -42,6 +43,7 @@ public sealed class BookingLifecycleHostedService(
         var db = scope.ServiceProvider.GetRequiredService<QmsDbContext>();
         var hub = scope.ServiceProvider.GetRequiredService<IHubContext<QueueHub>>();
         var notifications = scope.ServiceProvider.GetRequiredService<CustomerNotificationService>();
+        var queueService = scope.ServiceProvider.GetRequiredService<QmsQueueService>();
         var now = DateTimeOffset.UtcNow;
 
         // Called tickets that exceeded grace window → Missed
@@ -53,6 +55,8 @@ public sealed class BookingLifecycleHostedService(
 
         var branchIds = new HashSet<Guid>();
         var missedForNotify = new List<(Guid CustomerId, Guid? BookingId, string Ticket, Guid BranchId)>();
+        // Track branch+service pairs that need PullForward after no-show
+        var pullForwardTargets = new HashSet<(Guid BranchId, Guid ServiceTypeId)>();
 
         foreach (var q in calledEntries)
         {
@@ -70,12 +74,14 @@ public sealed class BookingLifecycleHostedService(
                 missedForNotify.Add((cid, q.BookingId, q.TicketNumber, q.BranchId));
 
             branchIds.Add(q.BranchId);
+            pullForwardTargets.Add((q.BranchId, q.ServiceTypeId));
         }
 
         if (branchIds.Count == 0)
             return;
 
         await db.SaveChangesAsync(ct);
+
         foreach (var (customerId, bookingId, ticket, branchId) in missedForNotify)
         {
             await notifications.NotifyAsync(
@@ -87,7 +93,23 @@ public sealed class BookingLifecycleHostedService(
                 branchId,
                 ct);
         }
+
         foreach (var bid in branchIds)
             await hub.Clients.Group(QueueHub.BranchGroup(bid)).SendAsync("QueueUpdated", bid, ct);
+
+        // Trigger Pull Forward for each branch+service that had a no-show
+        // This fills the freed capacity with walk-ins from later slots
+        foreach (var (branchId, serviceTypeId) in pullForwardTargets)
+        {
+            try
+            {
+                await queueService.PullForwardAfterNoShowAsync(branchId, serviceTypeId, ct);
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "PullForward after auto-missed failed for branch {BranchId}, service {ServiceTypeId}",
+                    branchId, serviceTypeId);
+            }
+        }
     }
 }

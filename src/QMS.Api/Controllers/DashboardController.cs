@@ -97,6 +97,7 @@ public sealed class DashboardController(QmsDbContext db, QmsQueueService queue) 
                 q => q.BranchId == branchId && q.ServiceTypeId == s.Id && q.State == QueueEntryState.Waiting,
                 cancellationToken);
             var laneCounters = await queue.CountActiveLaneCountersAsync(branchId, s.Id, cancellationToken);
+            // Aggregate lane ETA — uses legacy formula (no per-entry features available)
             var eta = WaitTimeEstimator.EstimateMinutes(ahead, s.DefaultAvgServiceMinutes, Math.Max(1, laneCounters));
             etaByService.Add(new ServiceEtaDto(s.Id, ahead, double.IsInfinity(eta) ? null : Math.Round(eta, 1)));
         }

@@ -22,8 +22,10 @@ public sealed class QmsDbContext : DbContext
     public DbSet<Notification> Notifications => Set<Notification>();
     public DbSet<AnalyticsSummary> AnalyticsSummaries => Set<AnalyticsSummary>();
     public DbSet<MlTrainingObservation> MlTrainingObservations => Set<MlTrainingObservation>();
+    public DbSet<WaitPrediction> WaitPredictions => Set<WaitPrediction>();
     public DbSet<RefreshSession> RefreshSessions => Set<RefreshSession>();
     public DbSet<CustomerPasswordResetToken> CustomerPasswordResetTokens => Set<CustomerPasswordResetToken>();
+    public DbSet<QueueMovement> QueueMovements => Set<QueueMovement>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -137,6 +139,16 @@ public sealed class QmsDbContext : DbContext
             e.HasOne(x => x.Counter).WithMany().HasForeignKey(x => x.CounterId).OnDelete(DeleteBehavior.SetNull);
         });
 
+        modelBuilder.Entity<QueueMovement>(e =>
+        {
+            e.ToTable("QUEUE_MOVEMENTS");
+            e.HasIndex(x => new { x.QueueEntryId, x.MovedAt });
+            e.HasOne(x => x.QueueEntry)
+                .WithMany(q => q.Movements)
+                .HasForeignKey(x => x.QueueEntryId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
         modelBuilder.Entity<ServiceSessionLog>(e =>
         {
             e.ToTable("SERVICE_LOGS");
@@ -162,8 +174,20 @@ public sealed class QmsDbContext : DbContext
         modelBuilder.Entity<MlTrainingObservation>(e =>
         {
             e.ToTable("ML_TRAINING_DATA");
+            e.HasIndex(x => x.QueueEntryId); // fast lookup for target attachment
+            e.HasIndex(x => x.SnapshotAt);   // time-based train/test split
+            e.Property(x => x.ServiceCode).HasMaxLength(32);
+            e.Property(x => x.FeatureSchemaVersion).HasMaxLength(16);
             e.HasOne(x => x.Branch).WithMany(b => b.MlTrainingObservations).HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.Cascade);
             e.HasOne(x => x.ServiceType).WithMany(s => s.MlTrainingObservations).HasForeignKey(x => x.ServiceTypeId).OnDelete(DeleteBehavior.NoAction);
+        });
+
+        modelBuilder.Entity<WaitPrediction>(e =>
+        {
+            e.ToTable("WAIT_PREDICTIONS");
+            e.HasIndex(x => x.QueueEntryId); // target attachment + audit lookup
+            e.Property(x => x.ModelVersion).HasMaxLength(64);
+            e.Property(x => x.FeatureSchemaVersion).HasMaxLength(16);
         });
 
         modelBuilder.Entity<RefreshSession>(e =>

@@ -28,4 +28,31 @@ public class QueueEntry
     public DateTimeOffset? AssignedSlotEnd { get; set; }
     /// <summary>Whether the customer has physically arrived (check-in).</summary>
     public bool CheckedIn { get; set; }
+
+    // ── Queue Timeline (Phase 1: correct waiting-time semantics) ──
+
+    /// <summary>
+    /// The time this entry first became eligible for service. Immutable after initial set.
+    /// Online: AssignedSlotStart at booking creation. Walk-in: CreatedAt.
+    /// ML training target = ServingStartedAt - InitialQueueEligibleAt.
+    /// </summary>
+    public DateTimeOffset? InitialQueueEligibleAt { get; set; }
+
+    /// <summary>
+    /// Current queue eligibility time. Updated on Pull Forward (set to PullForwardAt).
+    /// For online: AssignedSlotStart. For walk-in: CreatedAt, then PullForwardAt if pulled.
+    /// </summary>
+    public DateTimeOffset? QueueEligibleAt { get; set; }
+
+    /// <summary>The first assigned slot start (before any Pull Forward or reschedule).</summary>
+    public DateTimeOffset? OriginalSlotStart { get; set; }
+
+    /// <summary>The first assigned slot end (before any Pull Forward or reschedule).</summary>
+    public DateTimeOffset? OriginalSlotEnd { get; set; }
+
+    /// <summary>Timestamp of the most recent Pull Forward movement (null if never pulled).</summary>
+    public DateTimeOffset? PullForwardAt { get; set; }
+
+    /// <summary>Audit trail of all slot movements (Pull Forward, reschedule).</summary>
+    public ICollection<QueueMovement> Movements { get; set; } = new List<QueueMovement>();
 }

@@ -18,7 +18,9 @@ public sealed class QmsQueueService(
     ICapacityEngine capacityEngine,
     IHubContext<QueueHub> hubContext,
     IBdsReportingBridge bds,
-    CustomerNotificationService notifications)
+    CustomerNotificationService notifications,
+    IWaitTimeEstimator waitTimeEstimator,
+    WaitTimeFeatureBuilder featureBuilder)
 {
     // ─────────────────────────────────────────────────────────────────────
     // GET SLOTS (customer booking grid)
@@ -149,7 +151,12 @@ public sealed class QmsQueueService(
             EnqueueSequence = seq,
             AssignedSlotStart = slotStart,
             AssignedSlotEnd = slotEnd,
-            CheckedIn = false
+            CheckedIn = false,
+            // Online: waiting starts when slot begins, not when booking was created
+            InitialQueueEligibleAt = slotStart,
+            QueueEligibleAt = slotStart,
+            OriginalSlotStart = slotStart,
+            OriginalSlotEnd = slotEnd,
         };
 
         booking.QueueEntry = entry;
@@ -220,6 +227,7 @@ public sealed class QmsQueueService(
         var seq = await AllocateSlotSequenceAsync(branchId, chosenStart.Value, cancellationToken);
         var ticket = FormatTicket(branch.BranchCode, seq);
 
+        var nowUtc = DateTimeOffset.UtcNow;
         var entry = new QueueEntry
         {
             Id = Guid.NewGuid(),
@@ -228,14 +236,34 @@ public sealed class QmsQueueService(
             TicketNumber = ticket,
             EntryType = QueueEntryType.WalkIn,
             State = QueueEntryState.Waiting,
+            CreatedAt = nowUtc,
             EnqueueSequence = seq,
             AssignedSlotStart = chosenStart,
             AssignedSlotEnd = chosenEnd,
-            CheckedIn = true // Walk-ins are physically present
+            CheckedIn = true, // Walk-ins are physically present
+            // Walk-in: waiting starts immediately (customer is physically present)
+            InitialQueueEligibleAt = nowUtc,
+            QueueEligibleAt = nowUtc,
+            OriginalSlotStart = chosenStart,
+            OriginalSlotEnd = chosenEnd,
         };
 
         db.QueueEntries.Add(entry);
         await db.SaveChangesAsync(cancellationToken);
+
+        // ML snapshot: walk-in is immediately queue-eligible, capture features now
+        try
+        {
+            var featureBuilder = new WaitTimeFeatureBuilder(db);
+            var features = await featureBuilder.BuildAsync(entry, branch, service, nowUtc, cancellationToken);
+            var obs = WaitTimeFeatureBuilder.ToObservation(features, entry, nowUtc);
+            db.MlTrainingObservations.Add(obs);
+            await db.SaveChangesAsync(cancellationToken);
+        }
+        catch (Exception)
+        {
+            // Snapshot failure must never block ticket creation
+        }
 
         await bds.OnTicketIssuedAsync(branch.BranchCode, ticket, entry.CreatedAt, service.Code, cancellationToken);
         await hubContext.Clients.Group(QueueHub.BranchGroup(branchId)).SendAsync("QueueUpdated", branchId, cancellationToken);
@@ -336,12 +364,34 @@ public sealed class QmsQueueService(
         booking.SlotStart = newSlotStart;
         booking.SlotEnd = newSlotEnd;
 
-        if (booking.QueueEntry is { State: QueueEntryState.Waiting })
+        if (booking.QueueEntry is { State: QueueEntryState.Waiting } qe)
         {
+            var oldSlotStart = qe.AssignedSlotStart;
+            var oldSlotEnd = qe.AssignedSlotEnd;
+            var oldSeq = qe.EnqueueSequence;
             var newSeq = await AllocateSlotSequenceAsync(booking.BranchId, newSlotStart, cancellationToken);
-            booking.QueueEntry.EnqueueSequence = newSeq;
-            booking.QueueEntry.AssignedSlotStart = newSlotStart;
-            booking.QueueEntry.AssignedSlotEnd = newSlotEnd;
+
+            // Record reschedule movement
+            db.QueueMovements.Add(new QueueMovement
+            {
+                Id = Guid.NewGuid(),
+                QueueEntryId = qe.Id,
+                FromSlotStart = oldSlotStart,
+                FromSlotEnd = oldSlotEnd,
+                ToSlotStart = newSlotStart,
+                ToSlotEnd = newSlotEnd,
+                PreviousEnqueueSequence = oldSeq,
+                NewEnqueueSequence = newSeq,
+                MovedAt = DateTimeOffset.UtcNow,
+                Reason = QueueMovementReason.ManualReschedule,
+            });
+
+            qe.EnqueueSequence = newSeq;
+            qe.AssignedSlotStart = newSlotStart;
+            qe.AssignedSlotEnd = newSlotEnd;
+            // Reschedule resets current eligibility to new slot start
+            // InitialQueueEligibleAt remains unchanged (original booking slot)
+            qe.QueueEligibleAt = newSlotStart;
         }
 
         await db.SaveChangesAsync(cancellationToken);
@@ -364,11 +414,23 @@ public sealed class QmsQueueService(
             throw new InvalidOperationException("Cancellation is only allowed up to 1 hour before the scheduled appointment.");
 
         booking.Status = BookingStatus.Cancelled;
+        Guid? releasedServiceTypeId = null;
         if (booking.QueueEntry is not null)
+        {
             booking.QueueEntry.State = QueueEntryState.Missed;
+            releasedServiceTypeId = booking.QueueEntry.ServiceTypeId;
+        }
 
         await db.SaveChangesAsync(cancellationToken);
         await hubContext.Clients.Group(QueueHub.BranchGroup(booking.BranchId)).SendAsync("QueueUpdated", booking.BranchId, cancellationToken);
+
+        // Cancellation releases slot capacity — pull forward eligible walk-ins.
+        // Cancel requires ≥1h before slot, so the freed slot is always in the future;
+        // use normal walk-in capacity (not noShowInCurrentSlot) for backfill.
+        if (releasedServiceTypeId is not null)
+        {
+            await PullForwardWalkInsAsync(booking.BranchId, releasedServiceTypeId.Value, cancellationToken);
+        }
 
         var ticket = booking.QueueEntry?.TicketNumber;
         await notifications.NotifyAsync(
@@ -392,6 +454,7 @@ public sealed class QmsQueueService(
     {
         var entry = await db.QueueEntries.AsNoTracking()
             .Include(q => q.ServiceType)
+            .Include(q => q.Branch)
             .Include(q => q.Counter)
             .FirstOrDefaultAsync(q => q.BranchId == branchId && q.TicketNumber == ticketNumber, cancellationToken);
         if (entry is null) return null;
@@ -428,8 +491,32 @@ public sealed class QmsQueueService(
                  && q.AssignedSlotStart.Value.Date == entryDate,
             cancellationToken);
 
-        var avg = entry.ServiceType.DefaultAvgServiceMinutes;
-        var eta = WaitTimeEstimator.EstimateMinutes(totalAhead + currentlyServing, avg, Math.Max(1, activeCounters));
+        // Build features and estimate via IWaitTimeEstimator (shadow mode: formula stays customer-facing)
+        double eta;
+        try
+        {
+            var features = await featureBuilder.BuildAsync(entry, entry.Branch, entry.ServiceType, DateTimeOffset.UtcNow, cancellationToken);
+            var (minutes, source) = waitTimeEstimator.Estimate(features);
+            eta = minutes;
+
+            // Shadow log prediction for later comparison
+            db.WaitPredictions.Add(new WaitPrediction
+            {
+                Id = Guid.NewGuid(),
+                QueueEntryId = entry.Id,
+                PredictedAt = DateTimeOffset.UtcNow,
+                PredictedWaitMinutes = minutes,
+                PredictionSource = (int)source,
+                FeatureSchemaVersion = "v2",
+            });
+            await db.SaveChangesAsync(cancellationToken);
+        }
+        catch
+        {
+            // Fallback to legacy formula if feature building fails
+            var avg = entry.ServiceType.DefaultAvgServiceMinutes;
+            eta = WaitTimeEstimator.EstimateMinutes(totalAhead + currentlyServing, avg, Math.Max(1, activeCounters));
+        }
 
         var currentServing = await db.QueueEntries.AsNoTracking()
             .Where(q => q.BranchId == branchId && q.ServiceTypeId == entry.ServiceTypeId && q.State == QueueEntryState.Serving)
@@ -591,6 +678,38 @@ public sealed class QmsQueueService(
 
         entry.State = QueueEntryState.Serving;
         entry.ServingStartedAt = DateTimeOffset.UtcNow;
+
+        // ML target attachment: fill ActualWaitingMinutes on training observations for this ticket
+        try
+        {
+            var observations = await db.MlTrainingObservations
+                .Where(o => o.QueueEntryId == entry.Id && o.ActualWaitingMinutes == null)
+                .ToListAsync(cancellationToken);
+            foreach (var obs in observations)
+            {
+                obs.ServingStartedAt = entry.ServingStartedAt;
+                if (obs.InitialQueueEligibleAt.HasValue)
+                    obs.ActualWaitingMinutes = (entry.ServingStartedAt.Value - obs.InitialQueueEligibleAt.Value).TotalMinutes;
+            }
+
+            // Also fill WaitPrediction audit records
+            var predictions = await db.WaitPredictions
+                .Where(p => p.QueueEntryId == entry.Id && p.ActualWaitingMinutes == null)
+                .ToListAsync(cancellationToken);
+            foreach (var pred in predictions)
+            {
+                if (entry.InitialQueueEligibleAt.HasValue)
+                {
+                    pred.ActualWaitingMinutes = (entry.ServingStartedAt.Value - entry.InitialQueueEligibleAt.Value).TotalMinutes;
+                    pred.PredictionError = pred.ActualWaitingMinutes - pred.PredictedWaitMinutes;
+                }
+            }
+        }
+        catch (Exception)
+        {
+            // Target attachment failure must never block service start
+        }
+
         await db.SaveChangesAsync(cancellationToken);
         await hubContext.Clients.Group(QueueHub.BranchGroup(counter.BranchId)).SendAsync("QueueUpdated", counter.BranchId, cancellationToken);
     }
@@ -720,8 +839,17 @@ public sealed class QmsQueueService(
         var position = 1;
         foreach (var q in list)
         {
-            var ahead = position - 1;
-            var eta = WaitTimeEstimator.EstimateMinutes(ahead + currentlyServing, svc.DefaultAvgServiceMinutes, n);
+            double eta;
+            try
+            {
+                var features = await featureBuilder.BuildAsync(q, branch, svc, DateTimeOffset.UtcNow, cancellationToken);
+                (eta, _) = waitTimeEstimator.Estimate(features);
+            }
+            catch
+            {
+                var ahead = position - 1;
+                eta = WaitTimeEstimator.EstimateMinutes(ahead + currentlyServing, svc.DefaultAvgServiceMinutes, n);
+            }
             result.Add(new WaitingTicketDto(
                 q.TicketNumber,
                 q.EntryType.ToString(),
@@ -1038,6 +1166,7 @@ public sealed class QmsQueueService(
             var serving = await db.QueueEntries.CountAsync(
                 q => q.BranchId == branchId && q.ServiceTypeId == svc.Id && q.State == QueueEntryState.Serving, cancellationToken);
             var ac = await CountActiveLaneCountersAsync(branchId, svc.Id, cancellationToken);
+            // Aggregate lane ETA — uses legacy formula (no per-entry features available)
             var eta = WaitTimeEstimator.EstimateMinutes(w + serving, svc.DefaultAvgServiceMinutes, Math.Max(1, ac));
 
             if (w > 0 && ac == 0)
@@ -1379,6 +1508,7 @@ public sealed class QmsQueueService(
         var serving = await db.QueueEntries.CountAsync(
             q => q.BranchId == branchId && q.ServiceTypeId == serviceTypeId && q.State == QueueEntryState.Serving, cancellationToken);
         var active = await CountActiveLaneCountersAsync(branchId, serviceTypeId, cancellationToken);
+        // Aggregate lane ETA — uses legacy formula (no per-entry features available)
         var eta = WaitTimeEstimator.EstimateMinutes(waiting + serving, svc.DefaultAvgServiceMinutes, Math.Max(1, active));
 
         var crowd = waiting switch { < 5 => "Low", < 15 => "Medium", _ => "High" };
@@ -1389,6 +1519,10 @@ public sealed class QmsQueueService(
     // ─────────────────────────────────────────────────────────────────────
     // PULL FORWARD (walk-in slot rebalance when capacity opens)
     // ─────────────────────────────────────────────────────────────────────
+
+    /// <summary>Public entry point for background services to trigger Pull Forward after a no-show.</summary>
+    public Task PullForwardAfterNoShowAsync(Guid branchId, Guid serviceTypeId, CancellationToken cancellationToken)
+        => PullForwardWalkInsAsync(branchId, serviceTypeId, cancellationToken, noShowInCurrentSlot: true);
 
     private async Task PullForwardWalkInsAsync(Guid branchId, Guid serviceTypeId, CancellationToken cancellationToken, bool noShowInCurrentSlot = false)
     {
@@ -1453,17 +1587,47 @@ public sealed class QmsQueueService(
 
         // Try to pull walk-ins from later slots into earlier available ones
         var modified = false;
+        var pullReason = noShowInCurrentSlot
+            ? QueueMovementReason.PullForwardNoShow
+            : QueueMovementReason.PullForwardCounterActivated;
+
         foreach (var entry in walkIns)
         {
             // Find earliest slot with capacity that is earlier than the entry's current slot
             var bestSlot = slotCaps.FirstOrDefault(s => s.start < entry.AssignedSlotStart && s.available > 0);
             if (bestSlot == default) continue;
 
-            // Move the walk-in to the earlier slot
+            // Step 1: Capture current state before overwrite
+            var oldSlotStart = entry.AssignedSlotStart;
+            var oldSlotEnd = entry.AssignedSlotEnd;
+            var oldSequence = entry.EnqueueSequence;
+            var newSequence = await AllocateSlotSequenceAsync(branchId, bestSlot.start, cancellationToken);
+
+            // Step 2: Record QueueMovement audit
+            db.QueueMovements.Add(new QueueMovement
+            {
+                Id = Guid.NewGuid(),
+                QueueEntryId = entry.Id,
+                FromSlotStart = oldSlotStart,
+                FromSlotEnd = oldSlotEnd,
+                ToSlotStart = bestSlot.start,
+                ToSlotEnd = bestSlot.end,
+                PreviousEnqueueSequence = oldSequence,
+                NewEnqueueSequence = newSequence,
+                MovedAt = DateTimeOffset.UtcNow,
+                Reason = pullReason,
+            });
+
+            // Step 3: Update QueueEntry slot fields
             entry.AssignedSlotStart = bestSlot.start;
             entry.AssignedSlotEnd = bestSlot.end;
-            // Update sequence to be at the tail of the new slot
-            entry.EnqueueSequence = await AllocateSlotSequenceAsync(branchId, bestSlot.start, cancellationToken);
+            entry.EnqueueSequence = newSequence;
+            entry.PullForwardAt = DateTimeOffset.UtcNow;
+
+            // Step 4: Update QueueEligibleAt for walk-in.
+            // Keep InitialQueueEligibleAt unchanged — it represents total physical waiting start.
+            // QueueEligibleAt reflects current slot eligibility.
+            entry.QueueEligibleAt = entry.PullForwardAt;
 
             // Decrease available count
             var idx = slotCaps.IndexOf(bestSlot);
@@ -1517,10 +1681,32 @@ public sealed class QmsQueueService(
 
         if (nextWalkIn is null) return;
 
-        // Pull this one walk-in into the current slot
+        // Pull this one walk-in into the current slot — record movement first
+        var pfOldStart = nextWalkIn.AssignedSlotStart;
+        var pfOldEnd = nextWalkIn.AssignedSlotEnd;
+        var pfOldSeq = nextWalkIn.EnqueueSequence;
+        var pfNewSeq = await AllocateSlotSequenceAsync(branchId, slotStart, cancellationToken);
+        var pfNow = DateTimeOffset.UtcNow;
+
+        db.QueueMovements.Add(new QueueMovement
+        {
+            Id = Guid.NewGuid(),
+            QueueEntryId = nextWalkIn.Id,
+            FromSlotStart = pfOldStart,
+            FromSlotEnd = pfOldEnd,
+            ToSlotStart = slotStart,
+            ToSlotEnd = slotEnd,
+            PreviousEnqueueSequence = pfOldSeq,
+            NewEnqueueSequence = pfNewSeq,
+            MovedAt = pfNow,
+            Reason = QueueMovementReason.PullForwardEarlyFinish,
+        });
+
         nextWalkIn.AssignedSlotStart = slotStart;
         nextWalkIn.AssignedSlotEnd = slotEnd;
-        nextWalkIn.EnqueueSequence = await AllocateSlotSequenceAsync(branchId, slotStart, cancellationToken);
+        nextWalkIn.EnqueueSequence = pfNewSeq;
+        nextWalkIn.PullForwardAt = pfNow;
+        nextWalkIn.QueueEligibleAt = pfNow;
 
         await db.SaveChangesAsync(cancellationToken);
         await hubContext.Clients.Group(QueueHub.BranchGroup(branchId)).SendAsync("QueueUpdated", branchId, cancellationToken);
@@ -1558,9 +1744,32 @@ public sealed class QmsQueueService(
 
             if (backfill is not null)
             {
+                var bfOldStart = backfill.AssignedSlotStart;
+                var bfOldEnd = backfill.AssignedSlotEnd;
+                var bfOldSeq = backfill.EnqueueSequence;
+                var bfNewSeq = await AllocateSlotSequenceAsync(branchId, origSlotStart, cancellationToken);
+                var bfNow = DateTimeOffset.UtcNow;
+
+                db.QueueMovements.Add(new QueueMovement
+                {
+                    Id = Guid.NewGuid(),
+                    QueueEntryId = backfill.Id,
+                    FromSlotStart = bfOldStart,
+                    FromSlotEnd = bfOldEnd,
+                    ToSlotStart = origSlotStart,
+                    ToSlotEnd = origSlotEnd,
+                    PreviousEnqueueSequence = bfOldSeq,
+                    NewEnqueueSequence = bfNewSeq,
+                    MovedAt = bfNow,
+                    Reason = QueueMovementReason.PullForwardEarlyFinish,
+                });
+
                 backfill.AssignedSlotStart = origSlotStart;
                 backfill.AssignedSlotEnd = origSlotEnd;
-                backfill.EnqueueSequence = await AllocateSlotSequenceAsync(branchId, origSlotStart, cancellationToken);
+                backfill.EnqueueSequence = bfNewSeq;
+                backfill.PullForwardAt = bfNow;
+                backfill.QueueEligibleAt = bfNow;
+
                 await db.SaveChangesAsync(cancellationToken);
                 await hubContext.Clients.Group(QueueHub.BranchGroup(branchId)).SendAsync("QueueUpdated", branchId, cancellationToken);
             }

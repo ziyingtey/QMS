@@ -10,6 +10,7 @@ using QMS.Api.Background;
 using QMS.Api.Hubs;
 using QMS.Api.Services;
 using QMS.Application.Capacity;
+using QMS.Application.Waiting;
 using QMS.Infrastructure;
 using QMS.Infrastructure.Persistence;
 using System.Text;
@@ -105,6 +106,9 @@ builder.Services.AddScoped<QmsQueueService>();
 builder.Services.AddHostedService<BookingLifecycleHostedService>();
 builder.Services.AddHostedService<BranchQueueDayRolloverHostedService>();
 builder.Services.AddHostedService<BranchAfterHoursCounterHostedService>();
+builder.Services.AddHostedService<MlSnapshotHostedService>();
+builder.Services.AddScoped<WaitTimeFeatureBuilder>();
+builder.Services.AddSingleton<IWaitTimeEstimator, FormulaWaitTimeEstimator>();
 builder.Services.AddInfrastructure(builder.Configuration);
 
 var app = builder.Build();

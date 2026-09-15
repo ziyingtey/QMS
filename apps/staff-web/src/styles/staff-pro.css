@@ -3351,3 +3351,325 @@
 body.dev-demo .login-page-v2 .lp-demo-hint {
   display: block;
 }
+
+/* ═══════════════════════════════════════════════
+   Manager UI revamp — hero cards, charts, forms
+   ═══════════════════════════════════════════════ */
+
+/* Hero KPI row (3 big numbers at top of dashboard) */
+.qgo-mgr-hero-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+.qgo-mgr-hero-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 22px 16px 18px;
+  border-radius: 14px;
+  background: var(--qgo-surface);
+  border: 1px solid var(--qgo-border);
+  box-shadow: var(--qgo-shadow);
+  text-align: center;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.qgo-mgr-hero-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 32px rgba(4, 51, 107, 0.12);
+}
+
+.qgo-mgr-hero-card svg {
+  color: var(--qgo-muted);
+}
+
+.qgo-mgr-hero-card__num {
+  font-size: 2.2rem;
+  font-weight: 900;
+  line-height: 1.1;
+  color: var(--qgo-navy);
+}
+
+.qgo-mgr-hero-card__label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--qgo-muted);
+}
+
+/* Hero card accent bottom borders */
+.qgo-mgr-hero-card--low { border-bottom: 3px solid var(--qgo-green); }
+.qgo-mgr-hero-card--low .qgo-mgr-hero-card__num { color: var(--qgo-green-dark); }
+.qgo-mgr-hero-card--medium { border-bottom: 3px solid var(--qgo-warning); }
+.qgo-mgr-hero-card--medium .qgo-mgr-hero-card__num { color: #b47300; }
+.qgo-mgr-hero-card--high { border-bottom: 3px solid var(--qgo-danger); }
+.qgo-mgr-hero-card--high .qgo-mgr-hero-card__num { color: var(--qgo-danger); }
+.qgo-mgr-hero-card--amber { border-bottom: 3px solid var(--qgo-warning); }
+.qgo-mgr-hero-card--blue { border-bottom: 3px solid #136fd8; }
+
+/* Secondary KPIs (4-col below hero) */
+.qgo-mgr-kpi-grid--secondary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+/* Dashboard main column */
+.qgo-mgr-dashboard__main {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* Loading placeholder */
+.qgo-mgr-loading-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 48px 20px;
+}
+
+.qgo-mgr-loading-pulse {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: var(--qgo-border);
+  animation: qgo-mgr-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes qgo-mgr-pulse {
+  0%, 100% { opacity: 0.4; transform: scale(0.95); }
+  50% { opacity: 1; transform: scale(1); }
+}
+
+/* Badge count (for alerts header) */
+.qgo-mgr-badge-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--qgo-danger);
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 800;
+}
+
+/* Lane section padding */
+.qgo-mgr-lane-section {
+  padding: 16px 20px;
+}
+
+/* Schedule form 2-column grid */
+.qgo-mgr-form-grid-2col {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  padding: 16px 20px;
+}
+
+.qgo-mgr-form-body {
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* Sticky save bar */
+.qgo-mgr-save-bar--sticky {
+  position: sticky;
+  bottom: 16px;
+  z-index: 10;
+  box-shadow: 0 -4px 24px rgba(4, 51, 107, 0.12);
+}
+
+.qgo-mgr-save-bar .qgo-btn-primary--lg {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Status progress bar (ticket outcomes) */
+.qgo-mgr-status-bar {
+  display: flex;
+  height: 8px;
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: 12px;
+  background: #f1f5f9;
+}
+
+.qgo-mgr-status-bar__seg {
+  min-width: 4px;
+  transition: width 0.3s ease;
+}
+
+.qgo-mgr-status-pill__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* Channel compare — pie + cards layout */
+.qgo-mgr-channel-top {
+  display: flex;
+  gap: 20px;
+  align-items: flex-start;
+  margin-bottom: 16px;
+}
+
+.qgo-mgr-channel-pie {
+  flex-shrink: 0;
+}
+
+.qgo-mgr-channel-card__pct {
+  font-weight: 600;
+  font-size: 0.72rem;
+  color: var(--qgo-muted);
+  margin-left: 4px;
+}
+
+/* Recharts container padding */
+.qgo-mgr-chart-container {
+  padding: 16px 20px;
+}
+
+.qgo-mgr-chart-sub {
+  font-size: 0.78rem;
+  margin: 0 0 8px;
+  padding: 0 20px;
+}
+
+.qgo-mgr-util-chart {
+  padding: 16px 20px;
+}
+
+/* Peak card */
+.qgo-mgr-peak-card {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  padding: 10px 0;
+  margin-bottom: 8px;
+  font-size: 0.78rem;
+  color: var(--qgo-muted);
+  border-bottom: 1px solid var(--qgo-border);
+}
+
+.qgo-mgr-peak-card strong {
+  color: var(--qgo-navy);
+}
+
+/* Data note card */
+.qgo-mgr-data-note {
+  font-size: 0.78rem;
+  color: var(--qgo-muted);
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  background: #f8fafc;
+  border-radius: 8px;
+  border: 1px solid var(--qgo-border);
+}
+
+/* Empty state */
+.qgo-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 24px 16px;
+  text-align: center;
+}
+
+.qgo-empty__icon {
+  color: var(--qgo-muted);
+  opacity: 0.5;
+}
+
+.qgo-empty__title {
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: var(--qgo-navy);
+}
+
+.qgo-empty__body {
+  font-size: 0.82rem;
+  color: var(--qgo-muted);
+  margin: 0;
+}
+
+.qgo-empty__action {
+  margin-top: 8px;
+}
+
+/* Floor card configure button icons */
+.qgo-floor-card__configure {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+/* Settings meta top variant */
+.qgo-mgr-settings-meta--top {
+  padding: 10px 16px;
+  font-size: 0.82rem;
+  color: var(--qgo-muted);
+  background: #f8fafc;
+  border-radius: 8px;
+  border: 1px solid var(--qgo-border);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+/* Responsive additions */
+@media (max-width: 1024px) {
+  .qgo-mgr-analytics-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .qgo-mgr-analytics-layout .qgo-mgr-panel--span2 {
+    grid-column: 1;
+  }
+}
+
+@media (max-width: 768px) {
+  .qgo-mgr-hero-row {
+    grid-template-columns: 1fr;
+  }
+
+  .qgo-mgr-kpi-grid--secondary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .qgo-mgr-form-grid-2col {
+    grid-template-columns: 1fr;
+  }
+
+  .qgo-mgr-channel-top {
+    flex-direction: column;
+  }
+
+  .qgo-mgr-channel-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .qgo-mgr-save-bar--sticky {
+    bottom: 8px;
+  }
+}
+
+@media (max-width: 480px) {
+  .qgo-mgr-kpi-grid--secondary,
+  .qgo-mgr-kpi-grid--analytics {
+    grid-template-columns: 1fr;
+  }
+}

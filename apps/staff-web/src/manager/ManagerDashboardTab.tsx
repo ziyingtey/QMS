@@ -1,8 +1,9 @@
+import { Users, Timer, MonitorCheck } from "lucide-react";
 import type { AssignableStaffDto, BranchDto, LiveDashboard, ManagerCounterRowDto, ManagerInsights } from "../api";
 import { KpiTile } from "../components/KpiTile";
+import { EmptyState } from "../components/EmptyState";
 import { ManagerAlertsPanel } from "./ManagerAlertsPanel";
 import { ManagerCounterBoard } from "./ManagerCounterBoard";
-import { CurrentQueueCard } from "./ManagerAnalyticsCharts";
 import { MGR_SVC_COLORS, counterStats, crowdFromQueue } from "./managerUtils";
 
 type Props = {
@@ -35,10 +36,11 @@ export function ManagerDashboardTab({
 
   return (
     <div className="qgo-mgr-dashboard">
+      {/* Toolbar */}
       <header className="qgo-mgr-toolbar">
         <div>
           <h1>Branch overview</h1>
-          <p className="qgo-muted">Is the branch operating normally right now?</p>
+          <p className="qgo-muted">Real-time snapshot of queue and counter status</p>
         </div>
         <div className="qgo-mgr-toolbar__right">
           <span className="qgo-live-pill">
@@ -50,148 +52,114 @@ export function ManagerDashboardTab({
         </div>
       </header>
 
+      {/* Hero KPIs - the 3 most important numbers big */}
       {live ? (
-        <div className="qgo-mgr-kpi-grid">
-          <KpiTile variant="manager" label="Waiting" value={live.queueLength} foot="Customers in queue" accent="blue" />
-          <KpiTile variant="manager" label="Est. ticket→call" value={`${live.avgTicketToCallMinutes}m`} foot="Today completed · not physical wait" accent="amber" />
-          <KpiTile variant="manager" label="Now serving" value={live.servingCount} foot="At counters" accent="blue" />
-          <KpiTile variant="manager" label="Served today" value={live.customersServedToday} foot="Completed" accent="green" />
-          <KpiTile variant="manager" label="Open counters" value={stats.open} foot={`${stats.total} total`} accent="green" />
-          <KpiTile variant="manager" label="Crowd" value={crowd?.label ?? "—"} foot="Queue depth view" accent="amber" />
-          <KpiTile variant="manager" label="Online waiting" value={live.onlineCheckInsWaiting} foot="Checked-in online" accent="navy" />
-        </div>
+        <>
+          <div className="qgo-mgr-hero-row">
+            <div className={`qgo-mgr-hero-card qgo-mgr-hero-card--${crowd?.level ?? "low"}`}>
+              <Users size={22} strokeWidth={2} />
+              <div className="qgo-mgr-hero-card__num">{live.queueLength}</div>
+              <div className="qgo-mgr-hero-card__label">Waiting in queue</div>
+            </div>
+            <div className="qgo-mgr-hero-card qgo-mgr-hero-card--amber">
+              <Timer size={22} strokeWidth={2} />
+              <div className="qgo-mgr-hero-card__num">{live.avgTicketToCallMinutes}m</div>
+              <div className="qgo-mgr-hero-card__label">Avg ticket-to-call</div>
+            </div>
+            <div className="qgo-mgr-hero-card qgo-mgr-hero-card--blue">
+              <MonitorCheck size={22} strokeWidth={2} />
+              <div className="qgo-mgr-hero-card__num">{live.servingCount}</div>
+              <div className="qgo-mgr-hero-card__label">Now serving</div>
+            </div>
+          </div>
+
+          {/* Secondary KPIs */}
+          <div className="qgo-mgr-kpi-grid qgo-mgr-kpi-grid--secondary">
+            <KpiTile variant="manager" label="Served today" value={live.customersServedToday} foot="Completed" accent="green" />
+            <KpiTile variant="manager" label="Open counters" value={`${stats.open} / ${stats.total}`} foot={`${stats.break} on break`} accent="green" />
+            <KpiTile variant="manager" label="Crowd level" value={crowd?.label ?? "—"} foot="Based on queue depth" accent="amber" />
+            <KpiTile variant="manager" label="Online check-ins" value={live.onlineCheckInsWaiting} foot="Waiting to be called" accent="navy" />
+          </div>
+        </>
       ) : (
-        <p className="qgo-muted">Loading live snapshot…</p>
+        <div className="qgo-mgr-loading-placeholder">
+          <div className="qgo-mgr-loading-pulse" />
+          <p className="qgo-muted">Loading live snapshot...</p>
+        </div>
       )}
 
+      {/* Main content grid */}
       <div className="qgo-mgr-dashboard__grid">
-        <section className="qgo-mgr-panel">
-          <header className="qgo-mgr-panel__head qgo-mgr-panel__head--row">
-            <div>
-              <h2>Current queue</h2>
-              <p className="qgo-muted">What is happening right now</p>
-            </div>
-          </header>
-          <CurrentQueueCard live={live} rows={rows} />
-        </section>
+        {/* Left column */}
+        <div className="qgo-mgr-dashboard__main">
+          {/* Live queue by lane */}
+          <section className="qgo-mgr-panel">
+            <header className="qgo-mgr-panel__head qgo-mgr-panel__head--row">
+              <div>
+                <h2>Queue by service lane</h2>
+                <p className="qgo-muted">Where is demand concentrated?</p>
+              </div>
+              <span className="qgo-mgr-panel__meta">
+                <strong>{live?.queueLength ?? 0}</strong> total waiting
+              </span>
+            </header>
 
-        <section className="qgo-mgr-panel">
-          <header className="qgo-mgr-panel__head qgo-mgr-panel__head--row">
-            <div>
-              <h2>Live queue by lane</h2>
-              <p className="qgo-muted">Where is demand concentrated?</p>
-            </div>
-            <span className="qgo-mgr-panel__meta">
-              <strong>{live?.queueLength ?? 0}</strong> waiting
-            </span>
-          </header>
-
-          {laneRows.length === 0 ? (
-            <p className="qgo-muted">No customers waiting.</p>
-          ) : (
-            <>
-              <div className="qgo-mgr-lane-bars">
-                {laneRows.map((row, i) => {
-                  const name = branch?.services.find((s) => s.id === row.serviceTypeId)?.name ?? row.serviceTypeId;
-                  const pct = (row.queueLength / maxQueue) * 100;
-                  return (
-                    <div key={row.serviceTypeId} className="qgo-mgr-lane-bar">
-                      <span className="qgo-mgr-lane-bar__name">{name}</span>
-                      <div className="qgo-mgr-lane-bar__track">
-                        <div
-                          className="qgo-mgr-lane-bar__fill"
-                          style={{ width: `${pct}%`, background: MGR_SVC_COLORS[i % MGR_SVC_COLORS.length] }}
-                        />
+            {laneRows.length === 0 ? (
+              <div style={{ padding: "24px 20px" }}>
+                <EmptyState icon="check" title="All clear" body="No customers waiting right now." />
+              </div>
+            ) : (
+              <div className="qgo-mgr-lane-section">
+                <div className="qgo-mgr-lane-bars">
+                  {laneRows.map((row, i) => {
+                    const name = branch?.services.find((s) => s.id === row.serviceTypeId)?.name ?? row.serviceTypeId;
+                    const pct = (row.queueLength / maxQueue) * 100;
+                    return (
+                      <div key={row.serviceTypeId} className="qgo-mgr-lane-bar">
+                        <span className="qgo-mgr-lane-bar__name">{name}</span>
+                        <div className="qgo-mgr-lane-bar__track">
+                          <div
+                            className="qgo-mgr-lane-bar__fill"
+                            style={{ width: `${pct}%`, background: MGR_SVC_COLORS[i % MGR_SVC_COLORS.length] }}
+                          />
+                        </div>
+                        <span className="qgo-mgr-lane-bar__val">
+                          {row.queueLength}
+                          {row.estimatedWaitMinutes != null ? ` · ~${row.estimatedWaitMinutes}m` : ""}
+                        </span>
                       </div>
-                      <span className="qgo-mgr-lane-bar__val">
-                        {row.queueLength}
-                        {row.estimatedWaitMinutes != null ? ` · ${row.estimatedWaitMinutes}m` : ""}
-                      </span>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
+                </div>
               </div>
+            )}
+          </section>
 
-              <div className="qgo-table-wrap qgo-table-wrap--card qgo-mgr-dash-table">
-                <table className="qgo-table qgo-table--mgr">
-                  <thead>
-                    <tr>
-                      <th>Lane</th>
-                      <th>Waiting</th>
-                      <th>ETA</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {laneRows.map((row) => {
-                      const name = branch?.services.find((s) => s.id === row.serviceTypeId)?.name ?? row.serviceTypeId;
-                      return (
-                        <tr key={row.serviceTypeId}>
-                          <td>
-                            <span className="qgo-table__lane">{name}</span>
-                          </td>
-                          <td>{row.queueLength}</td>
-                          <td>{row.estimatedWaitMinutes == null ? "—" : `${row.estimatedWaitMinutes} min`}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+          {/* Alerts & Recommendations */}
+          <section className="qgo-mgr-panel">
+            <header className="qgo-mgr-panel__head qgo-mgr-panel__head--row">
+              <div>
+                <h2>Alerts & recommendations</h2>
+                <p className="qgo-muted">Issues and suggested actions</p>
               </div>
-            </>
-          )}
-        </section>
+              {(insights?.alerts.length ?? 0) > 0 ? (
+                <span className="qgo-mgr-badge-count">{insights!.alerts.length}</span>
+              ) : null}
+            </header>
+            <ManagerAlertsPanel insights={insights} onGoToCounter={onGoToCounter} compact={false} />
+          </section>
+        </div>
 
+        {/* Right column */}
         <div className="qgo-mgr-dashboard__side">
           <section className="qgo-mgr-panel">
             <header className="qgo-mgr-panel__head qgo-mgr-panel__head--row">
               <div>
-                <h2>Alerts</h2>
-                <p className="qgo-muted">Problems that need attention</p>
-              </div>
-            </header>
-            <ManagerAlertsPanel insights={insights} onGoToCounter={onGoToCounter} compact />
-          </section>
-
-          {(insights?.suggestions ?? []).length > 0 ? (
-            <section className="qgo-mgr-panel qgo-mgr-panel--highlight">
-              <header className="qgo-mgr-panel__head">
-                <h2>Recommendations</h2>
-                <p className="qgo-muted">Suggested actions (rule-based, not AI)</p>
-              </header>
-              <ul className="qgo-mgr-suggestions">
-                {(insights?.suggestions ?? []).slice(0, 2).map((s) => (
-                  <li key={`${s.kind}-${s.title}`} className="qgo-mgr-suggestion">
-                    <div>
-                      <strong>{s.title}</strong>
-                      <p className="qgo-muted">{s.detail}</p>
-                    </div>
-                    {s.relatedCounterId ? (
-                      <button
-                        type="button"
-                        className="qgo-btn-secondary qgo-btn-sm"
-                        onClick={() => onGoToCounter(s.relatedCounterId!)}
-                      >
-                        Open counter
-                      </button>
-                    ) : (
-                      <button type="button" className="qgo-btn-secondary qgo-btn-sm" onClick={onGoToCounters}>
-                        Manage
-                      </button>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            </section>
-          ) : null}
-
-          <section className="qgo-mgr-panel">
-            <header className="qgo-mgr-panel__head qgo-mgr-panel__head--row">
-              <div>
-                <h2>Counters</h2>
-                <p className="qgo-muted">Floor status at a glance</p>
+                <h2>Floor status</h2>
+                <p className="qgo-muted">{stats.open} active · {stats.break} break · {stats.closed} closed</p>
               </div>
               <button type="button" className="qgo-link-btn qgo-mgr-link-action" onClick={onGoToCounters}>
-                Manage →
+                Manage
               </button>
             </header>
             <ManagerCounterBoard rows={rows} staffPickList={staffPickList} onSelect={onGoToCounter} />

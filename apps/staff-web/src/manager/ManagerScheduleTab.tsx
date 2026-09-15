@@ -1,3 +1,4 @@
+import { Save, Copy } from "lucide-react";
 import type { Dispatch, SetStateAction } from "react";
 import type { BranchOperatingHourRow, BranchOperationalSettings } from "../api";
 import { minsToClock, minsToTimeInput, timeInputToMins } from "./managerUtils";
@@ -47,6 +48,18 @@ export function ManagerScheduleTab(props: Props) {
     onSave,
   } = props;
 
+  const copyMondayToAll = () => {
+    const mon = formWeekly.find((r) => r.dayOfWeek === "Monday");
+    if (!mon || mon.isClosed) return;
+    setFormWeekly((prev) =>
+      prev.map((r) =>
+        r.dayOfWeek === "Saturday" || r.dayOfWeek === "Sunday"
+          ? r
+          : { ...r, isClosed: false, openMinutesFromMidnight: mon.openMinutesFromMidnight, closeMinutesFromMidnight: mon.closeMinutesFromMidnight },
+      ),
+    );
+  };
+
   return (
     <div className="qgo-mgr-schedule">
       <header className="qgo-mgr-toolbar qgo-mgr-toolbar--inset">
@@ -72,59 +85,58 @@ export function ManagerScheduleTab(props: Props) {
           <h2>Booking rules</h2>
           <p className="qgo-muted">How online and walk-in share each time slot.</p>
         </header>
-        <div className="qgo-mgr-settings-grid qgo-mgr-settings-grid--2">
-          <div className="qgo-mgr-settings-card">
-            <div className="qgo-form-grid qgo-form-grid--tight">
-              <label className="qgo-field">
-                <span>Online booking %</span>
-                <input type="number" min={0} max={100} value={formOnline} onChange={(e) => setFormOnline(Number(e.target.value))} />
-              </label>
-              <label className="qgo-field">
-                <span>Slot duration (minutes)</span>
-                <input type="number" min={5} max={180} value={formSlot} onChange={(e) => setFormSlot(Number(e.target.value))} />
-              </label>
-              <label className="qgo-field">
-                <span>Online early call (min before slot)</span>
-                <input type="number" min={0} max={120} value={formEarlyCallMinutes} onChange={(e) => setFormEarlyCallMinutes(Number(e.target.value))} />
-              </label>
-              <label className="qgo-field">
-                <span>No-show grace after call (minutes)</span>
-                <input type="number" min={1} max={60} value={formCalledGraceMinutes} onChange={(e) => setFormCalledGraceMinutes(Number(e.target.value))} />
-              </label>
-            </div>
-          </div>
+        <div className="qgo-mgr-form-grid-2col">
+          <label className="qgo-field">
+            <span>Online booking %</span>
+            <input type="number" min={0} max={100} value={formOnline} onChange={(e) => setFormOnline(Number(e.target.value))} />
+          </label>
+          <label className="qgo-field">
+            <span>Slot duration (minutes)</span>
+            <input type="number" min={5} max={180} value={formSlot} onChange={(e) => setFormSlot(Number(e.target.value))} />
+          </label>
+          <label className="qgo-field">
+            <span>Online early call (min before slot)</span>
+            <input type="number" min={0} max={120} value={formEarlyCallMinutes} onChange={(e) => setFormEarlyCallMinutes(Number(e.target.value))} />
+          </label>
+          <label className="qgo-field">
+            <span>No-show grace after call (minutes)</span>
+            <input type="number" min={1} max={60} value={formCalledGraceMinutes} onChange={(e) => setFormCalledGraceMinutes(Number(e.target.value))} />
+          </label>
         </div>
       </section>
 
       <section className="qgo-mgr-panel">
         <header className="qgo-mgr-panel__head">
           <h2>Capacity</h2>
-          <p className="qgo-muted">Optional slot limits and overbooking alerts (does not auto-adjust capacity).</p>
+          <p className="qgo-muted">Optional slot limits and overbooking alerts.</p>
         </header>
-        <div className="qgo-mgr-settings-grid qgo-mgr-settings-grid--2">
-          <div className="qgo-mgr-settings-card">
-            <label className="qgo-check qgo-check--block">
-              <input type="checkbox" checked={formAdaptiveCap} onChange={(e) => setFormAdaptiveCap(e.target.checked)} />
-              <span>Capacity monitoring — alert when upcoming online bookings exceed slot seats</span>
+        <div className="qgo-mgr-form-body">
+          <label className="qgo-check qgo-check--block">
+            <input type="checkbox" checked={formAdaptiveCap} onChange={(e) => setFormAdaptiveCap(e.target.checked)} />
+            <span>Capacity monitoring — alert when online bookings exceed slot seats</span>
+          </label>
+          <div className="qgo-mgr-form-grid-2col">
+            <label className="qgo-field">
+              <span>Min customers per slot (optional)</span>
+              <input type="number" min={0} placeholder="None" value={formMinSlotTotal} onChange={(e) => setFormMinSlotTotal(e.target.value)} />
             </label>
-            <div className="qgo-form-grid qgo-form-grid--tight">
-              <label className="qgo-field">
-                <span>Min customers per slot (optional)</span>
-                <input type="number" min={0} placeholder="None" value={formMinSlotTotal} onChange={(e) => setFormMinSlotTotal(e.target.value)} />
-              </label>
-              <label className="qgo-field">
-                <span>Max customers per slot (optional)</span>
-                <input type="number" min={1} placeholder="None" value={formMaxSlotTotal} onChange={(e) => setFormMaxSlotTotal(e.target.value)} />
-              </label>
-            </div>
+            <label className="qgo-field">
+              <span>Max customers per slot (optional)</span>
+              <input type="number" min={1} placeholder="None" value={formMaxSlotTotal} onChange={(e) => setFormMaxSlotTotal(e.target.value)} />
+            </label>
           </div>
         </div>
       </section>
 
       <section className="qgo-mgr-panel">
-        <header className="qgo-mgr-panel__head">
-          <h2>Operating hours</h2>
-          <p className="qgo-muted">Branch open and close times for each day.</p>
+        <header className="qgo-mgr-panel__head qgo-mgr-panel__head--row">
+          <div>
+            <h2>Operating hours</h2>
+            <p className="qgo-muted">Branch open and close times for each day.</p>
+          </div>
+          <button type="button" className="qgo-btn-secondary qgo-btn-sm" onClick={copyMondayToAll} title="Copy Monday hours to all weekdays">
+            <Copy size={14} /> Copy Mon → weekdays
+          </button>
         </header>
         <div className="qgo-table-wrap qgo-table-wrap--card">
           <table className="qgo-table qgo-table--mgr qgo-table--hours">
@@ -198,10 +210,10 @@ export function ManagerScheduleTab(props: Props) {
         </div>
       </section>
 
-      <div className="qgo-mgr-save-bar">
+      <div className="qgo-mgr-save-bar qgo-mgr-save-bar--sticky">
         <p className="qgo-muted">Changes apply to new bookings and queue rules immediately after save.</p>
         <button type="button" className="qgo-btn-primary qgo-btn-primary--lg" disabled={busy} onClick={() => void onSave()}>
-          Save schedule & capacity
+          <Save size={16} /> Save schedule & capacity
         </button>
       </div>
     </div>

@@ -1,5 +1,7 @@
+import { ChevronDown, ChevronUp, Settings2 } from "lucide-react";
 import type { AssignableStaffDto, BranchDto, ManagerCounterRowDto } from "../api";
 import { StatusPill } from "../components/StatusPill";
+import { EmptyState } from "../components/EmptyState";
 import { counterModeKey, personInitials, staffDisplayName } from "./managerUtils";
 
 type Props = {
@@ -51,7 +53,9 @@ export function ManagerFloorTab({
       ) : null}
 
       {rows.length === 0 ? (
-        <p className="qgo-muted qgo-mgr-empty">No counters configured for this branch.</p>
+        <div style={{ padding: "32px 20px" }}>
+          <EmptyState icon="inbox" title="No counters configured" body="Add counters to this branch to get started." />
+        </div>
       ) : (
         <div className="qgo-floor-grid">
           {rows.map((r) => {
@@ -113,10 +117,9 @@ export function ManagerFloorTab({
                 </dl>
 
                 <button type="button" className="qgo-floor-card__configure" onClick={() => onToggleExpand(r.id)}>
-                  {expanded ? "Hide configuration" : "Configure counter"}
-                  <span className="qgo-floor-card__chevron" aria-hidden>
-                    {expanded ? "▴" : "▾"}
-                  </span>
+                  <Settings2 size={14} strokeWidth={2.2} />
+                  {expanded ? "Hide configuration" : "Configure"}
+                  {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                 </button>
 
                 {expanded ? (
