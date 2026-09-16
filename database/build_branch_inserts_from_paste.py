@@ -147,7 +147,6 @@ INSERT INTO [dbo].[BRANCHES] (
     [State],
     [Latitude],
     [Longitude],
-    [OnlineQuotaPercent],
     [SlotDurationMinutes],
     [GeofenceMeters],
     [ServiceZoneOffsetMinutes],
@@ -155,8 +154,7 @@ INSERT INTO [dbo].[BRANCHES] (
     [OperatingHours],
     [ImageUrl],
     [MaxCapacity],
-    [AdaptiveSlotCapacityEnabled],
-    [MinSlotTotalCapacity],
+    [NextWeekBookingOpensOnDay],
     [OnlineEarlyCallMinutes],
     [CalledAbsentGraceMinutes]
 )
@@ -168,16 +166,14 @@ SELECT
     b.[State],
     b.[Latitude],
     b.[Longitude],
-    70 AS [OnlineQuotaPercent],
-    30 AS [SlotDurationMinutes],
+    60 AS [SlotDurationMinutes],
     80 AS [GeofenceMeters],
     480 AS [ServiceZoneOffsetMinutes],
     0 AS [OpeningStatus],
     b.[OperatingHours],
     CAST(NULL AS NVARCHAR(800)) AS [ImageUrl],
     CAST(NULL AS INT) AS [MaxCapacity],
-    CAST(1 AS BIT) AS [AdaptiveSlotCapacityEnabled],
-    CAST(NULL AS INT) AS [MinSlotTotalCapacity],
+    6 AS [NextWeekBookingOpensOnDay],
     10 AS [OnlineEarlyCallMinutes],
     5 AS [CalledAbsentGraceMinutes]
 FROM @Branches AS b
