@@ -25,6 +25,12 @@ function entryLabel(type: string): string {
   return type;
 }
 
+function waitingSince(createdAt: string): string {
+  const diff = (Date.now() - new Date(createdAt).getTime()) / 60_000;
+  if (diff < 1) return "<1m";
+  return `${Math.floor(diff)}m`;
+}
+
 export function ManagerLiveQueueTab({ live, waiting, rows, staffPickList, onGoToCounter }: Props) {
   const now = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
@@ -68,27 +74,29 @@ export function ManagerLiveQueueTab({ live, waiting, rows, staffPickList, onGoTo
               <table className="qgo-table qgo-table--mgr">
                 <thead>
                   <tr>
+                    <th>#</th>
                     <th>Ticket</th>
                     <th>Service</th>
                     <th>Wait</th>
                     <th>ETA</th>
                     <th>Type</th>
-                    <th>Online check-in</th>
+                    <th>Check-in</th>
                   </tr>
                 </thead>
                 <tbody>
                   {waiting.map((t) => (
                     <tr key={t.ticketNumber}>
+                      <td className="qgo-muted">{t.position}</td>
                       <td>
                         <strong className="qgo-table__ticket">{t.ticketNumber}</strong>
                       </td>
                       <td>
                         <span className="qgo-table__lane">{t.serviceName}</span>
                       </td>
-                      <td>{formatMinutes(t.waitingMinutes)}</td>
-                      <td>{t.estimatedWaitMinutes == null ? "—" : `${Math.round(t.estimatedWaitMinutes)} min`}</td>
+                      <td>{waitingSince(t.createdAt)}</td>
+                      <td>{t.estimatedWaitMinutes == null ? "—" : `~${Math.round(t.estimatedWaitMinutes)}m`}</td>
                       <td>{entryLabel(t.entryType)}</td>
-                      <td>{t.isPriority ? <span className="qgo-mgr-priority">Checked in</span> : "—"}</td>
+                      <td>{t.checkedIn ? <span className="qgo-mgr-priority">Yes</span> : "—"}</td>
                     </tr>
                   ))}
                 </tbody>

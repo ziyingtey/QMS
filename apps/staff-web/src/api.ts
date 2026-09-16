@@ -145,26 +145,31 @@ export type BranchAnalyticsToday = {
 };
 
 export type ManagerWaitingTicket = {
+  id: string;
   ticketNumber: string;
   serviceName: string;
   entryType: string;
-  waitingMinutes: number;
+  position: number;
+  createdAt: string;
+  assignedSlotStart: string | null;
+  checkedIn: boolean;
   estimatedWaitMinutes: number | null;
-  isPriority: boolean;
 };
 
 export type ManagerAppointmentsToday = {
-  statusCounts: {
-    confirmed: number;
-    checkedIn: number;
-    waiting: number;
-    serving: number;
-    completed: number;
-    noShow: number;
-    cancelled: number;
-  };
-  slotsByHour: { hourLabel: string; count: number }[];
-  appointments: { time: string; serviceName: string; status: string; ticketNumber: string | null }[];
+  totalBookings: number;
+  checkedIn: number;
+  confirmed: number;
+  noShow: number;
+  cancelled: number;
+  appointments: {
+    bookingId: string;
+    customerName: string;
+    serviceName: string;
+    slotStart: string;
+    slotEnd: string;
+    status: string;
+  }[];
 };
 
 export type MyCounterDto = {
@@ -181,6 +186,8 @@ export type WaitingTicketDto = {
   entryType: string;
   position: number;
   estimatedWaitMinutes: number | null;
+  serviceName: string | null;
+  checkedIn: boolean;
 };
 
 export type ManagerCounterRowDto = {
@@ -195,18 +202,15 @@ export type ManagerCounterRowDto = {
 };
 
 export type BranchOperationalSettings = {
-  onlineQuotaPercent: number;
-  walkInQuotaPercent: number;
   slotDurationMinutes: number;
   serviceZoneOffsetMinutes: number;
-  /** When true, alert if upcoming online bookings exceed configured slot capacity (monitoring only; does not auto-adjust). */
-  adaptiveSlotCapacityEnabled: boolean;
-  minSlotTotalCapacity: number | null;
   maxSlotTotalCapacity: number | null;
   /** Minutes before booking SlotStart that an unchecked online may enter the call pool (0 = at slot start only). */
   onlineEarlyCallMinutes: number;
   /** After Call next, if service is not started within this many minutes, mark absent / no-show. */
   calledAbsentGraceMinutes: number;
+  /** Day of week (0=Sun..6=Sat) when next-week booking window opens. */
+  nextWeekBookingOpensOnDay: number;
   weeklyOperatingHours: BranchOperatingHourRow[];
 };
 
@@ -281,6 +285,14 @@ export async function apiWaitingQueue(branchId: string, serviceTypeId: string): 
     `${API_BASE}/api/staff/branches/${branchId}/services/${serviceTypeId}/waiting`,
     { headers: await staffAuthHeaders() },
   );
+  if (!res.ok) throw new Error(await parseError(res));
+  return res.json() as Promise<WaitingTicketDto[]>;
+}
+
+export async function apiCrossLaneWaiting(): Promise<WaitingTicketDto[]> {
+  const res = await fetch(`${API_BASE}/api/staff/cross-lane-waiting`, {
+    headers: await staffAuthHeaders(),
+  });
   if (!res.ok) throw new Error(await parseError(res));
   return res.json() as Promise<WaitingTicketDto[]>;
 }
@@ -401,16 +413,13 @@ export async function apiManagerOperationalSettings(branchId: string): Promise<B
 export async function apiManagerPatchOperationalSettings(
   branchId: string,
   body: {
-    onlineQuotaPercent?: number;
     slotDurationMinutes?: number;
     weeklyOperatingHours?: BranchOperatingHourRow[];
-    adaptiveSlotCapacityEnabled?: boolean;
-    minSlotTotalCapacity?: number;
     maxSlotTotalCapacity?: number;
-    clearMinSlotTotalCapacity?: boolean;
     clearMaxSlotTotalCapacity?: boolean;
     onlineEarlyCallMinutes?: number;
     calledAbsentGraceMinutes?: number;
+    nextWeekBookingOpensOnDay?: number;
   },
 ): Promise<BranchOperationalSettings> {
   const res = await fetch(`${API_BASE}/api/manager/branches/${branchId}/operational-settings`, {
@@ -444,4 +453,68 @@ export async function apiManagerAssignableStaff(branchId: string): Promise<Assig
   });
   if (!res.ok) throw new Error(await parseError(res));
   return res.json() as Promise<AssignableStaffDto[]>;
+}
+
+export async function apiManagerWaitingQueue(branchId: string): Promise<ManagerWaitingTicket[]> {
+  const res = await fetch(`${API_BASE}/api/manager/branches/${branchId}/waiting-queue`, {
+    headers: await staffAuthHeaders(),
+  });
+  if (!res.ok) throw new Error(await parseError(res));
+  return res.json() as Promise<ManagerWaitingTicket[]>;
+}
+
+export async function apiManagerAppointmentsToday(branchId: string): Promise<ManagerAppointmentsToday> {
+  const res = await fetch(`${API_BASE}/api/manager/branches/${branchId}/appointments/today`, {
+    headers: await staffAuthHeaders(),
+  });
+  if (!res.ok) throw new Error(await parseError(res));
+  return res.json() as Promise<ManagerAppointmentsToday>;
+}
+
+// ── Branch closures ──
+
+export type BranchClosure = { id: string; closedFrom: string; closedTo: string; reason: string | null };
+
+export async function apiManagerClosures(branchId: string): Promise<BranchClosure[]> {
+  const res = await fetch(`${API_BASE}/api/manager/branches/${branchId}/closures`, {
+    headers: await staffAuthHeaders(),
+  });
+  if (!res.ok) throw new Error(await parseError(res));
+  return res.json() as Promise<BranchClosure[]>;
+}
+
+export async function apiManagerCreateClosure(
+  branchId: string,
+  body: { closedFrom: string; closedTo: string; reason?: string },
+): Promise<BranchClosure> {
+  const res = await fetch(`${API_BASE}/api/manager/branches/${branchId}/closures`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(await staffAuthHeaders()) },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(await parseError(res));
+  return res.json() as Promise<BranchClosure>;
+}
+
+export async function apiManagerDeleteClosure(branchId: string, closureId: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/manager/branches/${branchId}/closures/${closureId}`, {
+    method: "DELETE",
+    headers: await staffAuthHeaders(),
+  });
+  if (!res.ok) throw new Error(await parseError(res));
+}
+
+// ── Per-service online slots ──
+
+export async function apiManagerPatchServiceOnlineSlots(
+  branchId: string,
+  serviceId: string,
+  onlineSlotsPerSlot: number,
+): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/manager/branches/${branchId}/services/${serviceId}/online-slots`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...(await staffAuthHeaders()) },
+    body: JSON.stringify({ onlineSlotsPerSlot }),
+  });
+  if (!res.ok) throw new Error(await parseError(res));
 }

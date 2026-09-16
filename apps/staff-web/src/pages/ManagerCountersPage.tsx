@@ -5,15 +5,21 @@ import {
   apiBranches,
   apiLiveDashboard,
   apiManagerAnalyticsToday,
+  apiManagerAppointmentsToday,
   apiManagerAssignableStaff,
+  apiManagerClosures,
   apiManagerCounters,
+  apiManagerCreateClosure,
+  apiManagerDeleteClosure,
   apiManagerInsights,
   apiManagerOperationalSettings,
   apiManagerPatchOperationalSettings,
+  apiManagerPatchServiceOnlineSlots,
   apiManagerSetAllowedServices,
   apiManagerSetCounterMode,
   apiManagerSetCounterStaff,
   apiManagerSetDedicatedLane,
+  apiManagerWaitingQueue,
   getStoredBranchId,
   getStoredEmail,
   getStoredRole,
@@ -22,13 +28,16 @@ import {
   setStoredBranchId,
   subscribeStaffSession,
   type AssignableStaffDto,
+  type BranchClosure,
   type BranchDto,
   type BranchOperatingHourRow,
   type BranchOperationalSettings,
   type BranchAnalyticsToday,
   type LiveDashboard,
+  type ManagerAppointmentsToday,
   type ManagerCounterRowDto,
   type ManagerInsights,
+  type ManagerWaitingTicket,
 } from "../api";
 import { AppTopBar } from "../components/AppTopBar";
 import { useToast } from "../context/ToastContext";
@@ -37,8 +46,10 @@ import { useStaffLogout } from "../hooks/useStaffLogout";
 import { isBranchOpenForOperations } from "../manager/branchOpenStatus";
 import { buildAnalyticsFallback } from "../manager/managerAnalyticsFallback";
 import { ManagerAnalyticsTab } from "../manager/ManagerAnalyticsTab";
+import { ManagerAppointmentsTab } from "../manager/ManagerAppointmentsTab";
 import { ManagerDashboardTab } from "../manager/ManagerDashboardTab";
 import { ManagerFloorTab } from "../manager/ManagerFloorTab";
+import { ManagerLiveQueueTab } from "../manager/ManagerLiveQueueTab";
 import { ManagerScheduleTab } from "../manager/ManagerScheduleTab";
 import { ManagerSidebar, type ManagerTab } from "../manager/ManagerSidebar";
 import { defaultWeeklyHours } from "../manager/managerUtils";
@@ -66,18 +77,20 @@ export function ManagerCountersPage() {
   const [analytics, setAnalytics] = useState<BranchAnalyticsToday | null>(null);
   const [analyticsSource, setAnalyticsSource] = useState<"api" | "fallback" | null>(null);
   const [staffPickList, setStaffPickList] = useState<AssignableStaffDto[]>([]);
+  const [waiting, setWaiting] = useState<ManagerWaitingTicket[]>([]);
+  const [appointments, setAppointments] = useState<ManagerAppointmentsToday | null>(null);
+  const [closures, setClosures] = useState<BranchClosure[]>([]);
+  const [serviceOnlineSlots, setServiceOnlineSlots] = useState<Record<string, number>>({});
   const [busy, setBusy] = useState(false);
   const [managerTab, setManagerTab] = useState<ManagerTab>("dashboard");
   const [expandedCounterId, setExpandedCounterId] = useState<string | null>(null);
 
-  const [formOnline, setFormOnline] = useState(70);
   const [formSlot, setFormSlot] = useState(30);
   const [formWeekly, setFormWeekly] = useState<BranchOperatingHourRow[]>(defaultWeeklyHours);
-  const [formAdaptiveCap, setFormAdaptiveCap] = useState(true);
-  const [formMinSlotTotal, setFormMinSlotTotal] = useState("");
   const [formMaxSlotTotal, setFormMaxSlotTotal] = useState("");
   const [formEarlyCallMinutes, setFormEarlyCallMinutes] = useState(10);
   const [formCalledGraceMinutes, setFormCalledGraceMinutes] = useState(5);
+  const [formNextWeekOpensDay, setFormNextWeekOpensDay] = useState(6);
 
   const branch = branches.find((b) => b.id === branchId);
   const branchOpenForOperations = isBranchOpenForOperations(branch, settings);
@@ -131,15 +144,13 @@ export function ManagerCountersPage() {
     try {
       const s = await apiManagerOperationalSettings(branchId);
       setSettings(s);
-      setFormOnline(s.onlineQuotaPercent);
       setFormSlot(s.slotDurationMinutes);
       const w = s.weeklyOperatingHours;
       setFormWeekly(w && w.length === 7 ? w.map((r) => ({ ...r })) : defaultWeeklyHours());
-      setFormAdaptiveCap(s.adaptiveSlotCapacityEnabled ?? true);
-      setFormMinSlotTotal(s.minSlotTotalCapacity != null ? String(s.minSlotTotalCapacity) : "");
       setFormMaxSlotTotal(s.maxSlotTotalCapacity != null ? String(s.maxSlotTotalCapacity) : "");
       setFormEarlyCallMinutes(s.onlineEarlyCallMinutes ?? 10);
       setFormCalledGraceMinutes(s.calledAbsentGraceMinutes ?? 5);
+      setFormNextWeekOpensDay(s.nextWeekBookingOpensOnDay ?? 6);
     } catch {
       setSettings(null);
     }
@@ -164,6 +175,33 @@ export function ManagerCountersPage() {
     }
   }, [branchId]);
 
+  const loadWaiting = useCallback(async () => {
+    if (!branchId) return;
+    try {
+      setWaiting(await apiManagerWaitingQueue(branchId));
+    } catch {
+      setWaiting([]);
+    }
+  }, [branchId]);
+
+  const loadAppointments = useCallback(async () => {
+    if (!branchId) return;
+    try {
+      setAppointments(await apiManagerAppointmentsToday(branchId));
+    } catch {
+      setAppointments(null);
+    }
+  }, [branchId]);
+
+  const loadClosures = useCallback(async () => {
+    if (!branchId) return;
+    try {
+      setClosures(await apiManagerClosures(branchId));
+    } catch {
+      setClosures([]);
+    }
+  }, [branchId]);
+
   useEffect(() => {
     if (analyticsSource !== "fallback") return;
     const fb = buildAnalyticsFallback(live, insights);
@@ -174,6 +212,17 @@ export function ManagerCountersPage() {
     setAnalytics(null);
     setAnalyticsSource(null);
   }, [branchId]);
+
+  // Init service online slots from branch data
+  useEffect(() => {
+    if (!branch) return;
+    const slots: Record<string, number> = {};
+    for (const s of branch.services) {
+      slots[s.id] = serviceOnlineSlots[s.id] ?? 4;
+    }
+    setServiceOnlineSlots(slots);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [branch?.id]);
 
   const refreshLive = useCallback(async () => {
     if (!branchId) return;
@@ -193,7 +242,10 @@ export function ManagerCountersPage() {
     void loadSettings();
     void loadInsights();
     void loadAnalytics();
-  }, [refreshLive, loadSettings, loadInsights, loadAnalytics]);
+    void loadWaiting();
+    void loadAppointments();
+    void loadClosures();
+  }, [refreshLive, loadSettings, loadInsights, loadAnalytics, loadWaiting, loadAppointments, loadClosures]);
 
   useEffect(() => {
     if (!hubToken || !branchId) return;
@@ -209,6 +261,8 @@ export function ManagerCountersPage() {
       void loadInsights();
       void loadSettings();
       void loadAnalytics();
+      void loadWaiting();
+      void loadAppointments();
     };
 
     conn.on("QueueUpdated", bump);
@@ -216,6 +270,7 @@ export function ManagerCountersPage() {
     conn.on("TicketCalled", () => {
       void refreshLive();
       void loadInsights();
+      void loadWaiting();
     });
 
     const watch = () => void conn.invoke("WatchBranch", branchId).catch(() => {});
@@ -229,7 +284,7 @@ export function ManagerCountersPage() {
     return () => {
       void conn.stop();
     };
-  }, [hubToken, branchId, load, refreshLive, loadInsights, loadSettings, loadAnalytics, toast]);
+  }, [hubToken, branchId, load, refreshLive, loadInsights, loadSettings, loadAnalytics, loadWaiting, loadAppointments, toast]);
 
   useEffect(() => {
     if (!branchId) return;
@@ -237,9 +292,11 @@ export function ManagerCountersPage() {
       void refreshLive();
       void loadInsights();
       void loadAnalytics();
+      void loadWaiting();
+      void loadAppointments();
     }, 12_000);
     return () => clearInterval(id);
-  }, [branchId, refreshLive, loadInsights, load, loadAnalytics]);
+  }, [branchId, refreshLive, loadInsights, load, loadAnalytics, loadWaiting, loadAppointments]);
 
   const setMode = async (counterId: string, mode: "Active" | "Break" | "Closed") => {
     if (!branchId) return;
@@ -314,22 +371,62 @@ export function ManagerCountersPage() {
     if (!branchId) return;
     setBusy(true);
     try {
-      const minRaw = formMinSlotTotal.trim();
       const maxRaw = formMaxSlotTotal.trim();
       const s = await apiManagerPatchOperationalSettings(branchId, {
-        onlineQuotaPercent: formOnline,
         slotDurationMinutes: formSlot,
         weeklyOperatingHours: formWeekly,
-        adaptiveSlotCapacityEnabled: formAdaptiveCap,
         onlineEarlyCallMinutes: formEarlyCallMinutes,
         calledAbsentGraceMinutes: formCalledGraceMinutes,
-        ...(minRaw === "" ? { clearMinSlotTotalCapacity: true } : { minSlotTotalCapacity: Number(minRaw) }),
+        nextWeekBookingOpensOnDay: formNextWeekOpensDay,
         ...(maxRaw === "" ? { clearMaxSlotTotalCapacity: true } : { maxSlotTotalCapacity: Number(maxRaw) }),
       });
       setSettings(s);
       toast("Schedule and capacity saved", "success");
       await loadInsights();
       await loadAnalytics();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onServiceOnlineSlotsChange = async (serviceId: string, value: number) => {
+    if (!branchId) return;
+    setServiceOnlineSlots((prev) => ({ ...prev, [serviceId]: value }));
+    try {
+      await apiManagerPatchServiceOnlineSlots(branchId, serviceId, value);
+      toast("Online quota updated", "success");
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), "error");
+    }
+  };
+
+  const onAddClosure = async (from: string, to: string, reason: string) => {
+    if (!branchId) return;
+    setBusy(true);
+    try {
+      await apiManagerCreateClosure(branchId, {
+        closedFrom: new Date(from).toISOString(),
+        closedTo: new Date(to).toISOString(),
+        reason: reason || undefined,
+      });
+      toast("Closure added", "success");
+      await loadClosures();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onDeleteClosure = async (id: string) => {
+    if (!branchId) return;
+    setBusy(true);
+    try {
+      await apiManagerDeleteClosure(branchId, id);
+      toast("Closure removed", "success");
+      await loadClosures();
     } catch (e) {
       toast(e instanceof Error ? e.message : String(e), "error");
     } finally {
@@ -374,6 +471,7 @@ export function ManagerCountersPage() {
           branchName={branch?.name}
           branchOpen={branchOpenForOperations}
           alertCount={alertCount}
+          waitingCount={waiting.length}
         />
 
         <main className="qgo-mgr-content">
@@ -407,27 +505,43 @@ export function ManagerCountersPage() {
             />
           ) : null}
 
+          {managerTab === "queue" ? (
+            <ManagerLiveQueueTab
+              live={live}
+              waiting={waiting}
+              rows={rows}
+              staffPickList={staffPickList}
+              onGoToCounter={goToCounter}
+            />
+          ) : null}
+
+          {managerTab === "appointments" ? (
+            <ManagerAppointmentsTab data={appointments} />
+          ) : null}
+
           {managerTab === "capacity" ? (
             <ManagerScheduleTab
               settings={settings}
+              branch={branch}
               busy={busy}
-              formOnline={formOnline}
-              setFormOnline={setFormOnline}
               formSlot={formSlot}
               setFormSlot={setFormSlot}
               formWeekly={formWeekly}
               setFormWeekly={setFormWeekly}
-              formAdaptiveCap={formAdaptiveCap}
-              setFormAdaptiveCap={setFormAdaptiveCap}
-              formMinSlotTotal={formMinSlotTotal}
-              setFormMinSlotTotal={setFormMinSlotTotal}
               formMaxSlotTotal={formMaxSlotTotal}
               setFormMaxSlotTotal={setFormMaxSlotTotal}
               formEarlyCallMinutes={formEarlyCallMinutes}
               setFormEarlyCallMinutes={setFormEarlyCallMinutes}
               formCalledGraceMinutes={formCalledGraceMinutes}
               setFormCalledGraceMinutes={setFormCalledGraceMinutes}
+              formNextWeekOpensDay={formNextWeekOpensDay}
+              setFormNextWeekOpensDay={setFormNextWeekOpensDay}
               onSave={saveCapacity}
+              serviceOnlineSlots={serviceOnlineSlots}
+              onServiceOnlineSlotsChange={onServiceOnlineSlotsChange}
+              closures={closures}
+              onAddClosure={onAddClosure}
+              onDeleteClosure={onDeleteClosure}
             />
           ) : null}
 

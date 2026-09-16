@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using QMS.Api.Dtos;
 using QMS.Api.Services;
+using QMS.Domain.Entities;
 using QMS.Infrastructure.Persistence;
 
 namespace QMS.Api.Controllers;
@@ -62,15 +63,12 @@ public sealed class ManagerOperationsController(QmsQueueService queue, QmsDbCont
         {
             await queue.UpdateBranchOperationalSettingsAsync(
                 branchId,
-                body.OnlineQuotaPercent,
                 body.SlotDurationMinutes,
                 body.WeeklyOperatingHours,
-                body.AdaptiveSlotCapacityEnabled,
-                body.MinSlotTotalCapacity,
                 body.MaxSlotTotalCapacity,
                 body.OnlineEarlyCallMinutes,
                 body.CalledAbsentGraceMinutes,
-                body.ClearMinSlotTotalCapacity == true,
+                body.NextWeekBookingOpensOnDay,
                 body.ClearMaxSlotTotalCapacity == true,
                 cancellationToken);
             return Ok(await queue.GetBranchOperationalSettingsAsync(branchId, cancellationToken));
@@ -144,16 +142,118 @@ public sealed class ManagerOperationsController(QmsQueueService queue, QmsDbCont
             return NotFound(new { message = ex.Message });
         }
     }
+    // ─────────────────────────────────────────────────────────────────────
+    // BRANCH CLOSURES
+    // ─────────────────────────────────────────────────────────────────────
+
+    [HttpGet("branches/{branchId:guid}/closures")]
+    public async Task<ActionResult<IReadOnlyList<BranchClosureDto>>> ListClosures(
+        Guid branchId, CancellationToken ct)
+    {
+        if (!await OwnsBranch(branchId, ct)) return Forbid();
+        var closures = await db.BranchClosures.AsNoTracking()
+            .Where(c => c.BranchId == branchId)
+            .OrderBy(c => c.ClosedFrom)
+            .Select(c => new BranchClosureDto(c.Id, c.ClosedFrom, c.ClosedTo, c.Reason))
+            .ToListAsync(ct);
+        return Ok(closures);
+    }
+
+    [HttpPost("branches/{branchId:guid}/closures")]
+    public async Task<ActionResult<BranchClosureDto>> CreateClosure(
+        Guid branchId, [FromBody] CreateClosureRequest body, CancellationToken ct)
+    {
+        if (!await OwnsBranch(branchId, ct)) return Forbid();
+        if (body.ClosedTo < body.ClosedFrom)
+            return BadRequest(new { message = "ClosedTo must be >= ClosedFrom." });
+
+        var closure = new BranchClosure
+        {
+            Id = Guid.NewGuid(),
+            BranchId = branchId,
+            ClosedFrom = body.ClosedFrom,
+            ClosedTo = body.ClosedTo,
+            Reason = body.Reason,
+        };
+        db.BranchClosures.Add(closure);
+        await db.SaveChangesAsync(ct);
+        return Created($"api/manager/branches/{branchId}/closures/{closure.Id}",
+            new BranchClosureDto(closure.Id, closure.ClosedFrom, closure.ClosedTo, closure.Reason));
+    }
+
+    [HttpDelete("branches/{branchId:guid}/closures/{closureId:guid}")]
+    public async Task<IActionResult> DeleteClosure(Guid branchId, Guid closureId, CancellationToken ct)
+    {
+        if (!await OwnsBranch(branchId, ct)) return Forbid();
+        var closure = await db.BranchClosures
+            .FirstOrDefaultAsync(c => c.Id == closureId && c.BranchId == branchId, ct);
+        if (closure is null) return NotFound();
+        db.BranchClosures.Remove(closure);
+        await db.SaveChangesAsync(ct);
+        return NoContent();
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // SERVICE OnlineSlotsPerSlot (per-service online booking quota)
+    // ─────────────────────────────────────────────────────────────────────
+
+    [HttpPatch("branches/{branchId:guid}/services/{serviceId:guid}/online-slots")]
+    public async Task<IActionResult> UpdateOnlineSlotsPerSlot(
+        Guid branchId, Guid serviceId, [FromBody] UpdateOnlineSlotsRequest body, CancellationToken ct)
+    {
+        if (!await OwnsBranch(branchId, ct)) return Forbid();
+        var service = await db.ServiceTypes.FirstOrDefaultAsync(
+            s => s.Id == serviceId && s.BranchId == branchId, ct);
+        if (service is null) return NotFound(new { message = "Service not found." });
+
+        service.OnlineSlotsPerSlot = Math.Max(0, body.OnlineSlotsPerSlot);
+        await db.SaveChangesAsync(ct);
+        return Ok(new { service.Id, service.OnlineSlotsPerSlot });
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // TEMPORARY COUNTER SERVICE ASSIGNMENT
+    // ─────────────────────────────────────────────────────────────────────
+
+    [HttpPost("counters/{counterId:guid}/temporary-service")]
+    public async Task<IActionResult> AddTemporaryService(
+        Guid counterId, [FromBody] AddTemporaryServiceRequest body, CancellationToken ct)
+    {
+        var counter = await db.Counters.Include(c => c.AllowedServices)
+            .FirstOrDefaultAsync(c => c.Id == counterId, ct);
+        if (counter is null) return NotFound(new { message = "Counter not found." });
+        if (!await OwnsBranch(counter.BranchId, ct)) return Forbid();
+
+        // Check if already assigned
+        if (counter.AllowedServices.Any(a => a.ServiceTypeId == body.ServiceTypeId))
+            return BadRequest(new { message = "Service already assigned to this counter." });
+
+        var service = await db.ServiceTypes.AsNoTracking()
+            .FirstOrDefaultAsync(s => s.Id == body.ServiceTypeId && s.BranchId == counter.BranchId, ct);
+        if (service is null) return NotFound(new { message = "Service not found in this branch." });
+
+        db.CounterAllowedServices.Add(new CounterAllowedService
+        {
+            CounterId = counterId,
+            ServiceTypeId = body.ServiceTypeId,
+            IsTemporary = true,
+            ExpiresAt = body.ExpiresAt,
+        });
+        await db.SaveChangesAsync(ct);
+        return Ok(new { counterId, body.ServiceTypeId, IsTemporary = true, body.ExpiresAt });
+    }
 }
 
+public sealed record BranchClosureDto(Guid Id, DateTimeOffset ClosedFrom, DateTimeOffset ClosedTo, string? Reason);
+public sealed record CreateClosureRequest(DateTimeOffset ClosedFrom, DateTimeOffset ClosedTo, string? Reason);
+public sealed record UpdateOnlineSlotsRequest(int OnlineSlotsPerSlot);
+public sealed record AddTemporaryServiceRequest(Guid ServiceTypeId, DateTimeOffset? ExpiresAt);
+
 public sealed record ManagerBranchSettingsPatch(
-    int? OnlineQuotaPercent,
     int? SlotDurationMinutes,
     IReadOnlyList<BranchOperatingHourRow>? WeeklyOperatingHours,
-    bool? AdaptiveSlotCapacityEnabled,
-    int? MinSlotTotalCapacity,
     int? MaxSlotTotalCapacity,
     int? OnlineEarlyCallMinutes,
     int? CalledAbsentGraceMinutes,
-    bool? ClearMinSlotTotalCapacity,
+    int? NextWeekBookingOpensOnDay,
     bool? ClearMaxSlotTotalCapacity);

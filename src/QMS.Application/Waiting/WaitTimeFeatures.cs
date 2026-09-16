@@ -36,13 +36,9 @@ public sealed record WaitTimeFeatures
     public int SlotDurationMinutes { get; init; }
     public double? MinutesUntilSlotEnd { get; init; }
     public double? MinutesSinceSlotStart { get; init; }
-    public int OnlineQuotaPercent { get; init; }
+    public int OnlineSlotsPerSlot { get; init; }
     public int OnlineBookedInSlot { get; init; }
     public int WalkInInSlot { get; init; }
-
-    // ── Pull Forward ──
-    public bool WasPulledForward { get; init; }
-    public int PullForwardCount { get; init; }
 
     // ── Identity ──
     public int BranchCode { get; init; }

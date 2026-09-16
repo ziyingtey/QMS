@@ -113,15 +113,12 @@ export const MOCK_STAFF: AssignableStaffDto[] = [
 ];
 
 export const MOCK_SETTINGS: BranchOperationalSettings = {
-  onlineQuotaPercent: 70,
-  walkInQuotaPercent: 30,
   slotDurationMinutes: 30,
   serviceZoneOffsetMinutes: 480,
-  adaptiveSlotCapacityEnabled: true,
-  minSlotTotalCapacity: null,
   maxSlotTotalCapacity: null,
   onlineEarlyCallMinutes: 10,
   calledAbsentGraceMinutes: 5,
+  nextWeekBookingOpensOnDay: 6,
   weeklyOperatingHours: defaultWeeklyHours(),
 };
 

@@ -52,7 +52,6 @@ export type BranchDto = {
   state?: string;
   latitude: number;
   longitude: number;
-  onlineQuotaPercent: number;
   slotDurationMinutes: number;
   geofenceMeters: number;
   /** Minutes east of UTC for branch calendar / slot dates (e.g. 480 = UTC+8). */
@@ -70,8 +69,6 @@ export type SlotDto = {
   slotEnd: string;
   onlineUsed: number;
   onlineCapacity: number;
-  walkInUsed: number;
-  walkInCapacity: number;
   status: string;
 };
 
@@ -324,7 +321,6 @@ export async function apiBranches(): Promise<BranchDto[]> {
       state: o.state != null ? String(o.state) : o.State != null ? String(o.State) : undefined,
       latitude: Number(o.latitude ?? o.Latitude ?? 0),
       longitude: Number(o.longitude ?? o.Longitude ?? 0),
-      onlineQuotaPercent: Number(o.onlineQuotaPercent ?? o.OnlineQuotaPercent ?? 0),
       slotDurationMinutes: Number(o.slotDurationMinutes ?? o.SlotDurationMinutes ?? 30),
       geofenceMeters: Number(o.geofenceMeters ?? o.GeofenceMeters ?? 0),
       serviceZoneOffsetMinutes: Number(o.serviceZoneOffsetMinutes ?? o.ServiceZoneOffsetMinutes ?? 480),
@@ -415,8 +411,6 @@ export async function apiSlots(branchId: string, serviceId: string, dayYmd: stri
       slotEnd: String(o.slotEnd ?? o.SlotEnd ?? ""),
       onlineUsed: Number(o.onlineUsed ?? o.OnlineUsed ?? 0),
       onlineCapacity: Number(o.onlineCapacity ?? o.OnlineCapacity ?? 0),
-      walkInUsed: Number(o.walkInUsed ?? o.WalkInUsed ?? 0),
-      walkInCapacity: Number(o.walkInCapacity ?? o.WalkInCapacity ?? 0),
       status: String(o.status ?? o.Status ?? ""),
     };
   });

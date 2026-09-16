@@ -1,51 +1,62 @@
-import { Save, Copy } from "lucide-react";
+import { Save, Copy, Plus, Trash2 } from "lucide-react";
 import type { Dispatch, SetStateAction } from "react";
-import type { BranchOperatingHourRow, BranchOperationalSettings } from "../api";
+import type { BranchClosure, BranchDto, BranchOperatingHourRow, BranchOperationalSettings } from "../api";
 import { minsToClock, minsToTimeInput, timeInputToMins } from "./managerUtils";
+
+const DAY_LABELS: Record<number, string> = {
+  0: "Sunday", 1: "Monday", 2: "Tuesday", 3: "Wednesday",
+  4: "Thursday", 5: "Friday", 6: "Saturday",
+};
 
 type Props = {
   settings: BranchOperationalSettings | null;
+  branch: BranchDto | undefined;
   busy: boolean;
-  formOnline: number;
-  setFormOnline: (n: number) => void;
   formSlot: number;
   setFormSlot: (n: number) => void;
   formWeekly: BranchOperatingHourRow[];
   setFormWeekly: Dispatch<SetStateAction<BranchOperatingHourRow[]>>;
-  formAdaptiveCap: boolean;
-  setFormAdaptiveCap: (v: boolean) => void;
-  formMinSlotTotal: string;
-  setFormMinSlotTotal: (v: string) => void;
   formMaxSlotTotal: string;
   setFormMaxSlotTotal: (v: string) => void;
   formEarlyCallMinutes: number;
   setFormEarlyCallMinutes: (n: number) => void;
   formCalledGraceMinutes: number;
   setFormCalledGraceMinutes: (n: number) => void;
+  formNextWeekOpensDay: number;
+  setFormNextWeekOpensDay: (n: number) => void;
   onSave: () => void;
+  // Per-service online slots
+  serviceOnlineSlots: Record<string, number>;
+  onServiceOnlineSlotsChange: (serviceId: string, value: number) => void;
+  // Closures
+  closures: BranchClosure[];
+  onAddClosure: (from: string, to: string, reason: string) => void;
+  onDeleteClosure: (id: string) => void;
 };
 
 export function ManagerScheduleTab(props: Props) {
   const {
     settings,
+    branch,
     busy,
-    formOnline,
-    setFormOnline,
     formSlot,
     setFormSlot,
     formWeekly,
     setFormWeekly,
-    formAdaptiveCap,
-    setFormAdaptiveCap,
-    formMinSlotTotal,
-    setFormMinSlotTotal,
     formMaxSlotTotal,
     setFormMaxSlotTotal,
     formEarlyCallMinutes,
     setFormEarlyCallMinutes,
     formCalledGraceMinutes,
     setFormCalledGraceMinutes,
+    formNextWeekOpensDay,
+    setFormNextWeekOpensDay,
     onSave,
+    serviceOnlineSlots,
+    onServiceOnlineSlotsChange,
+    closures,
+    onAddClosure,
+    onDeleteClosure,
   } = props;
 
   const copyMondayToAll = () => {
@@ -74,22 +85,16 @@ export function ManagerScheduleTab(props: Props) {
           <span>
             Time zone <strong>UTC+{settings.serviceZoneOffsetMinutes / 60}</strong>
           </span>
-          <span>
-            Walk-in quota <strong>{settings.walkInQuotaPercent}%</strong>
-          </span>
         </div>
       ) : null}
 
+      {/* ── Booking rules ── */}
       <section className="qgo-mgr-panel">
         <header className="qgo-mgr-panel__head">
           <h2>Booking rules</h2>
-          <p className="qgo-muted">How online and walk-in share each time slot.</p>
+          <p className="qgo-muted">Slot timing and queue behaviour.</p>
         </header>
         <div className="qgo-mgr-form-grid-2col">
-          <label className="qgo-field">
-            <span>Online booking %</span>
-            <input type="number" min={0} max={100} value={formOnline} onChange={(e) => setFormOnline(Number(e.target.value))} />
-          </label>
           <label className="qgo-field">
             <span>Slot duration (minutes)</span>
             <input type="number" min={5} max={180} value={formSlot} onChange={(e) => setFormSlot(Number(e.target.value))} />
@@ -102,32 +107,49 @@ export function ManagerScheduleTab(props: Props) {
             <span>No-show grace after call (minutes)</span>
             <input type="number" min={1} max={60} value={formCalledGraceMinutes} onChange={(e) => setFormCalledGraceMinutes(Number(e.target.value))} />
           </label>
-        </div>
-      </section>
-
-      <section className="qgo-mgr-panel">
-        <header className="qgo-mgr-panel__head">
-          <h2>Capacity</h2>
-          <p className="qgo-muted">Optional slot limits and overbooking alerts.</p>
-        </header>
-        <div className="qgo-mgr-form-body">
-          <label className="qgo-check qgo-check--block">
-            <input type="checkbox" checked={formAdaptiveCap} onChange={(e) => setFormAdaptiveCap(e.target.checked)} />
-            <span>Capacity monitoring — alert when online bookings exceed slot seats</span>
+          <label className="qgo-field">
+            <span>Max customers per slot (optional)</span>
+            <input type="number" min={1} placeholder="None" value={formMaxSlotTotal} onChange={(e) => setFormMaxSlotTotal(e.target.value)} />
           </label>
-          <div className="qgo-mgr-form-grid-2col">
-            <label className="qgo-field">
-              <span>Min customers per slot (optional)</span>
-              <input type="number" min={0} placeholder="None" value={formMinSlotTotal} onChange={(e) => setFormMinSlotTotal(e.target.value)} />
-            </label>
-            <label className="qgo-field">
-              <span>Max customers per slot (optional)</span>
-              <input type="number" min={1} placeholder="None" value={formMaxSlotTotal} onChange={(e) => setFormMaxSlotTotal(e.target.value)} />
-            </label>
-          </div>
+          <label className="qgo-field">
+            <span>Next-week booking opens on</span>
+            <select value={formNextWeekOpensDay} onChange={(e) => setFormNextWeekOpensDay(Number(e.target.value))}>
+              {Object.entries(DAY_LABELS).map(([val, label]) => (
+                <option key={val} value={val}>{label}</option>
+              ))}
+            </select>
+          </label>
         </div>
       </section>
 
+      {/* ── Per-service online booking quotas ── */}
+      {branch && branch.services.length > 0 ? (
+        <section className="qgo-mgr-panel">
+          <header className="qgo-mgr-panel__head">
+            <h2>Online booking quota per service</h2>
+            <p className="qgo-muted">Max online bookings per slot for each service (0 = disabled).</p>
+          </header>
+          <div className="qgo-mgr-form-body">
+            <div className="qgo-mgr-form-grid-2col">
+              {branch.services.map((s) => (
+                <label key={s.id} className="qgo-field">
+                  <span>{s.name}</span>
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    value={serviceOnlineSlots[s.id] ?? 4}
+                    disabled={busy}
+                    onChange={(e) => onServiceOnlineSlotsChange(s.id, Number(e.target.value))}
+                  />
+                </label>
+              ))}
+            </div>
+          </div>
+        </section>
+      ) : null}
+
+      {/* ── Operating hours ── */}
       <section className="qgo-mgr-panel">
         <header className="qgo-mgr-panel__head qgo-mgr-panel__head--row">
           <div>
@@ -210,6 +232,44 @@ export function ManagerScheduleTab(props: Props) {
         </div>
       </section>
 
+      {/* ── Branch closures ── */}
+      <section className="qgo-mgr-panel">
+        <header className="qgo-mgr-panel__head qgo-mgr-panel__head--row">
+          <div>
+            <h2>Branch closures</h2>
+            <p className="qgo-muted">Ad-hoc closure dates (e.g. public holidays, maintenance).</p>
+          </div>
+        </header>
+        <div className="qgo-mgr-form-body">
+          <ClosureForm busy={busy} onAdd={onAddClosure} />
+          {closures.length === 0 ? (
+            <p className="qgo-muted" style={{ padding: "8px 0" }}>No closures configured.</p>
+          ) : (
+            <ul className="qgo-mgr-closure-list">
+              {closures.map((c) => (
+                <li key={c.id} className="qgo-mgr-closure-row">
+                  <div>
+                    <strong>{new Date(c.closedFrom).toLocaleDateString()}</strong>
+                    {" → "}
+                    <strong>{new Date(c.closedTo).toLocaleDateString()}</strong>
+                    {c.reason ? <span className="qgo-muted"> — {c.reason}</span> : null}
+                  </div>
+                  <button
+                    type="button"
+                    className="qgo-btn-secondary qgo-btn-sm qgo-btn--danger"
+                    disabled={busy}
+                    onClick={() => onDeleteClosure(c.id)}
+                    title="Remove closure"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </section>
+
       <div className="qgo-mgr-save-bar qgo-mgr-save-bar--sticky">
         <p className="qgo-muted">Changes apply to new bookings and queue rules immediately after save.</p>
         <button type="button" className="qgo-btn-primary qgo-btn-primary--lg" disabled={busy} onClick={() => void onSave()}>
@@ -217,5 +277,40 @@ export function ManagerScheduleTab(props: Props) {
         </button>
       </div>
     </div>
+  );
+}
+
+function ClosureForm({ busy, onAdd }: { busy: boolean; onAdd: (from: string, to: string, reason: string) => void }) {
+  const today = new Date().toISOString().slice(0, 10);
+  return (
+    <form
+      className="qgo-mgr-closure-form"
+      onSubmit={(e) => {
+        e.preventDefault();
+        const fd = new FormData(e.currentTarget);
+        const from = fd.get("from") as string;
+        const to = fd.get("to") as string;
+        const reason = fd.get("reason") as string;
+        if (!from || !to) return;
+        onAdd(from, to, reason);
+        e.currentTarget.reset();
+      }}
+    >
+      <label className="qgo-field">
+        <span>From</span>
+        <input type="date" name="from" required min={today} disabled={busy} />
+      </label>
+      <label className="qgo-field">
+        <span>To</span>
+        <input type="date" name="to" required min={today} disabled={busy} />
+      </label>
+      <label className="qgo-field qgo-field--wide">
+        <span>Reason (optional)</span>
+        <input type="text" name="reason" placeholder="e.g. Public holiday" disabled={busy} />
+      </label>
+      <button type="submit" className="qgo-btn-secondary qgo-btn-sm" disabled={busy}>
+        <Plus size={14} /> Add
+      </button>
+    </form>
   );
 }

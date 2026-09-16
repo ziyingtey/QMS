@@ -356,7 +356,7 @@ export function BookingSlotsScreen({ navigation, route }: Props) {
                 ) : null}
               </View>
               <Text style={[styles.meta, unavailable ? styles.metaFull : styles.metaOpen]}>
-                Online {slot.onlineUsed}/{slot.onlineCapacity} · Walk-in {slot.walkInUsed}/{slot.walkInCapacity}
+                Online {slot.onlineUsed}/{slot.onlineCapacity}
               </Text>
             </Pressable>
           );

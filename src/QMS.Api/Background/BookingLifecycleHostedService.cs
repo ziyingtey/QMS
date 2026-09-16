@@ -10,8 +10,10 @@ using QMS.Infrastructure.Persistence;
 namespace QMS.Api.Background;
 
 /// <summary>
-/// Periodic queue attendance: marks Called tickets as Missed after the branch grace window expires,
-/// then triggers Pull Forward to backfill freed capacity.
+/// Periodic queue lifecycle:
+/// 1. Marks Called tickets as Missed after the branch grace window expires.
+/// 2. Marks Confirmed bookings as NoShow when their slot ends without check-in.
+/// 3. Cleans up expired temporary counter service assignments.
 /// </summary>
 public sealed class BookingLifecycleHostedService(
     IServiceScopeFactory scopeFactory,
@@ -43,20 +45,18 @@ public sealed class BookingLifecycleHostedService(
         var db = scope.ServiceProvider.GetRequiredService<QmsDbContext>();
         var hub = scope.ServiceProvider.GetRequiredService<IHubContext<QueueHub>>();
         var notifications = scope.ServiceProvider.GetRequiredService<CustomerNotificationService>();
-        var queueService = scope.ServiceProvider.GetRequiredService<QmsQueueService>();
         var now = DateTimeOffset.UtcNow;
 
-        // Called tickets that exceeded grace window → Missed
+        var branchIds = new HashSet<Guid>();
+
+        // ── 1. Called tickets that exceeded grace window → Missed ──
         var calledEntries = await db.QueueEntries
             .Include(q => q.Booking)
             .Include(q => q.Branch)
             .Where(q => q.State == QueueEntryState.Called && q.CalledAt != null)
             .ToListAsync(ct);
 
-        var branchIds = new HashSet<Guid>();
         var missedForNotify = new List<(Guid CustomerId, Guid? BookingId, string Ticket, Guid BranchId)>();
-        // Track branch+service pairs that need PullForward after no-show
-        var pullForwardTargets = new HashSet<(Guid BranchId, Guid ServiceTypeId)>();
 
         foreach (var q in calledEntries)
         {
@@ -74,10 +74,43 @@ public sealed class BookingLifecycleHostedService(
                 missedForNotify.Add((cid, q.BookingId, q.TicketNumber, q.BranchId));
 
             branchIds.Add(q.BranchId);
-            pullForwardTargets.Add((q.BranchId, q.ServiceTypeId));
         }
 
-        if (branchIds.Count == 0)
+        // ── 2. NoShow: Confirmed bookings whose slot ended without check-in ──
+        // Only targets Confirmed (not CheckedIn) bookings — if they checked in, they're in the queue.
+        var noShowBookings = await db.Bookings
+            .Include(b => b.QueueEntry)
+            .Where(b => b.Status == BookingStatus.Confirmed
+                        && b.SlotEnd <= now
+                        && b.CheckedInAt == null)
+            .ToListAsync(ct);
+
+        foreach (var bk in noShowBookings)
+        {
+            bk.Status = BookingStatus.NoShow;
+
+            if (bk.QueueEntry is { } qe && qe.State == QueueEntryState.Waiting)
+            {
+                qe.State = QueueEntryState.Missed;
+                branchIds.Add(qe.BranchId);
+            }
+
+            missedForNotify.Add((bk.CustomerId, bk.Id, bk.QueueEntry?.TicketNumber ?? "N/A", bk.BranchId));
+        }
+
+        // ── 3. Cleanup expired temporary counter service assignments ──
+        var expiredAssignments = await db.CounterAllowedServices
+            .Include(a => a.Counter)
+            .Where(a => a.IsTemporary && a.ExpiresAt.HasValue && a.ExpiresAt <= now)
+            .ToListAsync(ct);
+
+        foreach (var expired in expiredAssignments)
+        {
+            branchIds.Add(expired.Counter.BranchId);
+            db.CounterAllowedServices.Remove(expired);
+        }
+
+        if (branchIds.Count == 0 && expiredAssignments.Count == 0)
             return;
 
         await db.SaveChangesAsync(ct);
@@ -87,7 +120,7 @@ public sealed class BookingLifecycleHostedService(
             await notifications.NotifyAsync(
                 customerId,
                 NotificationKind.Missed,
-                $"Ticket {ticket} was missed after the grace period. Please take a new queue number if you still need service.",
+                $"Ticket {ticket} was missed. Please take a new queue number if you still need service.",
                 bookingId,
                 ticket,
                 branchId,
@@ -95,21 +128,12 @@ public sealed class BookingLifecycleHostedService(
         }
 
         foreach (var bid in branchIds)
-            await hub.Clients.Group(QueueHub.BranchGroup(bid)).SendAsync("QueueUpdated", bid, ct);
-
-        // Trigger Pull Forward for each branch+service that had a no-show
-        // This fills the freed capacity with walk-ins from later slots
-        foreach (var (branchId, serviceTypeId) in pullForwardTargets)
         {
-            try
-            {
-                await queueService.PullForwardAfterNoShowAsync(branchId, serviceTypeId, ct);
-            }
-            catch (Exception ex)
-            {
-                logger.LogWarning(ex, "PullForward after auto-missed failed for branch {BranchId}, service {ServiceTypeId}",
-                    branchId, serviceTypeId);
-            }
+            await hub.Clients.Group(QueueHub.BranchGroup(bid)).SendAsync("QueueUpdated", bid, ct);
+            await hub.Clients.Group(QueueHub.BranchGroup(bid)).SendAsync("CountersUpdated", bid, ct);
         }
+
+        if (expiredAssignments.Count > 0)
+            logger.LogInformation("Cleaned up {Count} expired temporary counter assignments", expiredAssignments.Count);
     }
 }

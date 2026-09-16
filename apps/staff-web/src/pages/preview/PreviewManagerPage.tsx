@@ -18,8 +18,7 @@ import {
 } from "../../preview/mockData";
 
 function tabFromSearch(tab: string | null): ManagerTab {
-  if (tab === "counters" || tab === "capacity" || tab === "analytics" || tab === "dashboard") return tab;
-  if (tab === "queue") return "analytics";
+  if (tab === "counters" || tab === "capacity" || tab === "analytics" || tab === "dashboard" || tab === "queue" || tab === "appointments") return tab;
   return "analytics";
 }
 
@@ -30,14 +29,12 @@ export function PreviewManagerPage() {
   const [expandedCounterId, setExpandedCounterId] = useState<string | null>(null);
   const [rows, setRows] = useState(MOCK_COUNTERS);
 
-  const [formOnline, setFormOnline] = useState(MOCK_SETTINGS.onlineQuotaPercent);
   const [formSlot, setFormSlot] = useState(MOCK_SETTINGS.slotDurationMinutes);
   const [formWeekly, setFormWeekly] = useState(MOCK_SETTINGS.weeklyOperatingHours);
-  const [formAdaptiveCap, setFormAdaptiveCap] = useState(true);
-  const [formMinSlotTotal, setFormMinSlotTotal] = useState("");
   const [formMaxSlotTotal, setFormMaxSlotTotal] = useState("");
   const [formEarlyCallMinutes, setFormEarlyCallMinutes] = useState(10);
   const [formCalledGraceMinutes, setFormCalledGraceMinutes] = useState(5);
+  const [formNextWeekOpensDay, setFormNextWeekOpensDay] = useState(6);
 
   const branch = MOCK_BRANCHES[0];
   const live = MOCK_LIVE;
@@ -116,24 +113,26 @@ export function PreviewManagerPage() {
           {managerTab === "capacity" ? (
             <ManagerScheduleTab
               settings={MOCK_SETTINGS}
+              branch={branch}
               busy={false}
-              formOnline={formOnline}
-              setFormOnline={setFormOnline}
               formSlot={formSlot}
               setFormSlot={setFormSlot}
               formWeekly={formWeekly}
               setFormWeekly={setFormWeekly}
-              formAdaptiveCap={formAdaptiveCap}
-              setFormAdaptiveCap={setFormAdaptiveCap}
-              formMinSlotTotal={formMinSlotTotal}
-              setFormMinSlotTotal={setFormMinSlotTotal}
               formMaxSlotTotal={formMaxSlotTotal}
               setFormMaxSlotTotal={setFormMaxSlotTotal}
               formEarlyCallMinutes={formEarlyCallMinutes}
               setFormEarlyCallMinutes={setFormEarlyCallMinutes}
               formCalledGraceMinutes={formCalledGraceMinutes}
               setFormCalledGraceMinutes={setFormCalledGraceMinutes}
+              formNextWeekOpensDay={formNextWeekOpensDay}
+              setFormNextWeekOpensDay={setFormNextWeekOpensDay}
               onSave={() => toast("Preview: settings saved", "success")}
+              serviceOnlineSlots={{}}
+              onServiceOnlineSlotsChange={() => previewToast("Online quota updated")}
+              closures={[]}
+              onAddClosure={() => previewToast("Closure added")}
+              onDeleteClosure={() => previewToast("Closure removed")}
             />
           ) : null}
 

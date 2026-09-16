@@ -26,6 +26,7 @@ public sealed class QmsDbContext : DbContext
     public DbSet<RefreshSession> RefreshSessions => Set<RefreshSession>();
     public DbSet<CustomerPasswordResetToken> CustomerPasswordResetTokens => Set<CustomerPasswordResetToken>();
     public DbSet<QueueMovement> QueueMovements => Set<QueueMovement>();
+    public DbSet<BranchClosure> BranchClosures => Set<BranchClosure>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -65,6 +66,17 @@ public sealed class QmsDbContext : DbContext
             e.Property(x => x.State).HasMaxLength(80);
             e.Property(x => x.OperatingHours).HasMaxLength(200);
             e.Property(x => x.ImageUrl).HasMaxLength(800);
+        });
+
+        modelBuilder.Entity<BranchClosure>(e =>
+        {
+            e.ToTable("BRANCH_CLOSURES");
+            e.Property(x => x.Reason).HasMaxLength(500);
+            e.Property(x => x.CreatedAt).HasDefaultValueSql("TODATETIMEOFFSET(SYSUTCDATETIME(), '+00:00')");
+            e.HasOne(x => x.Branch)
+                .WithMany(b => b.Closures)
+                .HasForeignKey(x => x.BranchId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<BranchOperatingHour>(e =>

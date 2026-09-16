@@ -9,7 +9,6 @@ using Microsoft.OpenApi.Models;
 using QMS.Api.Background;
 using QMS.Api.Hubs;
 using QMS.Api.Services;
-using QMS.Application.Capacity;
 using QMS.Application.Waiting;
 using QMS.Infrastructure;
 using QMS.Infrastructure.Persistence;
@@ -94,7 +93,6 @@ builder.Services.AddCors(options =>
 });
 
 builder.Services.AddSignalR();
-builder.Services.AddSingleton<ICapacityEngine, CapacityEngine>();
 builder.Services.AddSingleton<IPasswordHasher<string>, PasswordHasher<string>>();
 builder.Services.AddSingleton<JwtTokenService>();
 builder.Services.Configure<SmtpOptions>(builder.Configuration.GetSection("Smtp"));
@@ -108,6 +106,7 @@ builder.Services.AddHostedService<BranchQueueDayRolloverHostedService>();
 builder.Services.AddHostedService<BranchAfterHoursCounterHostedService>();
 builder.Services.AddHostedService<MlSnapshotHostedService>();
 builder.Services.AddScoped<WaitTimeFeatureBuilder>();
+builder.Services.AddScoped<CounterSimulationEstimator>();
 builder.Services.AddSingleton<IWaitTimeEstimator, FormulaWaitTimeEstimator>();
 builder.Services.AddInfrastructure(builder.Configuration);
 
@@ -121,7 +120,7 @@ using (var scope = app.Services.CreateScope())
 
     var hub = scope.ServiceProvider.GetRequiredService<IHubContext<QueueHub>>();
     var startupLogger = scope.ServiceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("Startup");
-    await BranchAfterHoursCounterSweep.RunAsync(db, hub, startupLogger);
+    await BranchAfterHoursCounterSweep.RunAsync(db, hub, startupLogger, CancellationToken.None);
 }
 
 if (app.Environment.IsDevelopment())

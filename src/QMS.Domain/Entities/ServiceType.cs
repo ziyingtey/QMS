@@ -10,6 +10,8 @@ public class ServiceType
     public int DefaultAvgServiceMinutes { get; set; } = 10;
     /// <summary>Lecturer ERD priority_weight for dispatch tuning hooks.</summary>
     public int PriorityWeight { get; set; } = 1;
+    /// <summary>Manager-set max online bookings per slot for this service (0 = no online booking allowed).</summary>
+    public int OnlineSlotsPerSlot { get; set; } = 4;
     public ICollection<Booking> Bookings { get; set; } = new List<Booking>();
     public ICollection<QueueEntry> QueueEntries { get; set; } = new List<QueueEntry>();
     public ICollection<ServiceSessionLog> ServiceLogs { get; set; } = new List<ServiceSessionLog>();

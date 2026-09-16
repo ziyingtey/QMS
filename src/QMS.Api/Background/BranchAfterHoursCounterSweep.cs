@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using QMS.Api.Hubs;
 using QMS.Api.Services;
+using QMS.Domain.Entities;
 using QMS.Domain.Enums;
 using QMS.Infrastructure.Persistence;
 
@@ -28,6 +29,11 @@ public static class BranchAfterHoursCounterSweep
             .GroupBy(h => h.BranchId)
             .ToDictionaryAsync(g => g.Key, g => g.ToList(), ct);
 
+        var closuresByBranch = await db.BranchClosures.AsNoTracking()
+            .Where(c => c.ClosedFrom <= now && c.ClosedTo >= now)
+            .GroupBy(c => c.BranchId)
+            .ToDictionaryAsync(g => g.Key, g => (IReadOnlyList<BranchClosure>)g.ToList(), ct);
+
         var notifyCounters = new HashSet<Guid>();
         var notifyQueue = new HashSet<Guid>();
         var closedCount = 0;
@@ -36,8 +42,9 @@ public static class BranchAfterHoursCounterSweep
         {
             if (!hoursByBranch.TryGetValue(branch.Id, out var hours))
                 hours = [];
+            closuresByBranch.TryGetValue(branch.Id, out var closures);
 
-            if (BranchHoursEvaluator.IsBranchOpenNow(branch, hours, now))
+            if (BranchHoursEvaluator.IsBranchOpenNow(branch, hours, now, closures))
                 continue;
 
             var counters = await db.Counters

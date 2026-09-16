@@ -4,14 +4,25 @@ using QMS.Domain.Enums;
 namespace QMS.Api.Services;
 
 /// <summary>
-/// Mirrors customer-app branch open logic: manager override, then weekly hours in branch local time.
+/// Mirrors customer-app branch open logic: manager override, ad-hoc closures, then weekly hours in branch local time.
 /// </summary>
 public static class BranchHoursEvaluator
 {
-    public static bool IsBranchOpenNow(Branch branch, IReadOnlyList<BranchOperatingHour> weeklyHours, DateTimeOffset utcNow)
+    public static bool IsBranchOpenNow(
+        Branch branch,
+        IReadOnlyList<BranchOperatingHour> weeklyHours,
+        DateTimeOffset utcNow,
+        IReadOnlyList<BranchClosure>? closures = null)
     {
         if (branch.OpeningStatus == BranchOpeningStatus.Closed)
             return false;
+
+        // Ad-hoc closures override weekly hours
+        if (closures is { Count: > 0 })
+        {
+            if (closures.Any(c => utcNow >= c.ClosedFrom && utcNow <= c.ClosedTo))
+                return false;
+        }
 
         if (weeklyHours.Count == 0)
             return branch.OpeningStatus == BranchOpeningStatus.Open;

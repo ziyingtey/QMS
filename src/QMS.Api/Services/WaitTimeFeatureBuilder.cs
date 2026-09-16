@@ -104,10 +104,6 @@ public sealed class WaitTimeFeatureBuilder(QmsDbContext db)
                 .CountAsync(q => q.EntryType == QueueEntryType.WalkIn, ct);
         }
 
-        // Pull Forward state at snapshot time
-        var pullForwardCount = await db.QueueMovements.AsNoTracking()
-            .CountAsync(m => m.QueueEntryId == entry.Id && m.MovedAt <= snapshotAt, ct);
-
         return new WaitTimeFeatures
         {
             QueueLength = queueLength,
@@ -128,11 +124,9 @@ public sealed class WaitTimeFeatureBuilder(QmsDbContext db)
             SlotDurationMinutes = branch.SlotDurationMinutes,
             MinutesUntilSlotEnd = minutesUntilSlotEnd,
             MinutesSinceSlotStart = minutesSinceSlotStart,
-            OnlineQuotaPercent = branch.OnlineQuotaPercent,
+            OnlineSlotsPerSlot = service.OnlineSlotsPerSlot,
             OnlineBookedInSlot = onlineBookedInSlot,
             WalkInInSlot = walkInInSlot,
-            WasPulledForward = entry.PullForwardAt.HasValue && entry.PullForwardAt <= snapshotAt,
-            PullForwardCount = pullForwardCount,
             BranchCode = branch.BranchCode,
             ServiceCode = service.Code,
         };
@@ -153,7 +147,7 @@ public sealed class WaitTimeFeatureBuilder(QmsDbContext db)
             BranchId = entry.BranchId,
             ServiceTypeId = entry.ServiceTypeId,
             SnapshotAt = snapshotAt,
-            InitialQueueEligibleAt = entry.InitialQueueEligibleAt,
+            QueueEligibleAt = entry.QueueEligibleAt,
             ServingStartedAt = null,
             ActualWaitingMinutes = null,
             EntryType = f.EntryType,
@@ -174,11 +168,9 @@ public sealed class WaitTimeFeatureBuilder(QmsDbContext db)
             SlotDurationMinutes = f.SlotDurationMinutes,
             MinutesUntilSlotEnd = f.MinutesUntilSlotEnd,
             MinutesSinceSlotStart = f.MinutesSinceSlotStart,
-            OnlineQuotaPercent = f.OnlineQuotaPercent,
+            OnlineSlotsPerSlot = f.OnlineSlotsPerSlot,
             OnlineBookedInSlot = f.OnlineBookedInSlot,
             WalkInInSlot = f.WalkInInSlot,
-            WasPulledForward = f.WasPulledForward,
-            PullForwardCount = f.PullForwardCount,
             BranchCode = f.BranchCode,
             ServiceCode = f.ServiceCode,
         };

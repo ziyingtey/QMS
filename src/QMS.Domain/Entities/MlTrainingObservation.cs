@@ -21,11 +21,11 @@ public class MlTrainingObservation
 
     // ── Timing ──
     public DateTimeOffset SnapshotAt { get; set; }
-    public DateTimeOffset? InitialQueueEligibleAt { get; set; }
+    public DateTimeOffset? QueueEligibleAt { get; set; }
     public DateTimeOffset? ServingStartedAt { get; set; }
 
     // ── Target (filled when Serving starts, NULL until then) ──
-    /// <summary>ServingStartedAt - InitialQueueEligibleAt. NULL until customer starts being served.</summary>
+    /// <summary>ServingStartedAt - QueueEligibleAt. NULL until customer starts being served.</summary>
     public double? ActualWaitingMinutes { get; set; }
 
     // ── Entry / Customer ──
@@ -57,13 +57,9 @@ public class MlTrainingObservation
     public int SlotDurationMinutes { get; set; }
     public double? MinutesUntilSlotEnd { get; set; }
     public double? MinutesSinceSlotStart { get; set; }
-    public int OnlineQuotaPercent { get; set; }
+    public int OnlineSlotsPerSlot { get; set; }
     public int OnlineBookedInSlot { get; set; }
     public int WalkInInSlot { get; set; }
-
-    // ── Pull Forward State (at snapshot time only — never updated after) ──
-    public bool WasPulledForward { get; set; }
-    public int PullForwardCount { get; set; }
 
     // ── Branch / Service Identity ──
     public int BranchCode { get; set; }

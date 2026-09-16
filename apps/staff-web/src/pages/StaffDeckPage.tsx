@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import {
   apiBranches,
   apiCallNext,
+  apiCrossLaneWaiting,
   apiEndService,
   apiLiveDashboard,
   apiMarkMissed,
@@ -34,6 +35,8 @@ import {
   writeActiveTicketSession,
 } from "../staffTicketSession";
 
+const ALL_LANES = "__all__";
+
 export function StaffDeckPage() {
   const logout = useStaffLogout();
   const { toast } = useToast();
@@ -53,7 +56,7 @@ export function StaffDeckPage() {
 
   const [branches, setBranches] = useState<BranchDto[]>([]);
   const [branchId, setBranchId] = useState("");
-  const [serviceId, setServiceId] = useState("");
+  const [serviceId, setServiceId] = useState(ALL_LANES);
   const [ticket, setTicket] = useState("");
   const [live, setLive] = useState<LiveDashboard | null>(null);
   const [myCounter, setMyCounter] = useState<MyCounterDto | null>(null);
@@ -88,22 +91,13 @@ export function StaffDeckPage() {
           setMyCounter(mc);
           setNotAssigned(false);
           setBranchId(mc.branchId);
-          const br = b.find((x) => x.id === mc.branchId);
-          const list = br?.services ?? [];
-          const filtered =
-            !mc.allowedServiceTypeIds || mc.allowedServiceTypeIds.length === 0
-              ? []
-              : list.filter((s) => mc.allowedServiceTypeIds.includes(s.id));
           const saved = readActiveTicketSession();
-          const pick =
-            saved?.branchId === mc.branchId && filtered.some((s) => s.id === saved.serviceId)
-              ? saved.serviceId
-              : (filtered[0]?.id ?? "");
-          setServiceId(pick);
           if (saved?.branchId === mc.branchId && saved.ticket) {
             setTicket(saved.ticket);
             setServingActive(saved.servingActive);
           }
+          // Default to cross-lane view
+          setServiceId(ALL_LANES);
         } catch {
           setNotAssigned(true);
           setMyCounter(null);
@@ -117,9 +111,13 @@ export function StaffDeckPage() {
   }, [logout, toast]);
 
   const refreshWaiting = useCallback(async () => {
-    if (!branchId || !serviceId) return;
+    if (!branchId) return;
     try {
-      setWaiting(await apiWaitingQueue(branchId, serviceId));
+      if (serviceId === ALL_LANES) {
+        setWaiting(await apiCrossLaneWaiting());
+      } else {
+        setWaiting(await apiWaitingQueue(branchId, serviceId));
+      }
     } catch {
       setWaiting([]);
     }
@@ -189,40 +187,39 @@ export function StaffDeckPage() {
     return list.filter((s) => myCounter.allowedServiceTypeIds.includes(s.id));
   }, [branch?.services, myCounter]);
 
-  useEffect(() => {
-    if (!branch || !myCounter) return;
-    setServiceId((prev) => {
-      const ok = selectableServices.some((s) => s.id === prev);
-      if (ok) return prev;
-      return selectableServices[0]?.id ?? "";
-    });
-  }, [branch, myCounter, selectableServices]);
+  const multiLane = selectableServices.length > 1;
+  const isAllLanes = serviceId === ALL_LANES;
 
   const counterMode = myCounter?.mode ?? "Closed";
   const counterActive = counterMode.toLowerCase() === "active";
   const lanesConfigured = (myCounter?.allowedServiceTypeIds?.length ?? 0) > 0;
-  const canCallNext = Boolean(lanesConfigured && serviceId && counterActive && !ticket);
-  const serviceName = branch?.services.find((s) => s.id === serviceId)?.name ?? "Service";
+  const canCallNext = Boolean(lanesConfigured && counterActive && !ticket);
+
+  // For "Call next", use first allowed service (backend ignores serviceId anyway — searches all lanes)
+  const callNextServiceId = selectableServices[0]?.id ?? "";
+  const serviceName = isAllLanes
+    ? selectableServices.map((s) => s.name).join(", ")
+    : (branch?.services.find((s) => s.id === serviceId)?.name ?? "Service");
 
   const onCallNext = async () => {
-    if (!branchId || !serviceId || !canCallNext) return;
+    if (!branchId || !canCallNext) return;
     setBusy(true);
     try {
-      const r = await apiCallNext(branchId, serviceId);
+      const r = await apiCallNext(branchId, callNextServiceId);
       if (r.ticketNumber) {
         setTicket(r.ticketNumber);
         setServingActive(false);
         try {
           await apiStartService(r.ticketNumber);
           setServingActive(true);
-          persistTicket(r.ticketNumber, true, branchId, serviceId);
+          persistTicket(r.ticketNumber, true, branchId, callNextServiceId);
           toast(`Now serving ${r.ticketNumber}${r.counterNumber ? ` at counter ${r.counterNumber}` : ""}`, "success");
         } catch {
-          persistTicket(r.ticketNumber, false, branchId, serviceId);
+          persistTicket(r.ticketNumber, false, branchId, callNextServiceId);
           toast(`${r.ticketNumber} called — tap Start service when the customer arrives.`, "info");
         }
       } else {
-        toast(r.message ?? "No customers waiting in this lane.", "info");
+        toast(r.message ?? "No customers waiting.", "info");
       }
       await refreshWaiting();
       await refreshLive();
@@ -239,7 +236,7 @@ export function StaffDeckPage() {
     try {
       await apiStartService(ticket);
       setServingActive(true);
-      persistTicket(ticket, true, branchId, serviceId);
+      persistTicket(ticket, true, branchId, callNextServiceId);
       toast(`Service started for ${ticket}`, "success");
     } catch (e) {
       toast(e instanceof Error ? e.message : String(e), "error");
@@ -364,16 +361,18 @@ export function StaffDeckPage() {
             <h2>Queue</h2>
             <span className="qgo-muted">{waiting.length} waiting</span>
           </header>
-          {selectableServices.length > 1 ? (
+
+          {/* Lane filter: "All lanes" default for multi-service counters */}
+          {multiLane ? (
             <label className="qgo-field qgo-field--compact">
-              <span>Service lane</span>
+              <span>Filter by lane</span>
               <select
                 value={serviceId}
                 onChange={(e) => {
                   setServiceId(e.target.value);
-                  void refreshWaiting();
                 }}
               >
+                <option value={ALL_LANES}>All lanes (call order)</option>
                 {selectableServices.map((s) => (
                   <option key={s.id} value={s.id}>
                     {s.name}
@@ -386,9 +385,18 @@ export function StaffDeckPage() {
               Lane: <strong>{selectableServices[0]?.name ?? "—"}</strong>
             </p>
           )}
+
+          {multiLane && !isAllLanes ? (
+            <p className="qgo-staff-callnext-hint">
+              Call next searches <strong>all</strong> your lanes, not just the filtered one.
+            </p>
+          ) : null}
+
           <ul className="qgo-queue-list">
             {waiting.length === 0 ? (
-              <li className="qgo-queue-empty">Queue is empty for this lane.</li>
+              <li className="qgo-queue-empty">
+                {isAllLanes ? "Queue is empty across all lanes." : "Queue is empty for this lane."}
+              </li>
             ) : (
               waiting.map((w) => (
                 <li key={w.ticketNumber} className="qgo-queue-item">
@@ -396,8 +404,14 @@ export function StaffDeckPage() {
                   <div className="qgo-queue-main">
                     <strong>{w.ticketNumber}</strong>
                     <span className="qgo-muted">{w.entryType}</span>
+                    {isAllLanes && w.serviceName ? (
+                      <span className="qgo-queue-svc-badge">{w.serviceName}</span>
+                    ) : null}
                   </div>
-                  <span className="qgo-queue-eta">{w.estimatedWaitMinutes == null ? "—" : `${w.estimatedWaitMinutes}m`}</span>
+                  <div className="qgo-queue-right">
+                    {w.checkedIn ? <span className="qgo-queue-checkin">✓</span> : null}
+                    <span className="qgo-queue-eta">{w.estimatedWaitMinutes == null ? "—" : `~${w.estimatedWaitMinutes}m`}</span>
+                  </div>
                 </li>
               ))
             )}

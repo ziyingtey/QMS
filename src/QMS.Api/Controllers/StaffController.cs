@@ -95,6 +95,24 @@ public sealed class StaffController(QmsQueueService queue) : ControllerBase
         var list = await queue.ListWaitingTicketsAsync(branchId, serviceTypeId, cancellationToken);
         return Ok(list);
     }
+
+    /// <summary>
+    /// Cross-lane queue: all waiting tickets across this counter's allowed services,
+    /// sorted by Call Next priority order.
+    /// </summary>
+    [HttpGet("cross-lane-waiting")]
+    public async Task<ActionResult<IReadOnlyList<WaitingTicketDto>>> CrossLaneWaiting(CancellationToken cancellationToken)
+    {
+        var staffId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+        try
+        {
+            return Ok(await queue.ListCrossLaneWaitingAsync(staffId, cancellationToken));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
 }
 
 public sealed record CallNextRequest(Guid BranchId, Guid ServiceTypeId);

@@ -13,4 +13,5 @@ public enum PredictionSource
 {
     Ml = 0,
     FormulaFallback = 1,
+    CounterSimulation = 2,
 }
