@@ -11,13 +11,14 @@
 USE QMS;
 GO
 
-INSERT INTO dbo.SERVICES (Id, BranchId, Code, Name, DefaultAvgServiceMinutes, PriorityWeight)
+INSERT INTO dbo.SERVICES (Id, BranchId, Code, Name, DefaultAvgServiceMinutes, PriorityWeight, OnlineSlotsPerSlot)
 SELECT NEWID(),
        b.Id,
        svc.Code,
        svc.Name,
        svc.DefaultAvgServiceMinutes,
-       1
+       1,
+       4
 FROM dbo.BRANCHES AS b
 CROSS JOIN (
     VALUES
