@@ -4,6 +4,9 @@
   - Table: dbo.SERVICES (EF entity: ServiceType). Code must be unique per BranchId.
   - Skips any (BranchId, Code) that already exists — safe to run more than once.
   - DefaultAvgServiceMinutes are rough planning defaults; change the VALUES block if needed.
+  - Does NOT create SERVICE_QUEUES / QueueId. After this script, run:
+      insert-service-queues-all-branches.sql
+    (fixed ticket prefixes A/D/W/…). That avoids needing an API restart just to provision queues.
 
   Run in SSMS (or sqlcmd) against your QMS database after branches exist.
 */
