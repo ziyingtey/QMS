@@ -137,9 +137,7 @@ public sealed class QmsQueueService(
         if (onlineUsed >= service.OnlineSlotsPerSlot)
             throw new InvalidOperationException("Online capacity for this slot is full.");
 
-        // Allocate sequence within the slot
-        var seq = await AllocateSlotSequenceAsync(branchId, slotStart, cancellationToken);
-        var ticket = FormatTicket(branch.BranchCode, seq);
+        var (queue, seq, ticket) = await IssueTicketAsync(branch, service, cancellationToken);
 
         var booking = new Booking
         {
@@ -157,6 +155,7 @@ public sealed class QmsQueueService(
             Id = Guid.NewGuid(),
             BranchId = branchId,
             ServiceTypeId = serviceTypeId,
+            QueueId = queue.Id,
             TicketNumber = ticket,
             EntryType = QueueEntryType.OnlineBooked,
             State = QueueEntryState.Waiting,
@@ -219,8 +218,7 @@ public sealed class QmsQueueService(
         if (chosenStart < windowStart) chosenStart = windowStart;
         var chosenEnd = chosenStart.AddMinutes(slotM);
 
-        var seq = await AllocateSlotSequenceAsync(branchId, chosenStart, cancellationToken);
-        var ticket = FormatTicket(branch.BranchCode, seq);
+        var (queue, seq, ticket) = await IssueTicketAsync(branch, service, cancellationToken);
 
         var nowUtc = DateTimeOffset.UtcNow;
         var entry = new QueueEntry
@@ -228,6 +226,7 @@ public sealed class QmsQueueService(
             Id = Guid.NewGuid(),
             BranchId = branchId,
             ServiceTypeId = serviceTypeId,
+            QueueId = queue.Id,
             TicketNumber = ticket,
             EntryType = QueueEntryType.WalkIn,
             State = QueueEntryState.Waiting,
@@ -362,7 +361,10 @@ public sealed class QmsQueueService(
             var oldSlotStart = qe.AssignedSlotStart;
             var oldSlotEnd = qe.AssignedSlotEnd;
             var oldSeq = qe.EnqueueSequence;
-            var newSeq = await AllocateSlotSequenceAsync(booking.BranchId, newSlotStart, cancellationToken);
+            var zoneR = TimeSpan.FromMinutes(branch.ServiceZoneOffsetMinutes);
+            var qid = qe.QueueId ?? service.QueueId
+                      ?? throw new InvalidOperationException("Queue missing for reschedule.");
+            var newSeq = await AllocateQueueSequenceAsync(qid, booking.BranchId, zoneR, cancellationToken);
 
             // Record reschedule movement
             db.QueueMovements.Add(new QueueMovement
@@ -464,41 +466,14 @@ public sealed class QmsQueueService(
         // Count tickets ahead using Call Next priority rules
         var totalAhead = await CountPeopleAheadAsync(entry, counterServiceIds, nowUtc, earlyMinutes, cancellationToken);
 
-        // ── ETA: Counter Simulation (primary) + Formula (A/B baseline) ──
+        // ── ETA: ML → Counter Simulation → Formula (shared with Staff/Manager) ──
         double eta;
-        try
-        {
-            var simEta = await simulationEstimator.EstimateAsync(
-                entry, entry.Branch.OnlineEarlyCallMinutes, nowUtc, cancellationToken);
-
-            // Formula fallback as A/B comparison baseline
-            var features = await featureBuilder.BuildAsync(entry, entry.Branch, entry.ServiceType, nowUtc, cancellationToken);
-            var (formulaMin, formulaSource) = waitTimeEstimator.Estimate(features);
-
-            eta = double.IsInfinity(simEta) ? formulaMin : simEta;
-
-            // Record both predictions for A/B evaluation
-            db.WaitPredictions.Add(new WaitPrediction
-            {
-                Id = Guid.NewGuid(),
-                QueueEntryId = entry.Id,
-                PredictedAt = nowUtc,
-                PredictedWaitMinutes = double.IsInfinity(simEta) ? -1 : simEta,
-                PredictionSource = (int)PredictionSource.CounterSimulation,
-                FeatureSchemaVersion = "v3",
-            });
-            db.WaitPredictions.Add(new WaitPrediction
-            {
-                Id = Guid.NewGuid(),
-                QueueEntryId = entry.Id,
-                PredictedAt = nowUtc,
-                PredictedWaitMinutes = formulaMin,
-                PredictionSource = (int)formulaSource,
-                FeatureSchemaVersion = "v3",
-            });
-            await db.SaveChangesAsync(cancellationToken);
-        }
-        catch
+        var etaNullable = await ResolveDisplayEtaMinutesAsync(
+            entry, entry.Branch, entry.ServiceType, earlyMinutes, nowUtc, cancellationToken,
+            recordPredictions: true);
+        if (etaNullable is { } resolved)
+            eta = resolved;
+        else
         {
             var activeCounters = await CountActiveLaneCountersAsync(branchId, entry.ServiceTypeId, cancellationToken);
             var avg = entry.ServiceType.DefaultAvgServiceMinutes;
@@ -538,48 +513,37 @@ public sealed class QmsQueueService(
         DateTimeOffset nowUtc, int earlyCallMinutes,
         CancellationToken ct)
     {
-        // Determine my priority (0 = checked-in online in active slot, 1 = other)
-        var myPriority = GetCallNextPriority(myEntry, nowUtc);
-
-        // All eligible waiting tickets in competing services
-        var eligible = db.QueueEntries.AsNoTracking()
+        // Simulate Call Next repeatedly on a snapshot until I would be selected.
+        var pool = await db.QueueEntries.AsNoTracking()
             .Where(q => q.BranchId == myEntry.BranchId
                         && competingServiceIds.Contains(q.ServiceTypeId)
-                        && q.State == QueueEntryState.Waiting
-                        && q.Id != myEntry.Id);
+                        && q.State == QueueEntryState.Waiting)
+            .Where(q =>
+                (q.EntryType == QueueEntryType.WalkIn && q.CheckedIn)
+                || (q.EntryType == QueueEntryType.OnlineBooked
+                    && q.CheckedIn
+                    && q.AssignedSlotStart.HasValue
+                    && q.AssignedSlotStart.Value.AddMinutes(-earlyCallMinutes) <= nowUtc)
+                || q.Id == myEntry.Id)
+            .ToListAsync(ct);
 
-        // Same eligibility filter as Call Next
-        eligible = eligible.Where(q =>
-            q.CheckedIn
-            || (q.EntryType == QueueEntryType.OnlineBooked
-                && q.AssignedSlotStart.HasValue
-                && q.AssignedSlotStart.Value.AddMinutes(-earlyCallMinutes) <= nowUtc));
+        // Ensure my ticket is present even if not yet eligible (show 0 ahead / waiting phase)
+        if (pool.All(q => q.Id != myEntry.Id))
+            pool.Add(myEntry);
 
-        if (myPriority == 0)
+        var remaining = pool.ToList();
+        var ahead = 0;
+        while (remaining.Count > 0)
         {
-            // I'm P0: only P0 tickets with lower EnqueueSequence are ahead
-            return await eligible.CountAsync(q =>
-                q.EntryType == QueueEntryType.OnlineBooked && q.CheckedIn
-                && q.AssignedSlotStart.HasValue && q.AssignedSlotStart <= nowUtc
-                && q.AssignedSlotEnd.HasValue && q.AssignedSlotEnd > nowUtc
-                && q.EnqueueSequence < myEntry.EnqueueSequence, ct);
+            var next = QueueCallNextSelector.SelectLongestWaitQueueHead(remaining, nowUtc);
+            if (next is null) break;
+            if (next.Id == myEntry.Id) return ahead;
+            ahead++;
+            remaining.RemoveAll(q => q.Id == next.Id);
+            if (ahead > 500) break; // safety
         }
-        else
-        {
-            // I'm P1: all P0 tickets are ahead, plus P1 tickets with lower EnqueueSequence
-            var p0Ahead = await eligible.CountAsync(q =>
-                q.EntryType == QueueEntryType.OnlineBooked && q.CheckedIn
-                && q.AssignedSlotStart.HasValue && q.AssignedSlotStart <= nowUtc
-                && q.AssignedSlotEnd.HasValue && q.AssignedSlotEnd > nowUtc, ct);
 
-            var p1Ahead = await eligible.CountAsync(q =>
-                !(q.EntryType == QueueEntryType.OnlineBooked && q.CheckedIn
-                  && q.AssignedSlotStart.HasValue && q.AssignedSlotStart <= nowUtc
-                  && q.AssignedSlotEnd.HasValue && q.AssignedSlotEnd > nowUtc)
-                && q.EnqueueSequence < myEntry.EnqueueSequence, ct);
-
-            return p0Ahead + p1Ahead;
-        }
+        return ahead;
     }
 
     private static int GetCallNextPriority(QueueEntry entry, DateTimeOffset nowUtc)
@@ -592,16 +556,9 @@ public sealed class QmsQueueService(
     }
 
     // ─────────────────────────────────────────────────────────────────────
-    // CALL NEXT — Cross-lane Eligible FIFO with Online Slot Priority
-    //
-    // Searches across ALL of this counter's AllowedServices.
-    // Priority 0: checked-in online booking whose slot window is active
-    //             (SlotStart - EarlyCallMinutes ≤ now < SlotEnd)
-    // Priority 1: everything else (walk-ins, unchecked-in online, future slot online)
-    // Within same priority: FIFO by EnqueueSequence ASC.
-    //
-    // Atomic claim: raw SQL with UPDLOCK, READPAST to prevent concurrent
-    // Call Next from two counters claiming the same ticket.
+    // CALL NEXT — 档 B multi-queue longest-wait
+    // AllowedServices → queues; each queue head = P0 then EnqueueSequence;
+    // among heads any P0 beats P1, then earliest QueueEligibleAt (longest wait).
     // ─────────────────────────────────────────────────────────────────────
 
     public async Task<CallNextDto> CallNextAsync(
@@ -625,47 +582,6 @@ public sealed class QmsQueueService(
         var nowUtc = DateTimeOffset.UtcNow;
         var earlyMinutes = counter.Branch.OnlineEarlyCallMinutes;
 
-        // Atomic ticket claim using raw SQL with UPDLOCK, READPAST
-        // Priority 0: checked-in online with active slot window
-        // Priority 1: all other eligible tickets
-        // Within same priority: FIFO by EnqueueSequence
-        var serviceIdParams = string.Join(",", allowedServiceIds.Select((_, i) => $"@p{i + 3}"));
-        var sql = $@"
-            UPDATE TOP(1) q SET q.State = 1, q.CalledAt = @p0, q.CounterId = @p1
-            OUTPUT INSERTED.Id
-            FROM dbo.QUEUE_TICKETS q WITH (UPDLOCK, READPAST)
-            WHERE q.BranchId = @p2
-              AND q.ServiceTypeId IN ({serviceIdParams})
-              AND q.State = 0
-              AND (
-                  -- Walk-ins are always eligible (CheckedIn = true)
-                  q.CheckedIn = 1
-                  OR
-                  -- Online: eligible when slot window is active (SlotStart - earlyCall ≤ now)
-                  (q.EntryType = 0 AND q.AssignedSlotStart IS NOT NULL
-                   AND DATEADD(MINUTE, -@pEarly, q.AssignedSlotStart) <= @p0)
-              )
-            ORDER BY
-              -- Priority 0: checked-in online with active slot (SlotStart ≤ now < SlotEnd)
-              CASE WHEN q.EntryType = 0 AND q.CheckedIn = 1
-                        AND q.AssignedSlotStart <= @p0
-                        AND q.AssignedSlotEnd > @p0
-                   THEN 0 ELSE 1 END,
-              q.EnqueueSequence";
-
-        var parameters = new List<object>
-        {
-            nowUtc,          // @p0
-            counter.Id,      // @p1
-            branchId,        // @p2
-        };
-        for (int i = 0; i < allowedServiceIds.Count; i++)
-            parameters.Add(allowedServiceIds[i]); // @p3, @p4, ...
-        parameters.Add(earlyMinutes); // @pEarly
-
-        // EF Core raw SQL for UPDATE...OUTPUT
-        // We'll use ExecuteSqlRawAsync and then query the claimed ticket
-        // Actually, use a two-step approach: find-and-claim in a transaction
         var claimed = await FindAndClaimNextTicketAsync(counter, allowedServiceIds, nowUtc, earlyMinutes, cancellationToken);
 
         if (claimed is null)
@@ -699,60 +615,55 @@ public sealed class QmsQueueService(
     }
 
     /// <summary>
-    /// Atomic find-and-claim: uses pessimistic locking to prevent concurrent Call Next
-    /// from two counters claiming the same ticket.
+    /// 档 B Call Next: each allowed service maps to a queue; take each queue's head
+    /// (P0 before P1, then EnqueueSequence), then pick the head that has waited longest.
+    /// Global rule: any P0 head beats all P1 heads.
     /// </summary>
     private async Task<QueueEntry?> FindAndClaimNextTicketAsync(
         Counter counter, List<Guid> allowedServiceIds,
         DateTimeOffset nowUtc, int earlyCallMinutes,
         CancellationToken ct)
     {
-        // Use a serializable read to find + update atomically
-        // EF doesn't support UPDLOCK directly, so we use FromSqlRaw for the SELECT
-        // then update through the tracked entity.
         using var tx = await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.ReadCommitted, ct);
 
         try
         {
-            // Build eligible query with priority ordering
-            var eligible = db.QueueEntries
+            var eligible = await db.QueueEntries
                 .Include(q => q.Booking)
                 .Where(q => q.BranchId == counter.BranchId
                             && allowedServiceIds.Contains(q.ServiceTypeId)
-                            && q.State == QueueEntryState.Waiting);
+                            && q.State == QueueEntryState.Waiting)
+                .Where(q =>
+                    (q.EntryType == QueueEntryType.WalkIn && q.CheckedIn)
+                    || (q.EntryType == QueueEntryType.OnlineBooked
+                        && q.CheckedIn
+                        && q.AssignedSlotStart.HasValue
+                        && q.AssignedSlotStart.Value.AddMinutes(-earlyCallMinutes) <= nowUtc))
+                .ToListAsync(ct);
 
-            // Eligibility filter: walk-ins always eligible; online eligible when slot window active
-            var earlyWindow = nowUtc.AddMinutes(earlyCallMinutes);
-            eligible = eligible.Where(q =>
-                q.CheckedIn // walk-ins always eligible
-                || (q.EntryType == QueueEntryType.OnlineBooked
-                    && q.AssignedSlotStart.HasValue
-                    && q.AssignedSlotStart.Value.AddMinutes(-earlyCallMinutes) <= nowUtc));
-
-            // Priority ordering: P0 = checked-in online in active slot, P1 = rest; then FIFO
-            var next = await eligible
-                .OrderBy(q =>
-                    q.EntryType == QueueEntryType.OnlineBooked && q.CheckedIn
-                    && q.AssignedSlotStart.HasValue && q.AssignedSlotStart <= nowUtc
-                    && q.AssignedSlotEnd.HasValue && q.AssignedSlotEnd > nowUtc
-                        ? 0 : 1)
-                .ThenBy(q => q.EnqueueSequence)
-                .FirstOrDefaultAsync(ct);
-
+            var next = QueueCallNextSelector.SelectLongestWaitQueueHead(eligible, nowUtc);
             if (next is null)
             {
                 await tx.RollbackAsync(ct);
                 return null;
             }
 
-            // Claim it
-            next.State = QueueEntryState.Called;
-            next.CalledAt = nowUtc;
-            next.CounterId = counter.Id;
+            // Re-load tracked entity for update
+            var tracked = await db.QueueEntries
+                .Include(q => q.Booking)
+                .FirstAsync(q => q.Id == next.Id, ct);
+            if (tracked.State != QueueEntryState.Waiting)
+            {
+                await tx.RollbackAsync(ct);
+                return null;
+            }
+
+            tracked.State = QueueEntryState.Called;
+            tracked.CalledAt = nowUtc;
+            tracked.CounterId = counter.Id;
             await db.SaveChangesAsync(ct);
             await tx.CommitAsync(ct);
-
-            return next;
+            return tracked;
         }
         catch
         {
@@ -929,14 +840,132 @@ public sealed class QmsQueueService(
             .Include(x => x.Branch)
             .Include(x => x.AllowedServices)
             .ThenInclude(a => a.ServiceType)
+            .ThenInclude(s => s.Queue)
             .FirstOrDefaultAsync(x => x.StaffId == staffId, cancellationToken)
             ?? throw new InvalidOperationException("No counter assigned to this staff user.");
 
-        var lane = c.AllowedServices.Count == 0
-            ? "No lanes assigned"
-            : string.Join(", ", c.AllowedServices.Select(a => a.ServiceType.Name));
+        // Work profile = AllowedServices → each service's queue (bank-style listening)
         var ids = c.AllowedServices.Select(a => a.ServiceTypeId).ToList();
-        return new MyCounterDto(c.Number, c.Branch.Name, lane, c.Mode.ToString(), c.BranchId, ids);
+        var queueLabels = c.AllowedServices
+            .Select(a => a.ServiceType)
+            .Where(s => s.Queue != null)
+            .Select(s => $"{s.Queue!.TicketPrefix} · {s.Queue.Name}")
+            .Distinct()
+            .OrderBy(x => x)
+            .ToList();
+        if (queueLabels.Count == 0 && c.AllowedServices.Count > 0)
+        {
+            // Queue nav may be null if not included — fall back after load
+            var qids = c.AllowedServices.Select(a => a.ServiceType.QueueId).Where(x => x != null).Select(x => x!.Value).Distinct().ToList();
+            if (qids.Count > 0)
+            {
+                var qs = await db.BranchQueues.AsNoTracking().Where(q => qids.Contains(q.Id)).ToListAsync(cancellationToken);
+                queueLabels = qs.OrderBy(q => q.TicketPrefix).Select(q => $"{q.TicketPrefix} · {q.Name}").ToList();
+            }
+        }
+        var lane = queueLabels.Count > 0
+            ? string.Join(", ", queueLabels)
+            : c.AllowedServices.Count == 0
+                ? "No queues assigned"
+                : string.Join(", ", c.AllowedServices.Select(a => a.ServiceType.Name));
+        return new MyCounterDto(c.Number, c.Branch.Name, lane, c.Mode.ToString(), c.BranchId, ids, queueLabels);
+    }
+
+
+    /// <summary>
+    /// Shared display ETA: ML (sidecar) → CounterSimulation → Formula.
+    /// Same path for customer Track and Staff/Manager queue lists.
+    /// </summary>
+    private async Task<double?> ResolveDisplayEtaMinutesAsync(
+        QueueEntry entry,
+        Branch branch,
+        ServiceType service,
+        int earlyCallMinutes,
+        DateTimeOffset nowUtc,
+        CancellationToken ct,
+        bool recordPredictions = false)
+    {
+        double simEta = double.PositiveInfinity;
+        try
+        {
+            simEta = await simulationEstimator.EstimateAsync(entry, earlyCallMinutes, nowUtc, ct);
+        }
+        catch
+        {
+            /* simulation best-effort */
+        }
+
+        double estMin;
+        PredictionSource estSource;
+        double formulaMin = 0;
+        try
+        {
+            var features = await featureBuilder.BuildAsync(entry, branch, service, nowUtc, ct);
+            (estMin, estSource) = waitTimeEstimator.Estimate(features);
+            // Raw formula baseline for sanity clamp (IWaitTimeEstimator may be ML wrapper)
+            (formulaMin, _) = new FormulaWaitTimeEstimator().Estimate(features);
+
+            if (recordPredictions)
+            {
+                db.WaitPredictions.Add(new WaitPrediction
+                {
+                    Id = Guid.NewGuid(),
+                    QueueEntryId = entry.Id,
+                    PredictedAt = nowUtc,
+                    PredictedWaitMinutes = estMin,
+                    PredictionSource = (int)estSource,
+                    FeatureSchemaVersion = "v4-ml-clamp",
+                });
+                db.WaitPredictions.Add(new WaitPrediction
+                {
+                    Id = Guid.NewGuid(),
+                    QueueEntryId = entry.Id,
+                    PredictedAt = nowUtc,
+                    PredictedWaitMinutes = double.IsInfinity(simEta) ? -1 : simEta,
+                    PredictionSource = (int)PredictionSource.CounterSimulation,
+                    FeatureSchemaVersion = "v4-ml-clamp",
+                });
+                await db.SaveChangesAsync(ct);
+            }
+        }
+        catch
+        {
+            if (double.IsInfinity(simEta))
+                return null;
+            return Math.Round(simEta, 1);
+        }
+
+        double eta;
+        if (estSource == PredictionSource.Ml)
+            eta = ApplyMlSanityClamp(estMin, formulaMin, simEta);
+        else if (!double.IsInfinity(simEta))
+            eta = simEta;
+        else
+            eta = estMin;
+
+        if (double.IsInfinity(eta) || eta < 0)
+            return null;
+        return Math.Round(eta, 1);
+    }
+
+    /// <summary>
+    /// Keep ML display ETA inside a plausible band vs formula + Call-Next simulation.
+    /// Floor: 50% of formula. Ceiling: 150% of simulation (or 2.5× formula if sim unavailable).
+    /// WaitPredictions still store the raw ML score for later evaluation.
+    /// </summary>
+    private static double ApplyMlSanityClamp(double mlMinutes, double formulaMinutes, double simMinutes)
+    {
+        if (double.IsNaN(mlMinutes) || double.IsInfinity(mlMinutes) || mlMinutes < 0)
+            return Math.Max(0, formulaMinutes);
+
+        var lo = Math.Max(0, formulaMinutes * 0.5);
+        double hi;
+        if (!double.IsInfinity(simMinutes) && !double.IsNaN(simMinutes) && simMinutes >= 0)
+            hi = Math.Max(lo, simMinutes * 1.5);
+        else
+            hi = Math.Max(lo, Math.Max(formulaMinutes * 2.5, mlMinutes));
+
+        return Math.Clamp(mlMinutes, lo, hi);
     }
 
     public async Task<IReadOnlyList<WaitingTicketDto>> ListWaitingTicketsAsync(
@@ -962,27 +991,50 @@ public sealed class QmsQueueService(
 
         var allWaiting = await db.QueueEntries.AsNoTracking()
             .Where(q => q.BranchId == branchId && q.ServiceTypeId == serviceTypeId && q.State == QueueEntryState.Waiting)
-            .OrderBy(q => q.AssignedSlotStart)
-            .ThenBy(q => q.EnqueueSequence)
             .ToListAsync(cancellationToken);
 
         // Only show today's entries to staff
+        var nowUtc = DateTimeOffset.UtcNow;
+        var earlyMin = branch.OnlineEarlyCallMinutes;
+
         var list = allWaiting
             .Where(q => q.AssignedSlotStart.HasValue && q.AssignedSlotStart.Value.ToOffset(zone).Date == todayDate)
             .ToList();
 
-        var nowUtc = DateTimeOffset.UtcNow;
-        var earlyMin = branch.OnlineEarlyCallMinutes;
+        // Sort by Call Next order: eligible first (P0 → P1), then not-yet-eligible, then FIFO
+        bool IsEligible(QueueEntry q) =>
+            (q.EntryType == QueueEntryType.WalkIn && q.CheckedIn)
+            || (q.EntryType == QueueEntryType.OnlineBooked
+                && q.CheckedIn
+                && q.AssignedSlotStart.HasValue
+                && q.AssignedSlotStart.Value.AddMinutes(-earlyMin) <= nowUtc);
+
+        list.Sort((a, b) =>
+        {
+            var aElig = IsEligible(a) ? 0 : 1;
+            var bElig = IsEligible(b) ? 0 : 1;
+            if (aElig != bElig) return aElig.CompareTo(bElig);
+
+            // Within eligible: P0 before P1
+            if (aElig == 0)
+            {
+                var pa = GetCallNextPriority(a, nowUtc);
+                var pb = GetCallNextPriority(b, nowUtc);
+                if (pa != pb) return pa.CompareTo(pb);
+            }
+
+            // Same priority: FIFO by EnqueueSequence
+            return a.EnqueueSequence.CompareTo(b.EnqueueSequence);
+        });
 
         var result = new List<WaitingTicketDto>();
         var position = 1;
         foreach (var q in list)
         {
-            double? eta = null;
+            double? eta;
             try
             {
-                var simEta = await simulationEstimator.EstimateAsync(q, earlyMin, nowUtc, cancellationToken);
-                eta = double.IsInfinity(simEta) ? null : Math.Round(simEta, 1);
+                eta = await ResolveDisplayEtaMinutesAsync(q, branch, svc, earlyMin, nowUtc, cancellationToken);
             }
             catch
             {
@@ -1004,8 +1056,8 @@ public sealed class QmsQueueService(
     }
 
     /// <summary>
-    /// Cross-lane queue: all waiting tickets across a counter's allowed services,
-    /// sorted by Call Next priority (P0 checked-in online in active slot, then FIFO).
+    /// Cross-lane queue: waiting tickets across this counter's allowed services,
+    /// ordered like successive Call Next picks (档 B longest-wait queue heads).
     /// </summary>
     public async Task<IReadOnlyList<WaitingTicketDto>> ListCrossLaneWaitingAsync(
         Guid staffId,
@@ -1043,26 +1095,30 @@ public sealed class QmsQueueService(
             .Where(q => q.AssignedSlotStart!.Value.ToOffset(zone).Date == todayDate)
             .ToList();
 
-        // Sort by Call Next priority then FIFO
-        todayEntries.Sort((a, b) =>
-        {
-            var pa = GetCallNextPriority(a, nowUtc);
-            var pb = GetCallNextPriority(b, nowUtc);
-            if (pa != pb) return pa.CompareTo(pb);
-            return a.EnqueueSequence.CompareTo(b.EnqueueSequence);
-        });
+        bool IsEligible(QueueEntry q) =>
+            (q.EntryType == QueueEntryType.WalkIn && q.CheckedIn)
+            || (q.EntryType == QueueEntryType.OnlineBooked
+                && q.CheckedIn
+                && q.AssignedSlotStart.HasValue
+                && q.AssignedSlotStart.Value.AddMinutes(-earlyMin) <= nowUtc);
+
+        // Eligible first in Call Next drain order; not-yet-eligible at the end
+        var eligible = todayEntries.Where(IsEligible).ToList();
+        var ordered = QueueCallNextSelector.OrderByCallNextDrain(eligible, nowUtc);
+        foreach (var leftover in todayEntries.Where(q => !IsEligible(q)).OrderBy(q => q.EnqueueSequence))
+            ordered.Add(leftover);
 
         var result = new List<WaitingTicketDto>();
-        for (int i = 0; i < todayEntries.Count; i++)
+        for (int i = 0; i < ordered.Count; i++)
         {
-            var q = todayEntries[i];
+            var q = ordered[i];
             var svcName = services.TryGetValue(q.ServiceTypeId, out var svc) ? svc.Name : "Unknown";
 
             double? eta = null;
             try
             {
-                var simEta = await simulationEstimator.EstimateAsync(q, earlyMin, nowUtc, ct);
-                eta = double.IsInfinity(simEta) ? null : Math.Round(simEta, 1);
+                if (services.TryGetValue(q.ServiceTypeId, out var svcForEta))
+                    eta = await ResolveDisplayEtaMinutesAsync(q, branch, svcForEta, earlyMin, nowUtc, ct);
             }
             catch { /* best-effort */ }
 
@@ -1086,6 +1142,7 @@ public sealed class QmsQueueService(
             .Include(c => c.AssignedStaff)
             .Include(c => c.AllowedServices)
             .ThenInclude(a => a.ServiceType)
+            .ThenInclude(s => s.Queue)
             .Include(c => c.CurrentServiceType)
             .Where(c => c.BranchId == branchId)
             .OrderBy(c => c.Number)
@@ -1095,9 +1152,19 @@ public sealed class QmsQueueService(
             .Select(c =>
             {
                 var ids = c.AllowedServices.Select(a => a.ServiceTypeId).ToList();
-                var display = c.AllowedServices.Count == 0
-                    ? "— (assign lanes)"
-                    : string.Join(", ", c.AllowedServices.Select(a => a.ServiceType.Name));
+                // Work profile: listened queues (via AllowedServices → ServiceType.Queue)
+                var queueLabels = c.AllowedServices
+                    .Select(a => a.ServiceType.Queue)
+                    .Where(q => q != null)
+                    .Select(q => $"{q!.TicketPrefix} · {q.Name}")
+                    .Distinct()
+                    .OrderBy(x => x)
+                    .ToList();
+                var display = queueLabels.Count > 0
+                    ? string.Join(", ", queueLabels)
+                    : c.AllowedServices.Count == 0
+                        ? "— (assign queues)"
+                        : string.Join(", ", c.AllowedServices.Select(a => a.ServiceType.Name));
                 return new ManagerCounterRowDto(
                     c.Id,
                     c.Number,
@@ -1106,7 +1173,8 @@ public sealed class QmsQueueService(
                     display,
                     ids,
                     c.CurrentServiceTypeId,
-                    c.CurrentServiceType?.Name);
+                    c.CurrentServiceType?.Name,
+                    queueLabels);
             })
             .ToList();
     }
@@ -1310,8 +1378,9 @@ public sealed class QmsQueueService(
 
         // Apply Call Next eligibility filter
         var eligible = waiting.Where(q =>
-            q.CheckedIn
+            (q.EntryType == QueueEntryType.WalkIn && q.CheckedIn)
             || (q.EntryType == QueueEntryType.OnlineBooked
+                && q.CheckedIn
                 && q.AssignedSlotStart.HasValue
                 && q.AssignedSlotStart.Value.AddMinutes(-earlyMinutes) <= nowUtc))
             .ToList();
@@ -1329,9 +1398,7 @@ public sealed class QmsQueueService(
             double? eta = null;
             try
             {
-                eta = await simulationEstimator.EstimateAsync(q, earlyMinutes, nowUtc, ct);
-                if (double.IsInfinity(eta.Value)) eta = null;
-                else eta = Math.Round(eta.Value, 1);
+                eta = await ResolveDisplayEtaMinutesAsync(q, branch, q.ServiceType, earlyMinutes, nowUtc, ct);
             }
             catch { /* swallow — ETA is best-effort */ }
 
@@ -1610,6 +1677,7 @@ public sealed class QmsQueueService(
             {
                 q.EntryType,
                 q.ServiceTypeId,
+                q.QueueId,
                 q.CalledAt,
                 q.CreatedAt,
                 q.AssignedSlotStart,
@@ -1730,6 +1798,44 @@ public sealed class QmsQueueService(
                 svc.Id, svc.Name, laneCompleted.Count, avgCall, maxCall, avgSvcMin, laneSla));
         }
 
+        // 档 B: per-queue performance (letter series)
+        var branchQueues = await db.BranchQueues.AsNoTracking()
+            .Where(q => q.BranchId == branchId)
+            .OrderBy(q => q.TicketPrefix)
+            .ToListAsync(cancellationToken);
+        var openNow = await db.QueueEntries.AsNoTracking()
+            .Where(e => e.BranchId == branchId
+                        && (e.State == QueueEntryState.Waiting || e.State == QueueEntryState.Serving))
+            .Select(e => new { e.QueueId, e.State, e.QueueEligibleAt, e.CreatedAt })
+            .ToListAsync(cancellationToken);
+        var nowUtc = DateTimeOffset.UtcNow;
+        var queueRows = new List<QueuePerformanceDto>();
+        var serviceQueueMap = services
+            .Where(s => s.QueueId != null)
+            .ToDictionary(s => s.Id, s => s.QueueId!.Value);
+        foreach (var q in branchQueues)
+        {
+            var qCompleted = completed.Where(c =>
+                c.QueueId == q.Id
+                || (c.QueueId == null && serviceQueueMap.TryGetValue(c.ServiceTypeId, out var mapped) && mapped == q.Id)
+            ).ToList();
+            var toCall = qCompleted
+                .Select(c => TicketToCallMetrics.MinutesToCall(
+                    c.CalledAt!.Value, c.EntryType, c.CreatedAt, c.CheckedInAt, c.AssignedSlotStart))
+                .ToList();
+            var avgCall = toCall.Count > 0 ? Math.Round(toCall.Average(), 1) : (double?)null;
+            var waiting = openNow.Where(e => e.QueueId == q.Id && e.State == QueueEntryState.Waiting).ToList();
+            var serving = openNow.Count(e => e.QueueId == q.Id && e.State == QueueEntryState.Serving);
+            var breaches = waiting.Count(e =>
+            {
+                var start = e.QueueEligibleAt ?? e.CreatedAt;
+                return (nowUtc - start).TotalMinutes > q.ServiceLevelMinutes;
+            });
+            queueRows.Add(new QueuePerformanceDto(
+                q.Id, q.Name, q.TicketPrefix, waiting.Count, serving, qCompleted.Count,
+                avgCall, breaches, q.ServiceLevelMinutes));
+        }
+
         var missedRows = await db.QueueEntries.AsNoTracking()
             .Where(q => q.BranchId == branchId
                         && q.State == QueueEntryState.Missed
@@ -1792,7 +1898,8 @@ public sealed class QmsQueueService(
             ticketToCallDistribution,
             laneRows,
             counterUtilization,
-            noShowsByHour);
+            noShowsByHour,
+            queueRows);
     }
 
     public async Task<ServiceLaneSummaryDto> GetServiceLaneSummaryAsync(
@@ -1854,23 +1961,306 @@ public sealed class QmsQueueService(
             cancellationToken);
     }
 
-    /// <summary>Allocate a sequence number within a slot. Lower = earlier in queue.</summary>
-    private async Task<long> AllocateSlotSequenceAsync(
-        Guid branchId, DateTimeOffset slotStart, CancellationToken cancellationToken)
+    /// <summary>Allocate next daily sequence within a service queue (档 B). Lower = earlier in that queue.</summary>
+    private async Task<long> AllocateQueueSequenceAsync(
+        Guid queueId, Guid branchId, TimeSpan branchZone, CancellationToken cancellationToken)
     {
-        const long bucket = 10_000L;
-        var floor = slotStart.ToUnixTimeSeconds() * bucket;
-        var cap = floor + bucket - 1;
+        var nowBranch = DateTimeOffset.UtcNow.ToOffset(branchZone);
+        var dayStart = new DateTimeOffset(nowBranch.Year, nowBranch.Month, nowBranch.Day, 0, 0, 0, branchZone);
+        var dayEnd = dayStart.AddDays(1);
 
-        var maxInBucket = await db.QueueEntries
-            .Where(q => q.BranchId == branchId)
-            .Where(q => q.EnqueueSequence >= floor && q.EnqueueSequence <= cap)
+        var maxSeq = await db.QueueEntries
+            .Where(q => q.QueueId == queueId
+                        && q.BranchId == branchId
+                        && q.CreatedAt >= dayStart
+                        && q.CreatedAt < dayEnd)
             .MaxAsync(q => (long?)q.EnqueueSequence, cancellationToken);
 
-        var next = maxInBucket is null ? floor : maxInBucket.Value + 1;
-        if (next > cap)
-            throw new InvalidOperationException("Too many customers in this time bucket; try again.");
-        return next;
+        return (maxSeq ?? 0L) + 1L;
+    }
+
+
+    // ─────────────────────────────────────────────────────────────────────
+    // 档 B: list queues + transfer between queues
+    // ─────────────────────────────────────────────────────────────────────
+
+    public async Task<IReadOnlyList<BranchQueueDto>> ListBranchQueuesAsync(
+        Guid branchId, CancellationToken cancellationToken = default)
+    {
+        var queues = await db.BranchQueues.AsNoTracking()
+            .Where(q => q.BranchId == branchId)
+            .OrderBy(q => q.TicketPrefix)
+            .ToListAsync(cancellationToken);
+
+        var services = await db.ServiceTypes.AsNoTracking()
+            .Where(s => s.BranchId == branchId)
+            .ToListAsync(cancellationToken);
+
+        var openTickets = await db.QueueEntries.AsNoTracking()
+            .Where(e => e.BranchId == branchId
+                        && (e.State == QueueEntryState.Waiting || e.State == QueueEntryState.Serving))
+            .Select(e => new { e.QueueId, e.State, e.QueueEligibleAt, e.CreatedAt })
+            .ToListAsync(cancellationToken);
+
+        var nowUtc = DateTimeOffset.UtcNow;
+
+        return queues.Select(q =>
+        {
+            var svcForQ = services.Where(s => s.QueueId == q.Id).ToList();
+            var tickets = openTickets.Where(e => e.QueueId == q.Id).ToList();
+            var waiting = tickets.Where(e => e.State == QueueEntryState.Waiting).ToList();
+            var serving = tickets.Count(e => e.State == QueueEntryState.Serving);
+            double? longest = null;
+            var breaches = 0;
+            foreach (var e in waiting)
+            {
+                var start = e.QueueEligibleAt ?? e.CreatedAt;
+                var mins = (nowUtc - start).TotalMinutes;
+                if (longest is null || mins > longest) longest = mins;
+                if (mins > q.ServiceLevelMinutes) breaches++;
+            }
+            return new BranchQueueDto(
+                q.Id, q.Name, q.TicketPrefix, q.ServiceLevelMinutes, q.IsActive,
+                waiting.Count, serving,
+                longest is null ? null : Math.Round(longest.Value, 1),
+                breaches,
+                svcForQ.Select(s => s.Name).ToList(),
+                svcForQ.Select(s => s.Id).ToList());
+        }).ToList();
+    }
+
+    public async Task<BranchQueueDto> CreateBranchQueueAsync(
+        Guid branchId, string name, string ticketPrefix, int serviceLevelMinutes,
+        CancellationToken cancellationToken = default)
+    {
+        _ = await db.Branches.FirstOrDefaultAsync(b => b.Id == branchId, cancellationToken)
+            ?? throw new InvalidOperationException("Branch not found.");
+
+        var prefix = NormalizePrefix(ticketPrefix);
+        await EnsurePrefixAvailableAsync(branchId, prefix, excludeQueueId: null, cancellationToken);
+
+        if (serviceLevelMinutes < 1 || serviceLevelMinutes > 240)
+            throw new InvalidOperationException("SLA must be between 1 and 240 minutes.");
+
+        var queue = new BranchQueue
+        {
+            Id = Guid.NewGuid(),
+            BranchId = branchId,
+            Name = string.IsNullOrWhiteSpace(name) ? $"Queue {prefix}" : name.Trim(),
+            TicketPrefix = prefix,
+            ServiceLevelMinutes = serviceLevelMinutes,
+            IsActive = true,
+            CreatedAt = DateTimeOffset.UtcNow,
+        };
+        db.BranchQueues.Add(queue);
+        await db.SaveChangesAsync(cancellationToken);
+        return (await ListBranchQueuesAsync(branchId, cancellationToken)).First(q => q.Id == queue.Id);
+    }
+
+    public async Task<BranchQueueDto> UpdateBranchQueueAsync(
+        Guid branchId, Guid queueId, string? name, string? ticketPrefix, int? serviceLevelMinutes, bool? isActive,
+        CancellationToken cancellationToken = default)
+    {
+        var queue = await db.BranchQueues.FirstOrDefaultAsync(q => q.Id == queueId && q.BranchId == branchId, cancellationToken)
+                    ?? throw new InvalidOperationException("Queue not found.");
+
+        if (ticketPrefix is not null)
+        {
+            var prefix = NormalizePrefix(ticketPrefix);
+            await EnsurePrefixAvailableAsync(branchId, prefix, queueId, cancellationToken);
+            queue.TicketPrefix = prefix;
+        }
+
+        if (name is not null)
+        {
+            var n = name.Trim();
+            if (n.Length == 0) throw new InvalidOperationException("Queue name cannot be empty.");
+            queue.Name = n;
+        }
+
+        if (serviceLevelMinutes is not null)
+        {
+            if (serviceLevelMinutes < 1 || serviceLevelMinutes > 240)
+                throw new InvalidOperationException("SLA must be between 1 and 240 minutes.");
+            queue.ServiceLevelMinutes = serviceLevelMinutes.Value;
+        }
+
+        if (isActive is not null)
+            queue.IsActive = isActive.Value;
+
+        await db.SaveChangesAsync(cancellationToken);
+        return (await ListBranchQueuesAsync(branchId, cancellationToken)).First(q => q.Id == queue.Id);
+    }
+
+    /// <summary>
+    /// Assign services to this queue (moves them off any previous queue). Waiting tickets follow.
+    /// </summary>
+    public async Task<BranchQueueDto> SetQueueServicesAsync(
+        Guid branchId, Guid queueId, IReadOnlyList<Guid> serviceTypeIds,
+        CancellationToken cancellationToken = default)
+    {
+        var queue = await db.BranchQueues.FirstOrDefaultAsync(q => q.Id == queueId && q.BranchId == branchId, cancellationToken)
+                    ?? throw new InvalidOperationException("Queue not found.");
+
+        var services = await db.ServiceTypes.Where(s => s.BranchId == branchId).ToListAsync(cancellationToken);
+        var idSet = serviceTypeIds.Distinct().ToHashSet();
+        foreach (var sid in idSet)
+        {
+            if (services.All(s => s.Id != sid))
+                throw new InvalidOperationException("One or more services are not at this branch.");
+        }
+
+        // Move listed services onto this queue (they leave any previous queue).
+        // Services omitted keep their current queue — never orphan a service (QueueId null breaks ticketing).
+        foreach (var s in services.Where(s => idSet.Contains(s.Id)))
+            s.QueueId = queueId;
+
+        // Keep open tickets aligned with their service's queue
+        var open = await db.QueueEntries
+            .Where(e => e.BranchId == branchId
+                        && (e.State == QueueEntryState.Waiting
+                            || e.State == QueueEntryState.Called
+                            || e.State == QueueEntryState.Serving))
+            .ToListAsync(cancellationToken);
+        var svcMap = services.ToDictionary(s => s.Id);
+        foreach (var e in open)
+        {
+            if (svcMap.TryGetValue(e.ServiceTypeId, out var svc))
+                e.QueueId = svc.QueueId;
+        }
+
+        await db.SaveChangesAsync(cancellationToken);
+        return (await ListBranchQueuesAsync(branchId, cancellationToken)).First(q => q.Id == queue.Id);
+    }
+
+    private static string NormalizePrefix(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+            throw new InvalidOperationException("Ticket prefix is required (1–3 letters).");
+        var letters = new string(raw.Trim().ToUpperInvariant().Where(c => c is >= 'A' and <= 'Z').ToArray());
+        if (letters.Length is < 1 or > 3)
+            throw new InvalidOperationException("Ticket prefix must be 1–3 letters (A–Z).");
+        return letters;
+    }
+
+    private async Task EnsurePrefixAvailableAsync(
+        Guid branchId, string prefix, Guid? excludeQueueId, CancellationToken cancellationToken)
+    {
+        var clash = await db.BranchQueues.AsNoTracking().AnyAsync(
+            q => q.BranchId == branchId
+                 && q.TicketPrefix == prefix
+                 && (excludeQueueId == null || q.Id != excludeQueueId),
+            cancellationToken);
+        if (clash)
+            throw new InvalidOperationException($"Prefix «{prefix}» is already used by another queue at this branch.");
+    }
+
+    /// <summary>
+    /// Move a waiting/called ticket into another service's queue (new prefix + daily seq).
+    /// </summary>
+    public async Task<TransferTicketDto> TransferTicketAsync(
+        Guid staffId,
+        string ticketNumber,
+        Guid targetServiceTypeId,
+        CancellationToken cancellationToken = default)
+    {
+        var counter = await db.Counters
+            .Include(c => c.Branch)
+            .Include(c => c.AllowedServices)
+            .FirstOrDefaultAsync(c => c.StaffId == staffId, cancellationToken)
+            ?? throw new InvalidOperationException("No counter assigned to this staff user.");
+
+        var entry = await db.QueueEntries
+            .Include(q => q.Booking)
+            .FirstOrDefaultAsync(
+                q => q.BranchId == counter.BranchId && q.TicketNumber == ticketNumber
+                     && (q.State == QueueEntryState.Waiting || q.State == QueueEntryState.Called),
+                cancellationToken)
+            ?? throw new InvalidOperationException("Ticket not found or not transferable (must be Waiting/Called).");
+
+        if (entry.State == QueueEntryState.Serving)
+            throw new InvalidOperationException("Finish or miss the ticket before transferring.");
+
+        var target = await db.ServiceTypes.FirstOrDefaultAsync(
+                         s => s.Id == targetServiceTypeId && s.BranchId == counter.BranchId, cancellationToken)
+                     ?? throw new InvalidOperationException("Target service not found at this branch.");
+
+        if (target.Id == entry.ServiceTypeId)
+            throw new InvalidOperationException("Ticket is already in that service queue.");
+
+        if (target.QueueId is null)
+            throw new InvalidOperationException($"Target service «{target.Name}» has no queue configured.");
+
+        var oldSeq = entry.EnqueueSequence;
+        var oldTicket = entry.TicketNumber;
+        var oldSlotStart = entry.AssignedSlotStart;
+        var oldSlotEnd = entry.AssignedSlotEnd;
+
+        var (queue, seq, newTicket) = await IssueTicketAsync(counter.Branch, target, cancellationToken);
+
+        entry.ServiceTypeId = target.Id;
+        entry.QueueId = queue.Id;
+        entry.EnqueueSequence = seq;
+        entry.TicketNumber = newTicket;
+        entry.State = QueueEntryState.Waiting;
+        entry.CalledAt = null;
+        entry.CounterId = null;
+        entry.QueueEligibleAt = DateTimeOffset.UtcNow;
+
+        if (entry.Booking is not null)
+            entry.Booking.ServiceTypeId = target.Id;
+
+        db.QueueMovements.Add(new QueueMovement
+        {
+            Id = Guid.NewGuid(),
+            QueueEntryId = entry.Id,
+            FromSlotStart = oldSlotStart,
+            FromSlotEnd = oldSlotEnd,
+            ToSlotStart = entry.AssignedSlotStart,
+            ToSlotEnd = entry.AssignedSlotEnd,
+            PreviousEnqueueSequence = oldSeq,
+            NewEnqueueSequence = seq,
+            MovedAt = DateTimeOffset.UtcNow,
+            Reason = QueueMovementReason.QueueTransfer,
+        });
+
+        await db.SaveChangesAsync(cancellationToken);
+
+        await hubContext.Clients.Group(QueueHub.BranchGroup(counter.BranchId))
+            .SendAsync("QueueUpdated", counter.BranchId, cancellationToken);
+
+        if (entry.Booking?.CustomerId is Guid customerId)
+        {
+            await notifications.NotifyAsync(
+                customerId,
+                NotificationKind.Reminder,
+                $"Your ticket moved: {oldTicket} → {newTicket} ({target.Name}). Please watch the new number.",
+                entry.BookingId,
+                newTicket,
+                counter.BranchId,
+                cancellationToken);
+        }
+
+        return new TransferTicketDto(oldTicket, newTicket, target.Name, queue.TicketPrefix);
+    }
+
+
+    private async Task<(BranchQueue Queue, long Seq, string Ticket)> IssueTicketAsync(
+        Branch branch, ServiceType service, CancellationToken cancellationToken)
+    {
+        if (service.QueueId is null)
+            throw new InvalidOperationException(
+                $"Service «{service.Name}» has no queue. Restart API so ServiceQueueProvisioning can create SERVICE_QUEUES.");
+
+        var queue = await db.BranchQueues.FirstOrDefaultAsync(q => q.Id == service.QueueId, cancellationToken)
+                    ?? throw new InvalidOperationException($"Service «{service.Name}» queue row missing.");
+        if (!queue.IsActive)
+            throw new InvalidOperationException(
+                $"Queue «{queue.TicketPrefix} · {queue.Name}» is inactive — reactivate it in Manager → Queues, or move this service to another queue.");
+        var zone = TimeSpan.FromMinutes(branch.ServiceZoneOffsetMinutes);
+        var seq = await AllocateQueueSequenceAsync(queue.Id, branch.Id, zone, cancellationToken);
+        var ticket = FormatTicket(queue.TicketPrefix, seq);
+        return (queue, seq, ticket);
     }
 
 
@@ -1900,7 +2290,11 @@ public sealed class QmsQueueService(
         return new DateTimeOffset(now.Year, now.Month, now.Day, 0, 0, 0, now.Offset).AddMinutes(alignedMin);
     }
 
-    private static string FormatTicket(int branchCode, long seq) => $"{branchCode}-{seq:0000}";
+    private static string FormatTicket(string prefix, long seq)
+    {
+        var p = string.IsNullOrWhiteSpace(prefix) ? "Q" : prefix.Trim().ToUpperInvariant();
+        return $"{p}{seq:000}";
+    }
 
     private static string FormatIsoOffset(DateTimeOffset value) =>
         value.ToString("yyyy-MM-dd'T'HH:mm:ss.fffzzz", CultureInfo.InvariantCulture);
@@ -2068,13 +2462,15 @@ public sealed record CallNextDto(string? TicketNumber, int? CounterNumber, strin
 
 public sealed record MyCounterDto(
     int CounterNumber, string BranchName, string ServiceLaneName, string Mode,
-    Guid BranchId, IReadOnlyList<Guid> AllowedServiceTypeIds);
+    Guid BranchId, IReadOnlyList<Guid> AllowedServiceTypeIds,
+    IReadOnlyList<string> ListenedQueueLabels);
 
 public sealed record WaitingTicketDto(string TicketNumber, string EntryType, int Position, double? EstimatedWaitMinutes, string? ServiceName = null, bool CheckedIn = false);
 
 public sealed record ManagerCounterRowDto(
     Guid Id, int Number, string Mode, string? AssignedStaffEmail, string AllowedLanesDisplay,
-    IReadOnlyList<Guid> AllowedServiceTypeIds, Guid? CurrentDedicatedServiceTypeId, string? CurrentDedicatedLaneName);
+    IReadOnlyList<Guid> AllowedServiceTypeIds, Guid? CurrentDedicatedServiceTypeId, string? CurrentDedicatedLaneName,
+    IReadOnlyList<string> ListenedQueueLabels);
 
 public sealed record BranchOperationalSettingsDto(
     int SlotDurationMinutes, int ServiceZoneOffsetMinutes,
@@ -2158,6 +2554,17 @@ public sealed record LanePerformanceDto(
     double? AvgServiceMinutes,
     double? TicketToCallSlaPercent);
 
+public sealed record QueuePerformanceDto(
+    Guid QueueId,
+    string Name,
+    string TicketPrefix,
+    int Waiting,
+    int Serving,
+    int ServedToday,
+    double? AvgTicketToCallMinutes,
+    int SlaBreachWaiting,
+    int ServiceLevelMinutes);
+
 public sealed record BranchAnalyticsTodayDto(
     int TicketsToday,
     int CustomersServed,
@@ -2173,4 +2580,24 @@ public sealed record BranchAnalyticsTodayDto(
     IReadOnlyList<WaitBucketDto> TicketToCallDistribution,
     IReadOnlyList<LanePerformanceDto> LanePerformance,
     IReadOnlyList<CounterUtilizationRowDto> CounterUtilization,
-    IReadOnlyList<HourlyCountDto> NoShowsByHour);
+    IReadOnlyList<HourlyCountDto> NoShowsByHour,
+    IReadOnlyList<QueuePerformanceDto> QueuePerformance);
+
+public sealed record BranchQueueDto(
+    Guid Id,
+    string Name,
+    string TicketPrefix,
+    int ServiceLevelMinutes,
+    bool IsActive,
+    int WaitingCount,
+    int ServingCount,
+    double? LongestWaitMinutes,
+    int SlaBreachCount,
+    IReadOnlyList<string> ServiceNames,
+    IReadOnlyList<Guid> ServiceTypeIds);
+
+public sealed record TransferTicketDto(
+    string PreviousTicketNumber,
+    string NewTicketNumber,
+    string TargetServiceName,
+    string TicketPrefix);

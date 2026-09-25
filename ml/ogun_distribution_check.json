@@ -1,0 +1,50 @@
+{
+  "synth_wait": {
+    "n": 30000,
+    "mean": 36.39,
+    "p50": 28.04,
+    "p75": 59.67,
+    "p90": 90.0,
+    "p95": 90.0,
+    "max": 90.0
+  },
+  "anonymous_wait_in_merge": {
+    "n": 40000,
+    "mean": 0.96,
+    "p50": 0.2,
+    "p75": 1.28,
+    "p90": 2.98,
+    "p95": 4.25,
+    "max": 29.17
+  },
+  "merged_wait": {
+    "n": 70000,
+    "mean": 16.15,
+    "p50": 1.55,
+    "p75": 20.85,
+    "p90": 62.77,
+    "p95": 90.0,
+    "max": 90.0
+  },
+  "ogun_X1_wait": {
+    "n": 9974,
+    "mean": 12.98,
+    "p50": 11.64,
+    "p75": 15.15,
+    "p90": 23.96,
+    "p95": 26.31,
+    "max": 29.99
+  },
+  "notes": [
+    "Ogun X1 used only for distribution check \u2014 not trained on.",
+    "Anonymous mapped with TicketPrefix=ServiceCode[0], SlotActive=0, CallNextPriority=1.",
+    "Replace transitional mix with export_wait_training_data.sql / MlTrainingObservation when real tickets exist."
+  ],
+  "row_counts": {
+    "synth": 30000,
+    "anonymous_sampled": 40000,
+    "merged": 70000,
+    "ogun_observations": 9974
+  },
+  "p50_delta_merged_minus_ogun": -10.09
+}

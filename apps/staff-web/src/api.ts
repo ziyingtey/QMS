@@ -116,6 +116,18 @@ export type CounterUtilizationRow = {
   servedToday: number;
   utilizationPercent: number;
 };
+export type QueuePerformance = {
+  queueId: string;
+  name: string;
+  ticketPrefix: string;
+  waiting: number;
+  serving: number;
+  servedToday: number;
+  avgTicketToCallMinutes: number | null;
+  slaBreachWaiting: number;
+  serviceLevelMinutes: number;
+};
+
 export type LanePerformance = {
   serviceTypeId: string;
   serviceName: string;
@@ -142,6 +154,7 @@ export type BranchAnalyticsToday = {
   lanePerformance: LanePerformance[];
   counterUtilization: CounterUtilizationRow[];
   noShowsByHour: HourlyCount[];
+  queuePerformance?: QueuePerformance[];
 };
 
 export type ManagerWaitingTicket = {
@@ -179,6 +192,7 @@ export type MyCounterDto = {
   mode: string;
   branchId: string;
   allowedServiceTypeIds: string[];
+  listenedQueueLabels?: string[];
 };
 
 export type WaitingTicketDto = {
@@ -199,6 +213,7 @@ export type ManagerCounterRowDto = {
   allowedServiceTypeIds: string[];
   currentDedicatedServiceTypeId?: string | null;
   currentDedicatedLaneName?: string | null;
+  listenedQueueLabels?: string[];
 };
 
 export type BranchOperationalSettings = {
@@ -332,6 +347,89 @@ export async function apiMarkMissed(ticketNumber: string): Promise<void> {
     body: JSON.stringify({ ticketNumber }),
   });
   if (!res.ok) throw new Error(await parseError(res));
+}
+
+export type TransferTicketResult = {
+  previousTicketNumber: string;
+  newTicketNumber: string;
+  targetServiceName: string;
+  ticketPrefix: string;
+};
+
+export async function apiTransferTicket(
+  ticketNumber: string,
+  targetServiceTypeId: string,
+): Promise<TransferTicketResult> {
+  const res = await fetch(`${API_BASE}/api/staff/transfer`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(await staffAuthHeaders()) },
+    body: JSON.stringify({ ticketNumber, targetServiceTypeId }),
+  });
+  if (!res.ok) throw new Error(await parseError(res));
+  return res.json() as Promise<TransferTicketResult>;
+}
+
+export type BranchQueueDto = {
+  id: string;
+  name: string;
+  ticketPrefix: string;
+  serviceLevelMinutes: number;
+  isActive: boolean;
+  waitingCount: number;
+  servingCount: number;
+  longestWaitMinutes: number | null;
+  slaBreachCount: number;
+  serviceNames: string[];
+  serviceTypeIds: string[];
+};
+
+export async function apiManagerQueues(branchId: string): Promise<BranchQueueDto[]> {
+  const res = await fetch(`${API_BASE}/api/manager/branches/${branchId}/queues`, {
+    headers: await staffAuthHeaders(),
+  });
+  if (!res.ok) throw new Error(await parseError(res));
+  return res.json() as Promise<BranchQueueDto[]>;
+}
+
+export async function apiManagerCreateQueue(
+  branchId: string,
+  body: { name: string; ticketPrefix: string; serviceLevelMinutes: number },
+): Promise<BranchQueueDto> {
+  const res = await fetch(`${API_BASE}/api/manager/branches/${branchId}/queues`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(await staffAuthHeaders()) },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(await parseError(res));
+  return res.json() as Promise<BranchQueueDto>;
+}
+
+export async function apiManagerUpdateQueue(
+  branchId: string,
+  queueId: string,
+  body: { name?: string; ticketPrefix?: string; serviceLevelMinutes?: number; isActive?: boolean },
+): Promise<BranchQueueDto> {
+  const res = await fetch(`${API_BASE}/api/manager/branches/${branchId}/queues/${queueId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...(await staffAuthHeaders()) },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(await parseError(res));
+  return res.json() as Promise<BranchQueueDto>;
+}
+
+export async function apiManagerSetQueueServices(
+  branchId: string,
+  queueId: string,
+  serviceTypeIds: string[],
+): Promise<BranchQueueDto> {
+  const res = await fetch(`${API_BASE}/api/manager/branches/${branchId}/queues/${queueId}/services`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...(await staffAuthHeaders()) },
+    body: JSON.stringify({ serviceTypeIds }),
+  });
+  if (!res.ok) throw new Error(await parseError(res));
+  return res.json() as Promise<BranchQueueDto>;
 }
 
 export async function apiLiveDashboard(branchId: string): Promise<LiveDashboard> {

@@ -9,6 +9,9 @@ public class QueueEntry
     public Branch Branch { get; set; } = null!;
     public Guid ServiceTypeId { get; set; }
     public ServiceType ServiceType { get; set; } = null!;
+    /// <summary>Queue this ticket belongs to (denormalized from ServiceType for Call Next).</summary>
+    public Guid? QueueId { get; set; }
+    public BranchQueue? Queue { get; set; }
     public string TicketNumber { get; set; } = string.Empty;
     public QueueEntryType EntryType { get; set; }
     public QueueEntryState State { get; set; } = QueueEntryState.Waiting;
@@ -20,7 +23,7 @@ public class QueueEntry
     public DateTimeOffset? ServingEndedAt { get; set; }
     public Guid? CounterId { get; set; }
     public Counter? Counter { get; set; }
-    /// <summary>Ordering within a slot: lower sequence = earlier in queue. Allocated per-slot.</summary>
+    /// <summary>Ordering within the service queue (and day): lower = earlier. Allocated per-queue.</summary>
     public long EnqueueSequence { get; set; }
     /// <summary>The assigned slot start time for this entry (online = booking slot, walk-in = assigned bucket).</summary>
     public DateTimeOffset? AssignedSlotStart { get; set; }

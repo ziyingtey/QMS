@@ -38,7 +38,9 @@ export function ManagerFloorTab({
       <header className="qgo-mgr-toolbar qgo-mgr-toolbar--inset">
         <div>
           <h1 id="mgr-floor-heading">Counters</h1>
-          <p className="qgo-muted">Counter status, teller assignment, and lane configuration.</p>
+          <p className="qgo-muted">
+            Work profile: assign services to listen to their queues (letter tickets). Call Next picks longest-wait across those queues.
+          </p>
         </div>
         <p className="qgo-mgr-panel__meta">
           <strong>{rows.length}</strong> counters
@@ -63,11 +65,13 @@ export function ManagerFloorTab({
             const modeKey = counterModeKey(r.mode);
             const tellerName = staffDisplayName(r, staffPickList);
             const laneLabels =
-              r.allowedServiceTypeIds.length === 0
-                ? []
-                : (branch?.services ?? [])
-                    .filter((s) => r.allowedServiceTypeIds.includes(s.id))
-                    .map((s) => s.name);
+              r.listenedQueueLabels && r.listenedQueueLabels.length > 0
+                ? r.listenedQueueLabels
+                : r.allowedServiceTypeIds.length === 0
+                  ? []
+                  : (branch?.services ?? [])
+                      .filter((s) => r.allowedServiceTypeIds.includes(s.id))
+                      .map((s) => s.name);
 
             return (
               <article
@@ -99,7 +103,7 @@ export function ManagerFloorTab({
 
                 <div className="qgo-floor-card__lanes">
                   {laneLabels.length === 0 ? (
-                    <span className="qgo-floor-card__lane qgo-floor-card__lane--warn">No lanes assigned</span>
+                    <span className="qgo-floor-card__lane qgo-floor-card__lane--warn">No queues assigned</span>
                   ) : (
                     laneLabels.map((name) => (
                       <span key={name} className="qgo-floor-card__lane">
@@ -136,10 +140,13 @@ export function ManagerFloorTab({
                       </select>
                     </label>
                     <fieldset className="qgo-fieldset">
-                      <legend>Allowed lanes</legend>
+                      <legend>Work profile — listen to queues</legend>
                       {r.mode === "Closed" ? (
-                        <p className="qgo-muted">Counter is closed — lane changes apply when you reopen.</p>
+                        <p className="qgo-muted">Counter is closed — changes apply when you reopen.</p>
                       ) : null}
+                      <p className="qgo-muted" style={{ marginBottom: 8 }}>
+                        Each service maps to a letter queue (see Queues tab). Checking a service listens to that queue.
+                      </p>
                       <div className="qgo-lane-picks">
                         {(branch?.services ?? []).map((s) => (
                           <label key={s.id} className="qgo-check">

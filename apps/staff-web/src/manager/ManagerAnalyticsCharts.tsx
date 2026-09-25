@@ -326,3 +326,55 @@ export function CurrentQueueCard({ live, rows }: { live: LiveDashboard | null; r
     </div>
   );
 }
+
+export function QueuePerformanceTable({
+  rows,
+}: {
+  rows: {
+    queueId: string;
+    name: string;
+    ticketPrefix: string;
+    waiting: number;
+    serving: number;
+    servedToday: number;
+    avgTicketToCallMinutes: number | null;
+    slaBreachWaiting: number;
+    serviceLevelMinutes: number;
+  }[];
+}) {
+  if (!rows?.length) {
+    return <p className="qgo-muted" style={{ padding: "8px 16px" }}>No queue data yet — restart API after 档 B provisioning.</p>;
+  }
+  return (
+    <div className="qgo-table-wrap qgo-table-wrap--card">
+      <table className="qgo-table qgo-table--mgr">
+        <thead>
+          <tr>
+            <th>Queue</th>
+            <th>Waiting</th>
+            <th>Serving</th>
+            <th>Served</th>
+            <th>Avg ticket→call</th>
+            <th>SLA</th>
+            <th>Over SLA now</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.queueId}>
+              <td>
+                <strong>{r.ticketPrefix}</strong> · {r.name}
+              </td>
+              <td>{r.waiting}</td>
+              <td>{r.serving}</td>
+              <td>{r.servedToday}</td>
+              <td>{r.avgTicketToCallMinutes == null ? "—" : `${r.avgTicketToCallMinutes}m`}</td>
+              <td>{r.serviceLevelMinutes}m</td>
+              <td>{r.slaBreachWaiting > 0 ? <span className="qgo-mgr-priority">{r.slaBreachWaiting}</span> : "0"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}

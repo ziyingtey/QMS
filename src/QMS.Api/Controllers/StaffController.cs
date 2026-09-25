@@ -97,8 +97,8 @@ public sealed class StaffController(QmsQueueService queue) : ControllerBase
     }
 
     /// <summary>
-    /// Cross-lane queue: all waiting tickets across this counter's allowed services,
-    /// sorted by Call Next priority order.
+    /// Cross-lane queue: waiting tickets across this counter's allowed services,
+    /// ordered like successive Call Next picks (档 B longest-wait queue heads).
     /// </summary>
     [HttpGet("cross-lane-waiting")]
     public async Task<ActionResult<IReadOnlyList<WaitingTicketDto>>> CrossLaneWaiting(CancellationToken cancellationToken)
@@ -113,7 +113,25 @@ public sealed class StaffController(QmsQueueService queue) : ControllerBase
             return BadRequest(new { message = ex.Message });
         }
     }
+
+    /// <summary>档 B: transfer Waiting/Called ticket into another service queue (new letter+number).</summary>
+    [HttpPost("transfer")]
+    public async Task<ActionResult<TransferTicketDto>> Transfer(
+        [FromBody] TransferTicketRequest request, CancellationToken cancellationToken)
+    {
+        var staffId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+        try
+        {
+            return Ok(await queue.TransferTicketAsync(
+                staffId, request.TicketNumber, request.TargetServiceTypeId, cancellationToken));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
 }
 
 public sealed record CallNextRequest(Guid BranchId, Guid ServiceTypeId);
 public sealed record TicketRequest(string TicketNumber);
+public sealed record TransferTicketRequest(string TicketNumber, Guid TargetServiceTypeId);

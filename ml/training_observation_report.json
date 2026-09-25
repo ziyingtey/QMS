@@ -1,0 +1,7 @@
+{
+  "ok": false,
+  "error": "pymssql: (20009, b'DB-Lib error message 20009, severity 9:\\nUnable to connect: TDS server is unavailable or does not exist (localhost)\\nNet-Lib error during Connection refused (61)\\nDB-Lib error message 20009, severity 9:\\nUnable to connect: TDS server is unavailable or does not exist (localhost)\\nNet-Lib error during Connection refused (61)\\n') | pyodbc: ('01000', \"[01000] [unixODBC][Driver Manager]Can't open lib 'ODBC Driver 18 for SQL Server' : file not found (0) (SQLDriverConnect)\")",
+  "hint": "Start local SQL (e.g. QMS docker SQL on localhost,1433), ensure API has run EnsureCreated so ML_TRAINING_DATA exists, then re-run this script.",
+  "connection_server": "localhost,1433",
+  "database": "QMS"
+}

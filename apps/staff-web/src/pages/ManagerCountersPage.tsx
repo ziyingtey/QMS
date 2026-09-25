@@ -19,6 +19,10 @@ import {
   apiManagerSetCounterMode,
   apiManagerSetCounterStaff,
   apiManagerSetDedicatedLane,
+  apiManagerCreateQueue,
+  apiManagerQueues,
+  apiManagerSetQueueServices,
+  apiManagerUpdateQueue,
   apiManagerWaitingQueue,
   getStoredBranchId,
   getStoredEmail,
@@ -37,6 +41,7 @@ import {
   type ManagerAppointmentsToday,
   type ManagerCounterRowDto,
   type ManagerInsights,
+  type BranchQueueDto,
   type ManagerWaitingTicket,
 } from "../api";
 import { AppTopBar } from "../components/AppTopBar";
@@ -50,6 +55,7 @@ import { ManagerAppointmentsTab } from "../manager/ManagerAppointmentsTab";
 import { ManagerDashboardTab } from "../manager/ManagerDashboardTab";
 import { ManagerFloorTab } from "../manager/ManagerFloorTab";
 import { ManagerLiveQueueTab } from "../manager/ManagerLiveQueueTab";
+import { ManagerQueuesTab } from "../manager/ManagerQueuesTab";
 import { ManagerScheduleTab } from "../manager/ManagerScheduleTab";
 import { ManagerSidebar, type ManagerTab } from "../manager/ManagerSidebar";
 import { defaultWeeklyHours } from "../manager/managerUtils";
@@ -78,6 +84,7 @@ export function ManagerCountersPage() {
   const [analyticsSource, setAnalyticsSource] = useState<"api" | "fallback" | null>(null);
   const [staffPickList, setStaffPickList] = useState<AssignableStaffDto[]>([]);
   const [waiting, setWaiting] = useState<ManagerWaitingTicket[]>([]);
+  const [queues, setQueues] = useState<BranchQueueDto[]>([]);
   const [appointments, setAppointments] = useState<ManagerAppointmentsToday | null>(null);
   const [closures, setClosures] = useState<BranchClosure[]>([]);
   const [serviceOnlineSlots, setServiceOnlineSlots] = useState<Record<string, number>>({});
@@ -179,10 +186,66 @@ export function ManagerCountersPage() {
     if (!branchId) return;
     try {
       setWaiting(await apiManagerWaitingQueue(branchId));
+      setQueues(await apiManagerQueues(branchId));
     } catch {
       setWaiting([]);
+      setQueues([]);
     }
   }, [branchId]);
+
+  const onCreateQueue = useCallback(
+    async (input: { name: string; ticketPrefix: string; serviceLevelMinutes: number }) => {
+      if (!branchId) return;
+      setBusy(true);
+      try {
+        await apiManagerCreateQueue(branchId, input);
+        toast(`Queue ${input.ticketPrefix} created`, "success");
+        await loadWaiting();
+      } catch (e) {
+        toast(e instanceof Error ? e.message : String(e), "error");
+      } finally {
+        setBusy(false);
+      }
+    },
+    [branchId, loadWaiting, toast],
+  );
+
+  const onUpdateQueue = useCallback(
+    async (
+      queueId: string,
+      patch: { name?: string; ticketPrefix?: string; serviceLevelMinutes?: number; isActive?: boolean },
+    ) => {
+      if (!branchId) return;
+      setBusy(true);
+      try {
+        await apiManagerUpdateQueue(branchId, queueId, patch);
+        toast("Queue saved", "success");
+        await loadWaiting();
+      } catch (e) {
+        toast(e instanceof Error ? e.message : String(e), "error");
+      } finally {
+        setBusy(false);
+      }
+    },
+    [branchId, loadWaiting, toast],
+  );
+
+  const onSetQueueServices = useCallback(
+    async (queueId: string, serviceTypeIds: string[]) => {
+      if (!branchId) return;
+      setBusy(true);
+      try {
+        await apiManagerSetQueueServices(branchId, queueId, serviceTypeIds);
+        toast("Service assignment saved", "success");
+        await loadWaiting();
+      } catch (e) {
+        toast(e instanceof Error ? e.message : String(e), "error");
+      } finally {
+        setBusy(false);
+      }
+    },
+    [branchId, loadWaiting, toast],
+  );
 
   const loadAppointments = useCallback(async () => {
     if (!branchId) return;
@@ -509,9 +572,21 @@ export function ManagerCountersPage() {
             <ManagerLiveQueueTab
               live={live}
               waiting={waiting}
+              queues={queues}
               rows={rows}
               staffPickList={staffPickList}
               onGoToCounter={goToCounter}
+            />
+          ) : null}
+
+          {managerTab === "queues" ? (
+            <ManagerQueuesTab
+              branch={branch}
+              queues={queues}
+              busy={busy}
+              onCreate={onCreateQueue}
+              onUpdate={onUpdateQueue}
+              onSetServices={onSetQueueServices}
             />
           ) : null}
 

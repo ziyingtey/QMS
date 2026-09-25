@@ -9,4 +9,7 @@ public enum QueueMovementReason
 
     /// <summary>Customer manually rescheduled their booking to a different slot.</summary>
     ManualReschedule = 3,
+
+    /// <summary>Staff transferred ticket to another service queue.</summary>
+    QueueTransfer = 4,
 }

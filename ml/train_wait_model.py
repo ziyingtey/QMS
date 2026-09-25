@@ -89,7 +89,10 @@ WHERE q.State = 3
 
 FEATURE_NUMERIC = [
     "QueueLength",
+    "CrossLaneQueueLength",
+    "PeopleAheadCallNext",
     "ActiveCounters",
+    "ListeningCounters",
     "HourOfDay",
     "DayOfWeek",
     "IsPeakHour",
@@ -97,9 +100,11 @@ FEATURE_NUMERIC = [
     "EnqueueSequence",
     "EntryType",
     "CheckedIn",
+    "SlotActive",
+    "CallNextPriority",
     "BranchCode",
 ]
-FEATURE_CATEGORICAL = ["ServiceCode"]
+FEATURE_CATEGORICAL = ["ServiceCode", "TicketPrefix"]
 TARGET = "WaitingMinutes"
 
 NUMERIC_PIPELINE = Pipeline(
@@ -228,9 +233,21 @@ def main() -> None:
 
     for col in FEATURE_NUMERIC:
         if col not in df.columns:
-            df[col] = 0
+            # Tier-A CSVs lack Tier-B extras — safe defaults
+            if col == "CrossLaneQueueLength":
+                df[col] = df["QueueLength"] if "QueueLength" in df.columns else 0
+            elif col == "PeopleAheadCallNext":
+                df[col] = df["QueueLength"] if "QueueLength" in df.columns else 0
+            elif col == "ListeningCounters":
+                df[col] = df["ActiveCounters"] if "ActiveCounters" in df.columns else 1
+            elif col in ("SlotActive", "CallNextPriority"):
+                df[col] = 0 if col == "SlotActive" else 1
+            else:
+                df[col] = 0
     if "ServiceCode" not in df.columns:
         df["ServiceCode"] = "UNKNOWN"
+    if "TicketPrefix" not in df.columns:
+        df["TicketPrefix"] = df["ServiceCode"].astype(str).str[:1].str.upper()
 
     y = df[TARGET].astype(float)
     baseline_pred = df.apply(formula_baseline_minutes, axis=1)
@@ -289,7 +306,7 @@ def main() -> None:
         "feature_importance_permutation": feature_importance,
         "notes": [
             "ActiveCounters in export SQL is a lane snapshot proxy, not full historical counter state.",
-            "API does not load wait_model.joblib yet — integrate in WaitTimeEstimator for production ETA.",
+            "Tier-B synthetic generator simulates multi-queue longest-wait Call Next; replace with QMS_REAL when available.",
         ],
     }
 

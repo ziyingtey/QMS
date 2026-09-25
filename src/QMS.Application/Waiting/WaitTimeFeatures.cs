@@ -43,6 +43,14 @@ public sealed record WaitTimeFeatures
     // ── Identity ──
     public int BranchCode { get; init; }
     public string ServiceCode { get; init; } = string.Empty;
+    /// <summary>First letter of ticket number (A/B/…); used by Tier-B ML model.</summary>
+    public string TicketPrefix { get; init; } = string.Empty;
+
+    // ── Tier-B ML bridges (optional; estimator derives defaults when null) ──
+    public int? CrossLaneQueueLength { get; init; }
+    public int? PeopleAheadCallNext { get; init; }
+    public int? SlotActive { get; init; }
+    public int? CallNextPriority { get; init; }
 
     /// <summary>Best available average service duration (rolling if available, else default).</summary>
     public double EffectiveAvgServiceMinutes => RollingAvgServiceMinutes ?? DefaultAvgServiceMinutes;

@@ -13,6 +13,7 @@ public sealed class QmsDbContext : DbContext
     public DbSet<Branch> Branches => Set<Branch>();
     public DbSet<BranchOperatingHour> BranchOperatingHours => Set<BranchOperatingHour>();
     public DbSet<ServiceType> ServiceTypes => Set<ServiceType>();
+    public DbSet<BranchQueue> BranchQueues => Set<BranchQueue>();
     public DbSet<Counter> Counters => Set<Counter>();
     public DbSet<CounterAllowedService> CounterAllowedServices => Set<CounterAllowedService>();
     public DbSet<Staff> StaffMembers => Set<Staff>();
@@ -97,6 +98,17 @@ public sealed class QmsDbContext : DbContext
             e.Property(x => x.Code).HasMaxLength(32);
             e.Property(x => x.Name).HasMaxLength(200);
             e.HasOne(x => x.Branch).WithMany(b => b.Services).HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.Queue).WithMany(q => q.Services).HasForeignKey(x => x.QueueId).OnDelete(DeleteBehavior.NoAction);
+        });
+
+        modelBuilder.Entity<BranchQueue>(e =>
+        {
+            e.ToTable("SERVICE_QUEUES");
+            e.HasIndex(x => new { x.BranchId, x.TicketPrefix }).IsUnique();
+            e.Property(x => x.Name).HasMaxLength(200);
+            e.Property(x => x.TicketPrefix).HasMaxLength(8);
+            e.Property(x => x.CreatedAt).HasDefaultValueSql("TODATETIMEOFFSET(SYSUTCDATETIME(), '+00:00')");
+            e.HasOne(x => x.Branch).WithMany(b => b.ServiceQueues).HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<Counter>(e =>
@@ -144,10 +156,14 @@ public sealed class QmsDbContext : DbContext
         {
             e.ToTable("QUEUE_TICKETS");
             e.HasIndex(x => x.BookingId).IsUnique().HasFilter("[BookingId] IS NOT NULL");
-            e.HasIndex(x => new { x.BranchId, x.TicketNumber }).IsUnique();
+            // Daily-reset numbers (A001) may repeat across days; unique only among open tickets
+            e.HasIndex(x => new { x.BranchId, x.TicketNumber })
+                .IsUnique()
+                .HasFilter("[State] IN (0, 1, 2)"); // Waiting, Called, Serving
             e.Property(x => x.TicketNumber).HasMaxLength(32);
             e.HasOne(x => x.Branch).WithMany().HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.NoAction);
             e.HasOne(x => x.ServiceType).WithMany(s => s.QueueEntries).HasForeignKey(x => x.ServiceTypeId).OnDelete(DeleteBehavior.NoAction);
+            e.HasOne(x => x.Queue).WithMany(q => q.QueueEntries).HasForeignKey(x => x.QueueId).OnDelete(DeleteBehavior.NoAction);
             e.HasOne(x => x.Counter).WithMany().HasForeignKey(x => x.CounterId).OnDelete(DeleteBehavior.SetNull);
         });
 

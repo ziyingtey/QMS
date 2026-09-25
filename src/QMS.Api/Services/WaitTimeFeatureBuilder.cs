@@ -41,19 +41,48 @@ public sealed class WaitTimeFeatureBuilder(QmsDbContext db)
             .CountAsync(ct);
         var walkInQueueLength = queueLength - onlineQueueLength;
 
-        // People ahead: same service, earlier slot + sequence, still waiting
-        var todayDate = localTime.Date;
-        var earlierSlotAhead = await waitingQuery
-            .Where(q => q.AssignedSlotStart.HasValue
-                        && q.AssignedSlotStart < entry.AssignedSlotStart)
-            .CountAsync(ct);
+        // People ahead: same eligibility + priority rules as Call Next
+        var earlyCallMinutes = branch.OnlineEarlyCallMinutes;
 
-        var sameSlotAhead = await waitingQuery
-            .Where(q => q.AssignedSlotStart == entry.AssignedSlotStart
-                        && q.EnqueueSequence < entry.EnqueueSequence)
-            .CountAsync(ct);
+        // Only count eligible tickets
+        var eligibleAhead = waitingQuery.Where(q =>
+            (q.EntryType == QueueEntryType.WalkIn && q.CheckedIn)
+            || (q.EntryType == QueueEntryType.OnlineBooked
+                && q.CheckedIn
+                && q.AssignedSlotStart.HasValue
+                && q.AssignedSlotStart.Value.AddMinutes(-earlyCallMinutes) <= snapshotAt));
 
-        var peopleAhead = earlierSlotAhead + sameSlotAhead;
+        // Determine this entry's priority (P0 = online checked-in in active slot, P1 = rest)
+        var myIsP0 = entry.EntryType == QueueEntryType.OnlineBooked && entry.CheckedIn
+                     && entry.AssignedSlotStart.HasValue && entry.AssignedSlotStart <= snapshotAt
+                     && entry.AssignedSlotEnd.HasValue && entry.AssignedSlotEnd > snapshotAt;
+
+        int peopleAhead;
+        if (myIsP0)
+        {
+            // P0: only other P0 with smaller EnqueueSequence are ahead
+            peopleAhead = await eligibleAhead.CountAsync(q =>
+                q.EntryType == QueueEntryType.OnlineBooked && q.CheckedIn
+                && q.AssignedSlotStart.HasValue && q.AssignedSlotStart <= snapshotAt
+                && q.AssignedSlotEnd.HasValue && q.AssignedSlotEnd > snapshotAt
+                && q.EnqueueSequence < entry.EnqueueSequence, ct);
+        }
+        else
+        {
+            // P1: all P0 are ahead, plus P1 with smaller EnqueueSequence
+            var p0Ahead = await eligibleAhead.CountAsync(q =>
+                q.EntryType == QueueEntryType.OnlineBooked && q.CheckedIn
+                && q.AssignedSlotStart.HasValue && q.AssignedSlotStart <= snapshotAt
+                && q.AssignedSlotEnd.HasValue && q.AssignedSlotEnd > snapshotAt, ct);
+
+            var p1Ahead = await eligibleAhead.CountAsync(q =>
+                !(q.EntryType == QueueEntryType.OnlineBooked && q.CheckedIn
+                  && q.AssignedSlotStart.HasValue && q.AssignedSlotStart <= snapshotAt
+                  && q.AssignedSlotEnd.HasValue && q.AssignedSlotEnd > snapshotAt)
+                && q.EnqueueSequence < entry.EnqueueSequence, ct);
+
+            peopleAhead = p0Ahead + p1Ahead;
+        }
 
         // Now serving
         var nowServing = await db.QueueEntries.AsNoTracking()
@@ -129,6 +158,14 @@ public sealed class WaitTimeFeatureBuilder(QmsDbContext db)
             WalkInInSlot = walkInInSlot,
             BranchCode = branch.BranchCode,
             ServiceCode = service.Code,
+            TicketPrefix = string.IsNullOrEmpty(entry.TicketNumber)
+                ? (service.Code.Length > 0 ? service.Code[..1].ToUpperInvariant() : "X")
+                : entry.TicketNumber[..1].ToUpperInvariant(),
+            PeopleAheadCallNext = peopleAhead,
+            CrossLaneQueueLength = onlineQueueLength + walkInQueueLength,
+            SlotActive = entry.AssignedSlotStart.HasValue && entry.AssignedSlotEnd.HasValue
+                         && entry.AssignedSlotStart <= snapshotAt && entry.AssignedSlotEnd > snapshotAt ? 1 : 0,
+            CallNextPriority = myIsP0 ? 0 : 1,
         };
     }
 

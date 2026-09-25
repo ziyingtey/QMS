@@ -182,3 +182,15 @@
     border-right-color: var(--border);
   }
 }
+
+.qgo-transfer-row {
+  display: flex;
+  gap: 0.35rem;
+  margin-top: 0.35rem;
+  align-items: center;
+}
+.qgo-transfer-row select {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.8rem;
+}

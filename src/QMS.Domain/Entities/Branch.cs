@@ -36,6 +36,7 @@ public class Branch
     public ICollection<BranchOperatingHour> OperatingHoursSchedule { get; set; } = new List<BranchOperatingHour>();
     public ICollection<Counter> Counters { get; set; } = new List<Counter>();
     public ICollection<ServiceType> Services { get; set; } = new List<ServiceType>();
+    public ICollection<BranchQueue> ServiceQueues { get; set; } = new List<BranchQueue>();
     public ICollection<AnalyticsSummary> AnalyticsSummaries { get; set; } = new List<AnalyticsSummary>();
     public ICollection<MlTrainingObservation> MlTrainingObservations { get; set; } = new List<MlTrainingObservation>();
     public ICollection<BranchClosure> Closures { get; set; } = new List<BranchClosure>();

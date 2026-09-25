@@ -1,4 +1,4 @@
-import type { LiveDashboard, ManagerCounterRowDto, ManagerWaitingTicket } from "../api";
+import type { BranchQueueDto, LiveDashboard, ManagerCounterRowDto, ManagerWaitingTicket } from "../api";
 import { KpiTile } from "../components/KpiTile";
 import { ManagerCounterBoard } from "./ManagerCounterBoard";
 import type { AssignableStaffDto } from "../api";
@@ -6,6 +6,7 @@ import type { AssignableStaffDto } from "../api";
 type Props = {
   live: LiveDashboard | null;
   waiting: ManagerWaitingTicket[];
+  queues?: BranchQueueDto[];
   rows: ManagerCounterRowDto[];
   staffPickList: AssignableStaffDto[];
   onGoToCounter: (counterId: string) => void;
@@ -31,7 +32,7 @@ function waitingSince(createdAt: string): string {
   return `${Math.floor(diff)}m`;
 }
 
-export function ManagerLiveQueueTab({ live, waiting, rows, staffPickList, onGoToCounter }: Props) {
+export function ManagerLiveQueueTab({ live, waiting, queues = [], rows, staffPickList, onGoToCounter }: Props) {
   const now = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
   return (
@@ -45,6 +46,33 @@ export function ManagerLiveQueueTab({ live, waiting, rows, staffPickList, onGoTo
           <span className="qgo-live-dot" /> Live · {now}
         </span>
       </header>
+
+      {queues.length > 0 ? (
+        <section className="qgo-mgr-panel" style={{ marginBottom: 16 }}>
+          <header className="qgo-mgr-panel__head">
+            <h2>Service queues</h2>
+            <p className="qgo-muted">Letter prefix · waiting count (档 B)</p>
+          </header>
+          <div className="qgo-mgr-kpi-grid qgo-mgr-kpi-grid--compact">
+            {queues.map((q) => (
+              <KpiTile
+                key={q.id}
+                variant="manager"
+                label={`${q.ticketPrefix} · ${q.name}`}
+                value={q.waitingCount}
+                foot={
+                  `SLA ${q.serviceLevelMinutes}m` +
+                  (q.servingCount ? ` · ${q.servingCount} serving` : "") +
+                  (q.longestWaitMinutes != null ? ` · longest ~${q.longestWaitMinutes}m` : "") +
+                  (q.slaBreachCount > 0 ? ` · ${q.slaBreachCount} over` : "") +
+                  (q.serviceNames?.length ? ` · ${q.serviceNames.join(", ")}` : "")
+                }
+                accent={q.slaBreachCount > 0 ? "amber" : "blue"}
+              />
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       {live ? (
         <div className="qgo-mgr-kpi-grid qgo-mgr-kpi-grid--compact">
@@ -60,7 +88,7 @@ export function ManagerLiveQueueTab({ live, waiting, rows, staffPickList, onGoTo
           <header className="qgo-mgr-panel__head qgo-mgr-panel__head--row">
             <div>
               <h2>Waiting queue</h2>
-              <p className="qgo-muted">Click a row for ticket detail · FIFO order</p>
+              <p className="qgo-muted">Per-queue letter tickets · call order is longest-wait across queues</p>
             </div>
             <span className="qgo-mgr-panel__meta">
               <strong>{waiting.length}</strong> tickets

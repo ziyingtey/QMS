@@ -107,7 +107,15 @@ builder.Services.AddHostedService<BranchAfterHoursCounterHostedService>();
 builder.Services.AddHostedService<MlSnapshotHostedService>();
 builder.Services.AddScoped<WaitTimeFeatureBuilder>();
 builder.Services.AddScoped<CounterSimulationEstimator>();
-builder.Services.AddSingleton<IWaitTimeEstimator, FormulaWaitTimeEstimator>();
+builder.Services.Configure<MlWaitOptions>(builder.Configuration.GetSection(MlWaitOptions.SectionName));
+builder.Services.AddHttpClient("MlWait", (sp, client) =>
+{
+    var opts = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<MlWaitOptions>>().Value;
+    client.BaseAddress = new Uri(opts.BaseUrl.TrimEnd('/') + "/");
+    client.Timeout = TimeSpan.FromMilliseconds(Math.Clamp(opts.TimeoutMs, 100, 5000));
+});
+builder.Services.AddSingleton<FormulaWaitTimeEstimator>();
+builder.Services.AddSingleton<IWaitTimeEstimator, MlHttpWaitTimeEstimator>();
 builder.Services.AddInfrastructure(builder.Configuration);
 
 var app = builder.Build();
@@ -115,11 +123,11 @@ var app = builder.Build();
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<QmsDbContext>();
-    await db.Database.EnsureCreatedAsync();
-    await BranchOperatingHoursBackfill.EnsureDefaultsAsync(db);
-
     var hub = scope.ServiceProvider.GetRequiredService<IHubContext<QueueHub>>();
     var startupLogger = scope.ServiceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("Startup");
+    await db.Database.EnsureCreatedAsync();
+    await BranchOperatingHoursBackfill.EnsureDefaultsAsync(db);
+    await ServiceQueueProvisioning.EnsureAsync(db, startupLogger);
     await BranchAfterHoursCounterSweep.RunAsync(db, hub, startupLogger, CancellationToken.None);
 }
 

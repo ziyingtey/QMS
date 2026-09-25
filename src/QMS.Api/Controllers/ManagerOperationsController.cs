@@ -111,6 +111,65 @@ public sealed class ManagerOperationsController(QmsQueueService queue, QmsDbCont
         }
     }
 
+
+    [HttpGet("branches/{branchId:guid}/queues")]
+    public async Task<ActionResult<IReadOnlyList<BranchQueueDto>>> Queues(Guid branchId, CancellationToken cancellationToken)
+    {
+        if (!await OwnsBranch(branchId, cancellationToken)) return Forbid();
+        return Ok(await queue.ListBranchQueuesAsync(branchId, cancellationToken));
+    }
+
+    [HttpPost("branches/{branchId:guid}/queues")]
+    public async Task<ActionResult<BranchQueueDto>> CreateQueue(
+        Guid branchId, [FromBody] CreateBranchQueueRequest body, CancellationToken cancellationToken)
+    {
+        if (!await OwnsBranch(branchId, cancellationToken)) return Forbid();
+        try
+        {
+            var created = await queue.CreateBranchQueueAsync(
+                branchId, body.Name, body.TicketPrefix, body.ServiceLevelMinutes, cancellationToken);
+            return Ok(created);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
+    [HttpPatch("branches/{branchId:guid}/queues/{queueId:guid}")]
+    public async Task<ActionResult<BranchQueueDto>> UpdateQueue(
+        Guid branchId, Guid queueId, [FromBody] UpdateBranchQueueRequest body, CancellationToken cancellationToken)
+    {
+        if (!await OwnsBranch(branchId, cancellationToken)) return Forbid();
+        try
+        {
+            var updated = await queue.UpdateBranchQueueAsync(
+                branchId, queueId, body.Name, body.TicketPrefix, body.ServiceLevelMinutes, body.IsActive, cancellationToken);
+            return Ok(updated);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
+    [HttpPut("branches/{branchId:guid}/queues/{queueId:guid}/services")]
+    public async Task<ActionResult<BranchQueueDto>> SetQueueServices(
+        Guid branchId, Guid queueId, [FromBody] SetQueueServicesRequest body, CancellationToken cancellationToken)
+    {
+        if (!await OwnsBranch(branchId, cancellationToken)) return Forbid();
+        try
+        {
+            var updated = await queue.SetQueueServicesAsync(
+                branchId, queueId, body.ServiceTypeIds ?? Array.Empty<Guid>(), cancellationToken);
+            return Ok(updated);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
     [HttpGet("branches/{branchId:guid}/waiting-queue")]
     public async Task<ActionResult<IReadOnlyList<ManagerWaitingTicketDto>>> WaitingQueue(
         Guid branchId,
@@ -257,3 +316,7 @@ public sealed record ManagerBranchSettingsPatch(
     int? CalledAbsentGraceMinutes,
     int? NextWeekBookingOpensOnDay,
     bool? ClearMaxSlotTotalCapacity);
+
+public sealed record CreateBranchQueueRequest(string Name, string TicketPrefix, int ServiceLevelMinutes);
+public sealed record UpdateBranchQueueRequest(string? Name, string? TicketPrefix, int? ServiceLevelMinutes, bool? IsActive);
+public sealed record SetQueueServicesRequest(IReadOnlyList<Guid>? ServiceTypeIds);

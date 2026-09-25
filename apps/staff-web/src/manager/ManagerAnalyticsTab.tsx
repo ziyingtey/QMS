@@ -4,6 +4,7 @@ import {
   ChannelCompareChart,
   CounterUtilizationChart,
   QueuePerformancePanel,
+  QueuePerformanceTable,
   ServicePerformanceTable,
   TicketStatusStrip,
   TicketVolumeChart,
@@ -68,6 +69,14 @@ export function ManagerAnalyticsTab({ analytics, analyticsSource }: Props) {
                 <p className="qgo-muted">Hybrid channel split</p>
               </header>
               <ChannelCompareChart walkIn={analytics.walkIn} online={analytics.online} noShowsByHour={analytics.noShowsByHour} />
+            </section>
+
+            <section className="qgo-mgr-panel qgo-mgr-panel--span2">
+              <header className="qgo-mgr-panel__head">
+                <h2>Performance by queue</h2>
+                <p className="qgo-muted">Letter series (A/B/…) — wait, SLA breaches, served today</p>
+              </header>
+              <QueuePerformanceTable rows={analytics.queuePerformance ?? []} />
             </section>
 
             <section className="qgo-mgr-panel qgo-mgr-panel--span2">

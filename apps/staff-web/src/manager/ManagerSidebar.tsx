@@ -1,6 +1,6 @@
-import { LayoutDashboard, Monitor, Clock, BarChart3, ListOrdered, CalendarCheck } from "lucide-react";
+import { LayoutDashboard, Monitor, Clock, BarChart3, ListOrdered, CalendarCheck, Layers } from "lucide-react";
 
-export type ManagerTab = "dashboard" | "counters" | "queue" | "appointments" | "capacity" | "analytics";
+export type ManagerTab = "dashboard" | "counters" | "queue" | "queues" | "appointments" | "capacity" | "analytics";
 
 type Props = {
   active: ManagerTab;
@@ -15,6 +15,7 @@ const NAV: { id: ManagerTab; label: string; Icon: typeof LayoutDashboard }[] = [
   { id: "dashboard", label: "Dashboard", Icon: LayoutDashboard },
   { id: "counters", label: "Counters", Icon: Monitor },
   { id: "queue", label: "Live queue", Icon: ListOrdered },
+  { id: "queues", label: "Queues", Icon: Layers },
   { id: "appointments", label: "Appointments", Icon: CalendarCheck },
   { id: "capacity", label: "Schedule & capacity", Icon: Clock },
   { id: "analytics", label: "Analytics", Icon: BarChart3 },

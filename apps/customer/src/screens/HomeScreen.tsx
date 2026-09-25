@@ -21,6 +21,7 @@ import { useMapsDistance } from "../hooks/useMapsDistance";
 import { navigationRef } from "../navigation/navigationRef";
 import { theme } from "../theme";
 import { formatBookingSlotDateTime, defaultBranchOffsetMinutes } from "../utils/dateFormat";
+import { getBranchOpenStatus } from "../utils/branchStatus";
 import {
   distanceMeters,
   effectiveDistanceSortMeters,
@@ -206,7 +207,68 @@ export function HomeScreen({
 
   const rawHello = profile?.name?.trim() || userEmail?.split("@")[0] || "there";
   const helloName = rawHello.length > 0 ? rawHello.charAt(0).toUpperCase() + rawHello.slice(1) : "there";
-  const recommend = sorted[0]?.branch;
+
+  /**
+   * Recommended branch — independent of list sort chips and favorites.
+   * Score = 0.5 * norm(distance) + 0.5 * norm(wait) among currently open candidates
+   * (same search/service filter as the list). Lower score wins.
+   * Missing GPS → wait-only; missing waits → distance-only; both missing → no pick.
+   * Min-max normalization within the candidate set keeps weights comparable.
+   */
+  const recommendation = useMemo(() => {
+    const openCandidates = scored.filter((row) => getBranchOpenStatus(row.branch) === "Open");
+    if (openCandidates.length === 0) return null;
+
+    const dists = openCandidates.map((r) => r.dist).filter((d): d is number => d != null && Number.isFinite(d));
+    const waits = openCandidates.map((r) => r.wait).filter((w): w is number => w != null && Number.isFinite(w));
+    const hasDist = dists.length > 0;
+    const hasWait = waits.length > 0;
+    if (!hasDist && !hasWait) return null;
+
+    const minD = hasDist ? Math.min(...dists) : 0;
+    const maxD = hasDist ? Math.max(...dists) : 0;
+    const minW = hasWait ? Math.min(...waits) : 0;
+    const maxW = hasWait ? Math.max(...waits) : 0;
+    const spanD = Math.max(maxD - minD, 1e-6);
+    const spanW = Math.max(maxW - minW, 1e-6);
+
+    const weightD = hasDist && hasWait ? 0.5 : hasDist ? 1 : 0;
+    const weightW = hasDist && hasWait ? 0.5 : hasWait ? 1 : 0;
+
+    let best: (typeof openCandidates)[number] | null = null;
+    let bestScore = Number.POSITIVE_INFINITY;
+
+    for (const row of openCandidates) {
+      // Skip rows missing the only signal we are using
+      if (weightD > 0 && row.dist == null) continue;
+      if (weightW > 0 && row.wait == null) continue;
+
+      const normD = weightD > 0 && row.dist != null ? (row.dist - minD) / spanD : 0;
+      const normW = weightW > 0 && row.wait != null ? (row.wait - minW) / spanW : 0;
+      const score = weightD * normD + weightW * normW;
+
+      if (
+        score < bestScore - 1e-9 ||
+        (Math.abs(score - bestScore) <= 1e-9 &&
+          best != null &&
+          ((row.wait ?? 1e9) < (best.wait ?? 1e9) ||
+            ((row.wait ?? 1e9) === (best.wait ?? 1e9) && (row.dist ?? 1e12) < (best.dist ?? 1e12))))
+      ) {
+        bestScore = score;
+        best = row;
+      } else if (best == null) {
+        bestScore = score;
+        best = row;
+      }
+    }
+
+    if (!best) return null;
+
+    const travel = formatBranchTravelLabel(best.mapsInfo, best.haversine);
+    const waitLabel = best.wait == null ? null : `~${Math.round(best.wait)} min wait`;
+    const why = [travel, waitLabel].filter(Boolean).join(" · ");
+    return { branch: best.branch, why, wait: best.wait, dist: best.dist };
+  }, [scored]);
 
   return (
     <View style={styles.screen}>
@@ -420,14 +482,20 @@ export function HomeScreen({
         )}
 
         {/* Recommendation — subtle inline hint */}
-        {recommend ? (
-          <View style={styles.recommendRow}>
+        {recommendation ? (
+          <Pressable
+            style={styles.recommendRow}
+            onPress={() => openBranchDetail(recommendation.branch)}
+            accessibilityRole="button"
+            accessibilityLabel={`Recommended ${recommendation.branch.name}`}
+          >
             <Ionicons name="sparkles" size={14} color={theme.primary} />
             <Text style={styles.recommendText}>
-              Recommended: <Text style={{ fontWeight: "700" }}>{recommend.name}</Text>
-              {userCoords ? "" : " · enable GPS"}
+              Recommended: <Text style={{ fontWeight: "700" }}>{recommendation.branch.name}</Text>
+              {recommendation.why ? ` · ${recommendation.why}` : ""}
+              {!userCoords ? " · enable GPS for distance" : ""}
             </Text>
-          </View>
+          </Pressable>
         ) : null}
 
         {/* Section header */}

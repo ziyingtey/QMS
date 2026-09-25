@@ -10,6 +10,7 @@ import {
   apiMarkMissed,
   apiMyCounter,
   apiStartService,
+  apiTransferTicket,
   apiWaitingQueue,
   getStoredEmail,
   getStoredRole,
@@ -63,6 +64,7 @@ export function StaffDeckPage() {
   const [waiting, setWaiting] = useState<WaitingTicketDto[]>([]);
   const [busy, setBusy] = useState(false);
   const [servingActive, setServingActive] = useState(false);
+  const [transferTargets, setTransferTargets] = useState<Record<string, string>>({});
 
   const persistTicket = useCallback(
     (t: string, serving: boolean, bId: string, sId: string) => {
@@ -198,7 +200,9 @@ export function StaffDeckPage() {
   // For "Call next", use first allowed service (backend ignores serviceId anyway — searches all lanes)
   const callNextServiceId = selectableServices[0]?.id ?? "";
   const serviceName = isAllLanes
-    ? selectableServices.map((s) => s.name).join(", ")
+    ? (myCounter?.listenedQueueLabels?.length
+        ? myCounter.listenedQueueLabels.join(", ")
+        : selectableServices.map((s) => s.name).join(", "))
     : (branch?.services.find((s) => s.id === serviceId)?.name ?? "Service");
 
   const onCallNext = async () => {
@@ -254,6 +258,35 @@ export function StaffDeckPage() {
       setTicket("");
       setServingActive(false);
       clearActiveTicketSession();
+      await refreshWaiting();
+      await refreshLive();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onTransfer = async (ticketNumber: string) => {
+    const targetId = transferTargets[ticketNumber];
+    if (!ticketNumber || !targetId) {
+      toast("Pick a target service first.", "info");
+      return;
+    }
+    setBusy(true);
+    try {
+      const r = await apiTransferTicket(ticketNumber, targetId);
+      toast(`Transferred ${r.previousTicketNumber} → ${r.newTicketNumber} (${r.targetServiceName})`, "success");
+      if (ticket === ticketNumber) {
+        setTicket("");
+        setServingActive(false);
+        clearActiveTicketSession();
+      }
+      setTransferTargets((prev) => {
+        const next = { ...prev };
+        delete next[ticketNumber];
+        return next;
+      });
       await refreshWaiting();
       await refreshLive();
     } catch (e) {
@@ -388,7 +421,7 @@ export function StaffDeckPage() {
 
           {multiLane && !isAllLanes ? (
             <p className="qgo-staff-callnext-hint">
-              Call next searches <strong>all</strong> your lanes, not just the filtered one.
+              Call next uses longest-wait across all your queues; filter only changes this list.
             </p>
           ) : null}
 
@@ -407,6 +440,33 @@ export function StaffDeckPage() {
                     {isAllLanes && w.serviceName ? (
                       <span className="qgo-queue-svc-badge">{w.serviceName}</span>
                     ) : null}
+                    <div className="qgo-transfer-row">
+                      <select
+                        aria-label={`Transfer ${w.ticketNumber}`}
+                        value={transferTargets[w.ticketNumber] ?? ""}
+                        disabled={busy}
+                        onChange={(e) =>
+                          setTransferTargets((prev) => ({ ...prev, [w.ticketNumber]: e.target.value }))
+                        }
+                      >
+                        <option value="">Transfer to…</option>
+                        {(branch?.services ?? [])
+                          .filter((s) => s.name !== w.serviceName)
+                          .map((s) => (
+                            <option key={s.id} value={s.id}>
+                              {s.name}
+                            </option>
+                          ))}
+                      </select>
+                      <button
+                        type="button"
+                        className="qgo-btn-ghost"
+                        disabled={busy || !transferTargets[w.ticketNumber]}
+                        onClick={() => void onTransfer(w.ticketNumber)}
+                      >
+                        Go
+                      </button>
+                    </div>
                   </div>
                   <div className="qgo-queue-right">
                     {w.checkedIn ? <span className="qgo-queue-checkin">✓</span> : null}
