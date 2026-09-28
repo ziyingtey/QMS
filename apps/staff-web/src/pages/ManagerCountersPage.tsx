@@ -19,7 +19,6 @@ import {
   apiManagerSetCounterMode,
   apiManagerSetCounterStaff,
   apiManagerSetDedicatedLane,
-  apiManagerCreateQueue,
   apiManagerQueues,
   apiManagerSetQueueServices,
   apiManagerUpdateQueue,
@@ -193,22 +192,6 @@ export function ManagerCountersPage() {
     }
   }, [branchId]);
 
-  const onCreateQueue = useCallback(
-    async (input: { name: string; ticketPrefix: string; serviceLevelMinutes: number }) => {
-      if (!branchId) return;
-      setBusy(true);
-      try {
-        await apiManagerCreateQueue(branchId, input);
-        toast(`Queue ${input.ticketPrefix} created`, "success");
-        await loadWaiting();
-      } catch (e) {
-        toast(e instanceof Error ? e.message : String(e), "error");
-      } finally {
-        setBusy(false);
-      }
-    },
-    [branchId, loadWaiting, toast],
-  );
 
   const onUpdateQueue = useCallback(
     async (
@@ -584,7 +567,6 @@ export function ManagerCountersPage() {
               branch={branch}
               queues={queues}
               busy={busy}
-              onCreate={onCreateQueue}
               onUpdate={onUpdateQueue}
               onSetServices={onSetQueueServices}
             />

@@ -105,6 +105,7 @@ builder.Services.AddHostedService<BookingLifecycleHostedService>();
 builder.Services.AddHostedService<BranchQueueDayRolloverHostedService>();
 builder.Services.AddHostedService<BranchAfterHoursCounterHostedService>();
 builder.Services.AddHostedService<MlSnapshotHostedService>();
+builder.Services.AddHostedService<MlSidecarHostedService>();
 builder.Services.AddScoped<WaitTimeFeatureBuilder>();
 builder.Services.AddScoped<CounterSimulationEstimator>();
 builder.Services.Configure<MlWaitOptions>(builder.Configuration.GetSection(MlWaitOptions.SectionName));

@@ -66,9 +66,8 @@ public sealed class BookingLifecycleHostedService(
 
             q.State = QueueEntryState.Missed;
             q.CounterId = null;
-
-            if (q.Booking is { } bk && bk.Status is BookingStatus.Confirmed or BookingStatus.CheckedIn)
-                bk.Status = BookingStatus.Cancelled;
+            // Do not set BookingStatus.Cancelled — that means customer cancel.
+            // Called-then-absent stays CheckedIn/Confirmed with queue State=Missed.
 
             if (q.Booking?.CustomerId is Guid cid)
                 missedForNotify.Add((cid, q.BookingId, q.TicketNumber, q.BranchId));

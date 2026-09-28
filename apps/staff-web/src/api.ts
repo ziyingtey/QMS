@@ -167,6 +167,8 @@ export type ManagerWaitingTicket = {
   assignedSlotStart: string | null;
   checkedIn: boolean;
   estimatedWaitMinutes: number | null;
+  assignedSlotEnd?: string | null;
+  isEligible?: boolean;
 };
 
 export type ManagerAppointmentsToday = {
@@ -202,6 +204,9 @@ export type WaitingTicketDto = {
   estimatedWaitMinutes: number | null;
   serviceName: string | null;
   checkedIn: boolean;
+  assignedSlotStart?: string | null;
+  assignedSlotEnd?: string | null;
+  isEligible?: boolean;
 };
 
 export type ManagerCounterRowDto = {

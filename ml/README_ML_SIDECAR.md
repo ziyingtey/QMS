@@ -7,6 +7,9 @@ cd ml
 .venv/bin/python serve_wait_model.py --port 5099
 ```
 
+The API (`MlSidecarHostedService`) auto-starts this sidecar on boot when `MlWait:Enabled` is true and the port is free. Manual start is still fine if you prefer a second terminal.
+
+
 API config (`MlWait` in appsettings):
 
 - `Enabled`: true

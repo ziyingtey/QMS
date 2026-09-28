@@ -26,6 +26,19 @@ function entryLabel(type: string): string {
   return type;
 }
 
+function formatSlotWindow(start: string | null | undefined, end: string | null | undefined): string | null {
+  if (!start || !end) return null;
+  const fmt = (iso: string) => {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return null;
+    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
+  };
+  const a = fmt(start);
+  const b = fmt(end);
+  if (!a || !b) return null;
+  return `${a}–${b}`;
+}
+
 function waitingSince(createdAt: string): string {
   const diff = (Date.now() - new Date(createdAt).getTime()) / 60_000;
   if (diff < 1) return "<1m";
@@ -105,6 +118,7 @@ export function ManagerLiveQueueTab({ live, waiting, queues = [], rows, staffPic
                     <th>#</th>
                     <th>Ticket</th>
                     <th>Service</th>
+                    <th>Slot</th>
                     <th>Wait</th>
                     <th>ETA</th>
                     <th>Type</th>
@@ -121,6 +135,7 @@ export function ManagerLiveQueueTab({ live, waiting, queues = [], rows, staffPic
                       <td>
                         <span className="qgo-table__lane">{t.serviceName}</span>
                       </td>
+                      <td>{formatSlotWindow(t.assignedSlotStart, t.assignedSlotEnd) ?? (t.assignedSlotStart ? new Date(t.assignedSlotStart).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false }) : "—")}</td>
                       <td>{waitingSince(t.createdAt)}</td>
                       <td>{t.estimatedWaitMinutes == null ? "—" : `~${Math.round(t.estimatedWaitMinutes)}m`}</td>
                       <td>{entryLabel(t.entryType)}</td>

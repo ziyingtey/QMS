@@ -443,6 +443,7 @@ public sealed class QmsQueueService(
             .Include(q => q.ServiceType)
             .Include(q => q.Branch)
             .Include(q => q.Counter)
+            .Include(q => q.Booking)
             .FirstOrDefaultAsync(q => q.BranchId == branchId && q.TicketNumber == ticketNumber, cancellationToken);
         if (entry is null) return null;
 
@@ -501,7 +502,9 @@ public sealed class QmsQueueService(
             entry.AssignedSlotStart.HasValue ? FormatIsoOffset(entry.AssignedSlotStart.Value) : null,
             entry.AssignedSlotEnd.HasValue ? FormatIsoOffset(entry.AssignedSlotEnd.Value) : null,
             entry.Counter?.Number,
-            entry.ServingEndedAt.HasValue ? FormatIsoOffset(entry.ServingEndedAt.Value) : null);
+            entry.ServingEndedAt.HasValue ? FormatIsoOffset(entry.ServingEndedAt.Value) : null,
+            entry.Booking?.Status.ToString(),
+            entry.CalledAt.HasValue);
     }
 
     /// <summary>
@@ -690,9 +693,8 @@ public sealed class QmsQueueService(
 
         entry.State = QueueEntryState.Missed;
         entry.CounterId = null;
-
-        if (entry.Booking is not null)
-            entry.Booking.Status = BookingStatus.Cancelled;
+        // Leave booking status as-is (typically CheckedIn). Cancelled is reserved for customer cancel;
+        // NoShow is reserved for never-checked-in slot expiry.
 
         await db.SaveChangesAsync(cancellationToken);
 
@@ -1042,13 +1044,17 @@ public sealed class QmsQueueService(
                 var raw = WaitTimeEstimator.EstimateMinutes(ahead + currentlyServing, svc.DefaultAvgServiceMinutes, n);
                 eta = double.IsInfinity(raw) ? null : Math.Round(raw, 1);
             }
+            var eligible = IsEligible(q);
             result.Add(new WaitingTicketDto(
                 q.TicketNumber,
                 q.EntryType.ToString(),
                 position,
                 eta,
                 svc.Name,
-                q.CheckedIn));
+                q.CheckedIn,
+                q.AssignedSlotStart.HasValue ? FormatIsoOffset(q.AssignedSlotStart.Value) : null,
+                q.AssignedSlotEnd.HasValue ? FormatIsoOffset(q.AssignedSlotEnd.Value) : null,
+                eligible));
             position++;
         }
 
@@ -1128,7 +1134,10 @@ public sealed class QmsQueueService(
                 i + 1,
                 eta,
                 svcName,
-                q.CheckedIn));
+                q.CheckedIn,
+                q.AssignedSlotStart.HasValue ? FormatIsoOffset(q.AssignedSlotStart.Value) : null,
+                q.AssignedSlotEnd.HasValue ? FormatIsoOffset(q.AssignedSlotEnd.Value) : null,
+                IsEligible(q)));
         }
 
         return result;
@@ -1407,7 +1416,8 @@ public sealed class QmsQueueService(
                 q.Id, q.TicketNumber, q.ServiceType.Name,
                 q.EntryType.ToString(), i + 1,
                 q.CreatedAt, q.AssignedSlotStart,
-                q.CheckedIn, eta));
+                q.CheckedIn, eta,
+                q.AssignedSlotEnd, true));
         }
 
         return result;
@@ -2453,7 +2463,8 @@ public sealed record QueueStatusDto(
     string TicketNumber, string State, int PeopleAhead, double? EstimatedWaitMinutes,
     string ServiceName, string? CurrentServingTicketNumber, string? NextEstimatedMessage,
     string? AssignedSlotStart, string? AssignedSlotEnd,
-    int? CounterNumber, string? ServedAt);
+    int? CounterNumber, string? ServedAt,
+    string? BookingStatus = null, bool WasCalled = false);
 
 public sealed record ServiceLaneSummaryDto(
     Guid ServiceTypeId, string ServiceName, int WaitingCount, double? EstimatedWaitMinutes, string CrowdLevel);
@@ -2465,7 +2476,11 @@ public sealed record MyCounterDto(
     Guid BranchId, IReadOnlyList<Guid> AllowedServiceTypeIds,
     IReadOnlyList<string> ListenedQueueLabels);
 
-public sealed record WaitingTicketDto(string TicketNumber, string EntryType, int Position, double? EstimatedWaitMinutes, string? ServiceName = null, bool CheckedIn = false);
+public sealed record WaitingTicketDto(
+    string TicketNumber, string EntryType, int Position, double? EstimatedWaitMinutes,
+    string? ServiceName = null, bool CheckedIn = false,
+    string? AssignedSlotStart = null, string? AssignedSlotEnd = null,
+    bool IsEligible = false);
 
 public sealed record ManagerCounterRowDto(
     Guid Id, int Number, string Mode, string? AssignedStaffEmail, string AllowedLanesDisplay,
@@ -2484,7 +2499,8 @@ public sealed record AssignableStaffDto(Guid Id, string Email, string Name, stri
 public sealed record ManagerWaitingTicketDto(
     Guid Id, string TicketNumber, string ServiceName, string EntryType,
     int Position, DateTimeOffset CreatedAt, DateTimeOffset? AssignedSlotStart,
-    bool CheckedIn, double? EstimatedWaitMinutes);
+    bool CheckedIn, double? EstimatedWaitMinutes,
+    DateTimeOffset? AssignedSlotEnd = null, bool IsEligible = true);
 
 public sealed record ManagerAppointmentsTodayDto(
     int TotalBookings, int CheckedIn, int Confirmed, int NoShow, int Cancelled,

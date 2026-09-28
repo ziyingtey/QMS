@@ -7,7 +7,6 @@ type Props = {
   branch: BranchDto | undefined;
   queues: BranchQueueDto[];
   busy: boolean;
-  onCreate: (input: { name: string; ticketPrefix: string; serviceLevelMinutes: number }) => Promise<void>;
   onUpdate: (
     queueId: string,
     patch: { name?: string; ticketPrefix?: string; serviceLevelMinutes?: number; isActive?: boolean },
@@ -15,10 +14,7 @@ type Props = {
   onSetServices: (queueId: string, serviceTypeIds: string[]) => Promise<void>;
 };
 
-export function ManagerQueuesTab({ branch, queues, busy, onCreate, onUpdate, onSetServices }: Props) {
-  const [name, setName] = useState("");
-  const [prefix, setPrefix] = useState("");
-  const [sla, setSla] = useState(15);
+export function ManagerQueuesTab({ branch, queues, busy, onUpdate, onSetServices }: Props) {
   const [drafts, setDrafts] = useState<
     Record<string, { name: string; ticketPrefix: string; serviceLevelMinutes: number; isActive: boolean }>
   >({});
@@ -62,64 +58,12 @@ export function ManagerQueuesTab({ branch, queues, busy, onCreate, onUpdate, onS
         <KpiTile variant="manager" label="Over SLA" value={totals.breaches} foot="Waiting too long" accent="amber" />
       </div>
 
-      <section className="qgo-mgr-panel" style={{ marginTop: 16 }}>
-        <header className="qgo-mgr-panel__head">
-          <h2>Create queue</h2>
-          <p className="qgo-muted">New letter series (e.g. C for Cards). Assign services below after create.</p>
-        </header>
-        <div className="qgo-transfer-row" style={{ padding: "0 16px 16px", flexWrap: "wrap" }}>
-          <input
-            placeholder="Name"
-            value={name}
-            disabled={busy}
-            onChange={(e) => setName(e.target.value)}
-            style={{ flex: "1 1 140px" }}
-          />
-          <input
-            placeholder="Prefix"
-            maxLength={3}
-            value={prefix}
-            disabled={busy}
-            onChange={(e) => setPrefix(e.target.value.toUpperCase())}
-            style={{ width: 72 }}
-          />
-          <input
-            type="number"
-            min={1}
-            max={240}
-            value={sla}
-            disabled={busy}
-            onChange={(e) => setSla(Number(e.target.value) || 15)}
-            style={{ width: 88 }}
-            title="SLA minutes"
-          />
-          <button
-            type="button"
-            className="qgo-btn-primary"
-            disabled={busy || !prefix.trim()}
-            onClick={() =>
-              void onCreate({
-                name: name.trim() || `Queue ${prefix.trim().toUpperCase()}`,
-                ticketPrefix: prefix.trim(),
-                serviceLevelMinutes: sla,
-              }).then(() => {
-                setName("");
-                setPrefix("");
-                setSla(15);
-              })
-            }
-          >
-            Create
-          </button>
-        </div>
-      </section>
-
       {queues.length === 0 ? (
         <div style={{ padding: 32 }}>
           <EmptyState
             icon="inbox"
             title="No queues yet"
-            body="Restart the API once to auto-provision one queue per service, or create queues here."
+            body="Restart the API once to auto-provision one queue per service."
           />
         </div>
       ) : (

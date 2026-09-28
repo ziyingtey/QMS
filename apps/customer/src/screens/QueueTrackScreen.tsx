@@ -14,7 +14,7 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { apiQueueStatus, type QueueStatus } from "../api";
+import { apiCheckIn, apiQueueStatus, userFacingApiError, type QueueStatus } from "../api";
 import { useCustomer } from "../context/CustomerContext";
 import type { QueueStackParamList } from "../navigation/navigationRef";
 import { theme } from "../theme";
@@ -31,8 +31,9 @@ type Phase =
   | "next"          // Status 3: peopleAhead = 0
   | "serving"       // Status 4: called/serving
   | "completed"     // Status 5
-  | "missed"        // Status 6
-  | "cancelled"     // User cancelled
+  | "missed"        // Called then timed out / staff no-show
+  | "noshow"        // Booking never checked in; slot ended
+  | "cancelled"     // User cancelled booking
   | "loading";
 
 export function QueueTrackScreen({ route, navigation }: Props) {
@@ -42,18 +43,18 @@ export function QueueTrackScreen({ route, navigation }: Props) {
   const { token, bookings, branches, refreshBookings, cancelBooking, busy } = useCustomer();
   const [status, setStatus] = useState<QueueStatus | null>(null);
   const [pullRefreshing, setPullRefreshing] = useState(false);
+  const [checkingIn, setCheckingIn] = useState(false);
 
   const booking = useMemo(() => {
     if (bookingIdParam) return bookings.find((b) => b.id === bookingIdParam) ?? null;
+    const matches = bookings.filter((b) => b.branchId === branchId && b.ticketNumber === ticket);
+    // Prefer an active booking; fall back to Cancelled / NoShow / Completed so Track can show the right copy.
     return (
-      bookings.find(
-        (b) =>
-          b.branchId === branchId &&
-          b.ticketNumber === ticket &&
-          b.status !== "Cancelled" &&
-          b.status !== "Completed" &&
-          b.status !== "NoShow",
-      ) ?? null
+      matches.find(
+        (b) => b.status !== "Cancelled" && b.status !== "Completed" && b.status !== "NoShow",
+      ) ??
+      matches[0] ??
+      null
     );
   }, [bookings, bookingIdParam, branchId, ticket]);
 
@@ -112,7 +113,13 @@ export function QueueTrackScreen({ route, navigation }: Props) {
 
   const displayService = status?.serviceName ?? serviceNameFromBooking ?? "\u2014";
   const appointmentBookingId = booking?.id ?? bookingIdParam ?? null;
-  const entryIsTerminal = status?.state === "Completed" || status?.state === "Missed" || booking?.status === "Cancelled";
+  const entryIsTerminal =
+    status?.state === "Completed" ||
+    status?.state === "Missed" ||
+    booking?.status === "Cancelled" ||
+    booking?.status === "NoShow" ||
+    status?.bookingStatus === "Cancelled" ||
+    status?.bookingStatus === "NoShow";
   const bookingIsActive =
     !entryIsTerminal &&
     (!booking ||
@@ -123,10 +130,25 @@ export function QueueTrackScreen({ route, navigation }: Props) {
   const showReschedule = Boolean(booking) && bookingIsActive && canModifyByTime;
   const showCancel = Boolean(appointmentBookingId) && bookingIsActive && canModifyByTime;
 
+  // Online booking not yet checked in — eligible for Check in (Waiting / before called).
+  const needsCheckIn = Boolean(
+    booking &&
+      appointmentBookingId &&
+      (booking.status === "Confirmed" || booking.status === "Pending") &&
+      (!status || status.state === "Waiting"),
+  );
+
   // Determine phase
   const phase: Phase = useMemo(() => {
     if (!status) return "loading";
-    if (booking?.status === "Cancelled") return "cancelled";
+    const bookingStatus = booking?.status ?? status.bookingStatus ?? null;
+    // NoShow (never checked in; slot ended) — before generic Missed / Cancelled
+    if (bookingStatus === "NoShow") return "noshow";
+    // Customer cancel. Legacy data: staff/grace miss used to set Cancelled; if wasCalled, treat as missed.
+    if (bookingStatus === "Cancelled") {
+      if (status.wasCalled) return "missed";
+      return "cancelled";
+    }
     if (status.state === "Completed") return "completed";
     if (status.state === "Missed") return "missed";
     if (status.state === "Called" || status.state === "Serving") return "serving";
@@ -145,6 +167,12 @@ export function QueueTrackScreen({ route, navigation }: Props) {
     }
 
     if (status.state === "Waiting") {
+      // Unchecked online bookings are force-included in peopleAhead and can fake "next".
+      // Prefer waiting + check-in prompt until they actually check in.
+      const uncheckedOnline =
+        booking != null &&
+        (booking.status === "Confirmed" || booking.status === "Pending");
+      if (uncheckedOnline) return "waiting";
       if (status.peopleAhead === 0) return "next";
       if (status.peopleAhead === 1) return "almost";
       return "waiting";
@@ -152,6 +180,19 @@ export function QueueTrackScreen({ route, navigation }: Props) {
     return "loading";
   }, [status, booking]);
 
+  const onCheckIn = useCallback(async () => {
+    if (!appointmentBookingId || checkingIn) return;
+    setCheckingIn(true);
+    try {
+      await apiCheckIn(appointmentBookingId);
+      await Promise.all([refresh(), refreshBookings()]);
+      Alert.alert("Checked in", "You're in the queue. We'll call your ticket when it's your turn.");
+    } catch (e) {
+      Alert.alert("Check in", userFacingApiError(e));
+    } finally {
+      setCheckingIn(false);
+    }
+  }, [appointmentBookingId, checkingIn, refresh, refreshBookings]);
 
   const openReschedule = async () => {
     if (!booking) return;
@@ -431,19 +472,34 @@ export function QueueTrackScreen({ route, navigation }: Props) {
             <View style={[styles.statusIcon, styles.statusIconRed]}>
               <Ionicons name="close-circle" size={40} color="#dc2626" />
             </View>
-            <Text style={[styles.statusTitle, { color: "#dc2626" }]}>Booking Cancelled</Text>
-            <Text style={styles.statusSub}>This booking has been cancelled. You can book a new slot anytime.</Text>
+            <Text style={[styles.statusTitle, { color: "#dc2626" }]}>Booking cancelled</Text>
+            <Text style={styles.statusSub}>This booking was cancelled.</Text>
           </View>
         )}
 
-        {/* ═══════ Phase: Missed ═══════ */}
+        {/* ═══════ Phase: No-show (never checked in) ═══════ */}
+        {phase === "noshow" && (
+          <View style={styles.statusCard}>
+            <View style={[styles.statusIcon, styles.statusIconRed]}>
+              <Ionicons name="time-outline" size={40} color="#dc2626" />
+            </View>
+            <Text style={[styles.statusTitle, { color: "#dc2626" }]}>Marked no-show</Text>
+            <Text style={styles.statusSub}>
+              You didn't check in before your slot ended. This booking is marked no-show.
+            </Text>
+          </View>
+        )}
+
+        {/* ═══════ Phase: Missed (called then timed out / staff no-show) ═══════ */}
         {phase === "missed" && (
           <View style={styles.statusCard}>
             <View style={[styles.statusIcon, styles.statusIconRed]}>
               <Ionicons name="alert-circle" size={40} color="#dc2626" />
             </View>
-            <Text style={[styles.statusTitle, { color: "#dc2626" }]}>You missed your turn</Text>
-            <Text style={styles.statusSub}>Please approach the counter or take a new ticket.</Text>
+            <Text style={[styles.statusTitle, { color: "#dc2626" }]}>Number called — not completed</Text>
+            <Text style={styles.statusSub}>
+              Your number was called but not completed. Please approach the counter or take a new ticket.
+            </Text>
           </View>
         )}
 
@@ -451,6 +507,24 @@ export function QueueTrackScreen({ route, navigation }: Props) {
         {phase === "loading" && (
           <View style={styles.statusCard}>
             <Text style={styles.statusSub}>Loading queue information...</Text>
+          </View>
+        )}
+
+        {/* Check in — online booking, not yet checked in, still Waiting */}
+        {needsCheckIn && (
+          <View style={styles.checkInCard}>
+            <Text style={styles.checkInTitle}>Check in when you arrive</Text>
+            <Text style={styles.checkInSub}>
+              Tap Check in so staff can call your ticket. You do not need to share your location.
+            </Text>
+            <Pressable
+              style={[styles.btnCheckIn, (checkingIn || busy) && styles.btnCheckInDisabled]}
+              disabled={checkingIn || busy}
+              onPress={() => void onCheckIn()}
+            >
+              <Ionicons name="checkmark-circle-outline" size={20} color="#fff" />
+              <Text style={styles.btnCheckInText}>{checkingIn ? "Checking in…" : "Check in"}</Text>
+            </Pressable>
           </View>
         )}
 
@@ -706,4 +780,26 @@ const styles = StyleSheet.create({
     lineHeight: 16,
     fontStyle: "italic",
   },
+
+  checkInCard: {
+    backgroundColor: "#fff",
+    borderRadius: 14,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: theme.borderLight,
+  },
+  checkInTitle: { fontSize: 16, fontWeight: "800", color: theme.textOnLight, marginBottom: 6 },
+  checkInSub: { fontSize: 13, color: theme.textMutedOnLight, lineHeight: 18, marginBottom: 14 },
+  btnCheckIn: {
+    backgroundColor: theme.primary,
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
+  },
+  btnCheckInDisabled: { opacity: 0.6 },
+  btnCheckInText: { fontWeight: "800", color: "#fff", fontSize: 16 },
 });

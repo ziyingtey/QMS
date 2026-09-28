@@ -90,6 +90,10 @@ export type QueueStatus = {
   nextEstimatedMessage?: string | null;
   counterNumber?: number | null;
   servedAt?: string | null;
+  assignedSlotStart?: string | null;
+  assignedSlotEnd?: string | null;
+  bookingStatus?: string | null;
+  wasCalled?: boolean;
 };
 
 export type BookingSummary = {
