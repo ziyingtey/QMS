@@ -549,19 +549,10 @@ public sealed class QmsQueueService(
         return ahead;
     }
 
-    private static int GetCallNextPriority(QueueEntry entry, DateTimeOffset nowUtc)
-    {
-        if (entry.EntryType == QueueEntryType.OnlineBooked && entry.CheckedIn
-            && entry.AssignedSlotStart.HasValue && entry.AssignedSlotStart <= nowUtc
-            && entry.AssignedSlotEnd.HasValue && entry.AssignedSlotEnd > nowUtc)
-            return 0;
-        return 1;
-    }
-
     // ─────────────────────────────────────────────────────────────────────
-    // CALL NEXT — 档 B multi-queue longest-wait
-    // AllowedServices → queues; each queue head = P0 then EnqueueSequence;
-    // among heads any P0 beats P1, then earliest QueueEligibleAt (longest wait).
+    // CALL NEXT — CreatedAt FIFO across counter allowed services
+    // Eligible pool (walk-in CheckedIn; online CheckedIn + early-call/slot window),
+    // then earliest QueueEntry.CreatedAt, ThenBy Id. No P0 veto / no per-queue heads.
     // ─────────────────────────────────────────────────────────────────────
 
     public async Task<CallNextDto> CallNextAsync(
@@ -618,9 +609,8 @@ public sealed class QmsQueueService(
     }
 
     /// <summary>
-    /// 档 B Call Next: each allowed service maps to a queue; take each queue's head
-    /// (P0 before P1, then EnqueueSequence), then pick the head that has waited longest.
-    /// Global rule: any P0 head beats all P1 heads.
+    /// Call Next claim: load eligible Waiting tickets for the counter's AllowedServices,
+    /// then pick earliest CreatedAt (ThenBy Id) via QueueCallNextSelector.
     /// </summary>
     private async Task<QueueEntry?> FindAndClaimNextTicketAsync(
         Counter counter, List<Guid> allowedServiceIds,
@@ -1003,7 +993,7 @@ public sealed class QmsQueueService(
             .Where(q => q.AssignedSlotStart.HasValue && q.AssignedSlotStart.Value.ToOffset(zone).Date == todayDate)
             .ToList();
 
-        // Sort by Call Next order: eligible first (P0 → P1), then not-yet-eligible, then FIFO
+        // Sort like Call Next: eligible first, then CreatedAt FIFO (ThenBy Id)
         bool IsEligible(QueueEntry q) =>
             (q.EntryType == QueueEntryType.WalkIn && q.CheckedIn)
             || (q.EntryType == QueueEntryType.OnlineBooked
@@ -1017,16 +1007,9 @@ public sealed class QmsQueueService(
             var bElig = IsEligible(b) ? 0 : 1;
             if (aElig != bElig) return aElig.CompareTo(bElig);
 
-            // Within eligible: P0 before P1
-            if (aElig == 0)
-            {
-                var pa = GetCallNextPriority(a, nowUtc);
-                var pb = GetCallNextPriority(b, nowUtc);
-                if (pa != pb) return pa.CompareTo(pb);
-            }
-
-            // Same priority: FIFO by EnqueueSequence
-            return a.EnqueueSequence.CompareTo(b.EnqueueSequence);
+            var byCreated = a.CreatedAt.CompareTo(b.CreatedAt);
+            if (byCreated != 0) return byCreated;
+            return a.Id.CompareTo(b.Id);
         });
 
         var result = new List<WaitingTicketDto>();
@@ -1063,7 +1046,7 @@ public sealed class QmsQueueService(
 
     /// <summary>
     /// Cross-lane queue: waiting tickets across this counter's allowed services,
-    /// ordered like successive Call Next picks (档 B longest-wait queue heads).
+    /// ordered like successive Call Next picks (CreatedAt FIFO among eligible).
     /// </summary>
     public async Task<IReadOnlyList<WaitingTicketDto>> ListCrossLaneWaitingAsync(
         Guid staffId,
@@ -1111,7 +1094,7 @@ public sealed class QmsQueueService(
         // Eligible first in Call Next drain order; not-yet-eligible at the end
         var eligible = todayEntries.Where(IsEligible).ToList();
         var ordered = QueueCallNextSelector.OrderByCallNextDrain(eligible, nowUtc);
-        foreach (var leftover in todayEntries.Where(q => !IsEligible(q)).OrderBy(q => q.EnqueueSequence))
+        foreach (var leftover in todayEntries.Where(q => !IsEligible(q)).OrderBy(q => q.CreatedAt).ThenBy(q => q.Id))
             ordered.Add(leftover);
 
         var result = new List<WaitingTicketDto>();
@@ -1394,11 +1377,8 @@ public sealed class QmsQueueService(
                 && q.AssignedSlotStart.Value.AddMinutes(-earlyMinutes) <= nowUtc))
             .ToList();
 
-        // Sort by Call Next priority: P0 (checked-in online in active slot) first, then FIFO
-        var sorted = eligible
-            .OrderBy(q => GetCallNextPriority(q, nowUtc))
-            .ThenBy(q => q.EnqueueSequence)
-            .ToList();
+        // Match Call Next: CreatedAt FIFO among eligible
+        var sorted = QueueCallNextSelector.OrderByCallNextDrain(eligible, nowUtc);
 
         var result = new List<ManagerWaitingTicketDto>();
         for (int i = 0; i < sorted.Count; i++)

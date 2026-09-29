@@ -6,8 +6,8 @@ using QMS.Infrastructure.Persistence;
 namespace QMS.Api.Services;
 
 /// <summary>
-/// Counter availability simulation matching 档 B Call Next:
-/// when a counter frees, it pulls the longest-wait queue head among its AllowedServices.
+/// Counter availability simulation matching Call Next:
+/// when a counter frees, it pulls earliest-CreatedAt eligible ticket among its AllowedServices.
 /// </summary>
 public sealed class CounterSimulationEstimator(QmsDbContext db)
 {
