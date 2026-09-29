@@ -51,6 +51,25 @@ function formatSlotWindow(start?: string | null, end?: string | null): string | 
   return `${a}–${b}`;
 }
 
+/** Group waiting tickets by service (name, else ticket letter prefix). Preserves relative order. */
+function groupWaitingByService(tickets: WaitingTicketDto[]): { key: string; label: string; tickets: WaitingTicketDto[] }[] {
+  const groups: { key: string; label: string; tickets: WaitingTicketDto[] }[] = [];
+  const indexByKey = new Map<string, number>();
+  for (const t of tickets) {
+    const fromName = t.serviceName?.trim();
+    const fromPrefix = t.ticketNumber.match(/^[A-Za-z]+/)?.[0];
+    const label = fromName || (fromPrefix ? `Lane ${fromPrefix}` : "Other");
+    const key = fromName ? `name:${fromName}` : fromPrefix ? `prefix:${fromPrefix}` : "other";
+    const existing = indexByKey.get(key);
+    if (existing === undefined) {
+      indexByKey.set(key, groups.length);
+      groups.push({ key, label, tickets: [t] });
+    } else {
+      groups[existing].tickets.push(t);
+    }
+  }
+  return groups;
+}
 
 export function StaffDeckPage() {
   const logout = useStaffLogout();
@@ -230,6 +249,10 @@ export function StaffDeckPage() {
     }
     return { callableWaiting: callable, notEligibleWaiting: notYet };
   }, [waiting]);
+
+  // UI-only grouping — Call Next algorithm unchanged.
+  const callableByService = useMemo(() => groupWaitingByService(callableWaiting), [callableWaiting]);
+  const notEligibleByService = useMemo(() => groupWaitingByService(notEligibleWaiting), [notEligibleWaiting]);
 
   const onCallNext = async () => {
     if (!branchId || !canCallNext) return;
@@ -464,53 +487,70 @@ export function StaffDeckPage() {
                     <span className="qgo-queue-section__count">{callableWaiting.length}</span>
                   </li>
                 ) : null}
-                {callableWaiting.map((w) => {
-                  const slot =
-                    w.entryType === "OnlineBooked" || w.assignedSlotStart
-                      ? formatSlotWindow(w.assignedSlotStart, w.assignedSlotEnd)
-                      : null;
+                {callableByService.map((group) => {
+                  const showLaneHeader = isAllLanes;
                   return (
-                    <li key={w.ticketNumber} className="qgo-queue-item">
-                      <span className="qgo-queue-pos">{w.position}</span>
-                      <div className="qgo-queue-main">
-                        <strong>{w.ticketNumber}</strong>
-                        <span className="qgo-muted">{w.entryType}</span>
-                        {slot ? <span className="qgo-queue-slot">{slot}</span> : null}
-                        {isAllLanes && w.serviceName ? (
-                          <span className="qgo-queue-svc-badge">{w.serviceName}</span>
-                        ) : null}
-                        <div className="qgo-transfer-row">
-                          <select
-                            aria-label={`Transfer ${w.ticketNumber}`}
-                            value={transferTargets[w.ticketNumber] ?? ""}
-                            disabled={busy}
-                            onChange={(e) =>
-                              setTransferTargets((prev) => ({ ...prev, [w.ticketNumber]: e.target.value }))
-                            }
-                          >
-                            <option value="">Transfer to…</option>
-                            {(branch?.services ?? [])
-                              .filter((s) => s.name !== w.serviceName)
-                              .map((s) => (
-                                <option key={s.id} value={s.id}>
-                                  {s.name}
-                                </option>
-                              ))}
-                          </select>
-                          <button
-                            type="button"
-                            className="qgo-btn-ghost"
-                            disabled={busy || !transferTargets[w.ticketNumber]}
-                            onClick={() => void onTransfer(w.ticketNumber)}
-                          >
-                            Go
-                          </button>
+                    <li key={`callable-group-${group.key}`} className="qgo-queue-group">
+                      {showLaneHeader ? (
+                        <div className="qgo-queue-lane">
+                          <span className="qgo-queue-lane__label">{group.label}</span>
+                          <span className="qgo-queue-lane__count">{group.tickets.length}</span>
                         </div>
-                      </div>
-                      <div className="qgo-queue-right">
-                        {w.checkedIn ? <span className="qgo-queue-checkin">✓</span> : null}
-                        <span className="qgo-queue-eta">{w.estimatedWaitMinutes == null ? "—" : `~${w.estimatedWaitMinutes}m`}</span>
-                      </div>
+                      ) : null}
+                      <ul className="qgo-queue-group__list">
+                        {group.tickets.map((w) => {
+                          const slot =
+                            w.entryType === "OnlineBooked" || w.assignedSlotStart
+                              ? formatSlotWindow(w.assignedSlotStart, w.assignedSlotEnd)
+                              : null;
+                          return (
+                            <li key={w.ticketNumber} className="qgo-queue-item">
+                              <span className="qgo-queue-pos">{w.position}</span>
+                              <div className="qgo-queue-main">
+                                <strong>{w.ticketNumber}</strong>
+                                <span className="qgo-muted">{w.entryType}</span>
+                                {slot ? <span className="qgo-queue-slot">{slot}</span> : null}
+                                {!showLaneHeader && isAllLanes && w.serviceName ? (
+                                  <span className="qgo-queue-svc-badge">{w.serviceName}</span>
+                                ) : null}
+                                <div className="qgo-transfer-row">
+                                  <select
+                                    aria-label={`Transfer ${w.ticketNumber}`}
+                                    value={transferTargets[w.ticketNumber] ?? ""}
+                                    disabled={busy}
+                                    onChange={(e) =>
+                                      setTransferTargets((prev) => ({ ...prev, [w.ticketNumber]: e.target.value }))
+                                    }
+                                  >
+                                    <option value="">Transfer to…</option>
+                                    {(branch?.services ?? [])
+                                      .filter((s) => s.name !== w.serviceName)
+                                      .map((s) => (
+                                        <option key={s.id} value={s.id}>
+                                          {s.name}
+                                        </option>
+                                      ))}
+                                  </select>
+                                  <button
+                                    type="button"
+                                    className="qgo-btn-ghost"
+                                    disabled={busy || !transferTargets[w.ticketNumber]}
+                                    onClick={() => void onTransfer(w.ticketNumber)}
+                                  >
+                                    Go
+                                  </button>
+                                </div>
+                              </div>
+                              <div className="qgo-queue-right">
+                                {w.checkedIn ? <span className="qgo-queue-checkin">✓</span> : null}
+                                <span className="qgo-queue-eta">
+                                  {w.estimatedWaitMinutes == null ? "—" : `~${w.estimatedWaitMinutes}m`}
+                                </span>
+                              </div>
+                            </li>
+                          );
+                        })}
+                      </ul>
                     </li>
                   );
                 })}
@@ -520,53 +560,70 @@ export function StaffDeckPage() {
                     <span className="qgo-queue-section__count">{notEligibleWaiting.length}</span>
                   </li>
                 ) : null}
-                {notEligibleWaiting.map((w) => {
-                  const slot =
-                    w.entryType === "OnlineBooked" || w.assignedSlotStart
-                      ? formatSlotWindow(w.assignedSlotStart, w.assignedSlotEnd)
-                      : null;
+                {notEligibleByService.map((group) => {
+                  const showLaneHeader = isAllLanes;
                   return (
-                    <li key={w.ticketNumber} className="qgo-queue-item qgo-queue-item--pending">
-                      <span className="qgo-queue-pos">{w.position}</span>
-                      <div className="qgo-queue-main">
-                        <strong>{w.ticketNumber}</strong>
-                        <span className="qgo-muted">{w.entryType}</span>
-                        {slot ? <span className="qgo-queue-slot">{slot}</span> : null}
-                        {isAllLanes && w.serviceName ? (
-                          <span className="qgo-queue-svc-badge">{w.serviceName}</span>
-                        ) : null}
-                        <div className="qgo-transfer-row">
-                          <select
-                            aria-label={`Transfer ${w.ticketNumber}`}
-                            value={transferTargets[w.ticketNumber] ?? ""}
-                            disabled={busy}
-                            onChange={(e) =>
-                              setTransferTargets((prev) => ({ ...prev, [w.ticketNumber]: e.target.value }))
-                            }
-                          >
-                            <option value="">Transfer to…</option>
-                            {(branch?.services ?? [])
-                              .filter((s) => s.name !== w.serviceName)
-                              .map((s) => (
-                                <option key={s.id} value={s.id}>
-                                  {s.name}
-                                </option>
-                              ))}
-                          </select>
-                          <button
-                            type="button"
-                            className="qgo-btn-ghost"
-                            disabled={busy || !transferTargets[w.ticketNumber]}
-                            onClick={() => void onTransfer(w.ticketNumber)}
-                          >
-                            Go
-                          </button>
+                    <li key={`pending-group-${group.key}`} className="qgo-queue-group">
+                      {showLaneHeader ? (
+                        <div className="qgo-queue-lane qgo-queue-lane--muted">
+                          <span className="qgo-queue-lane__label">{group.label}</span>
+                          <span className="qgo-queue-lane__count">{group.tickets.length}</span>
                         </div>
-                      </div>
-                      <div className="qgo-queue-right">
-                        {w.checkedIn ? <span className="qgo-queue-checkin">✓</span> : null}
-                        <span className="qgo-queue-eta">{w.estimatedWaitMinutes == null ? "—" : `~${w.estimatedWaitMinutes}m`}</span>
-                      </div>
+                      ) : null}
+                      <ul className="qgo-queue-group__list">
+                        {group.tickets.map((w) => {
+                          const slot =
+                            w.entryType === "OnlineBooked" || w.assignedSlotStart
+                              ? formatSlotWindow(w.assignedSlotStart, w.assignedSlotEnd)
+                              : null;
+                          return (
+                            <li key={w.ticketNumber} className="qgo-queue-item qgo-queue-item--pending">
+                              <span className="qgo-queue-pos">{w.position}</span>
+                              <div className="qgo-queue-main">
+                                <strong>{w.ticketNumber}</strong>
+                                <span className="qgo-muted">{w.entryType}</span>
+                                {slot ? <span className="qgo-queue-slot">{slot}</span> : null}
+                                {!showLaneHeader && isAllLanes && w.serviceName ? (
+                                  <span className="qgo-queue-svc-badge">{w.serviceName}</span>
+                                ) : null}
+                                <div className="qgo-transfer-row">
+                                  <select
+                                    aria-label={`Transfer ${w.ticketNumber}`}
+                                    value={transferTargets[w.ticketNumber] ?? ""}
+                                    disabled={busy}
+                                    onChange={(e) =>
+                                      setTransferTargets((prev) => ({ ...prev, [w.ticketNumber]: e.target.value }))
+                                    }
+                                  >
+                                    <option value="">Transfer to…</option>
+                                    {(branch?.services ?? [])
+                                      .filter((s) => s.name !== w.serviceName)
+                                      .map((s) => (
+                                        <option key={s.id} value={s.id}>
+                                          {s.name}
+                                        </option>
+                                      ))}
+                                  </select>
+                                  <button
+                                    type="button"
+                                    className="qgo-btn-ghost"
+                                    disabled={busy || !transferTargets[w.ticketNumber]}
+                                    onClick={() => void onTransfer(w.ticketNumber)}
+                                  >
+                                    Go
+                                  </button>
+                                </div>
+                              </div>
+                              <div className="qgo-queue-right">
+                                {w.checkedIn ? <span className="qgo-queue-checkin">✓</span> : null}
+                                <span className="qgo-queue-eta">
+                                  {w.estimatedWaitMinutes == null ? "—" : `~${w.estimatedWaitMinutes}m`}
+                                </span>
+                              </div>
+                            </li>
+                          );
+                        })}
+                      </ul>
                     </li>
                   );
                 })}
