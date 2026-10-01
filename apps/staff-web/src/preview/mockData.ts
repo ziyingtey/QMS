@@ -57,10 +57,38 @@ export const MOCK_LIVE: LiveDashboard = {
 };
 
 export const MOCK_WAITING: WaitingTicketDto[] = [
-  { ticketNumber: "A015", entryType: "Online", position: 1, estimatedWaitMinutes: 5 },
-  { ticketNumber: "A016", entryType: "Walk-in", position: 2, estimatedWaitMinutes: 12 },
-  { ticketNumber: "A017", entryType: "Online", position: 3, estimatedWaitMinutes: 18 },
-  { ticketNumber: "B004", entryType: "Walk-in", position: 4, estimatedWaitMinutes: 24 },
+  {
+    ticketNumber: "A015",
+    entryType: "Online",
+    position: 1,
+    estimatedWaitMinutes: null,
+    serviceName: "Personal Banking",
+    checkedIn: true,
+  },
+  {
+    ticketNumber: "A016",
+    entryType: "Walk-in",
+    position: 2,
+    estimatedWaitMinutes: null,
+    serviceName: "Personal Banking",
+    checkedIn: false,
+  },
+  {
+    ticketNumber: "A017",
+    entryType: "Online",
+    position: 3,
+    estimatedWaitMinutes: null,
+    serviceName: "Personal Banking",
+    checkedIn: true,
+  },
+  {
+    ticketNumber: "B004",
+    entryType: "Walk-in",
+    position: 4,
+    estimatedWaitMinutes: null,
+    serviceName: "Personal Banking",
+    checkedIn: false,
+  },
 ];
 
 export const MOCK_COUNTERS: ManagerCounterRowDto[] = [

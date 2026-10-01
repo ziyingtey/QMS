@@ -895,11 +895,6 @@
   align-items: center;
   gap: 6px;
 }
-.qgo-queue-eta {
-  font-weight: 700;
-  color: var(--qgo-muted);
-  font-size: 0.85rem;
-}
 .qgo-queue-checkin {
   width: 20px;
   height: 20px;

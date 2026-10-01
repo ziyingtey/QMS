@@ -110,7 +110,6 @@ export function PreviewStaffPage({ variant = "idle" }: { variant?: Variant }) {
                   <strong>{w.ticketNumber}</strong>
                   <span className="qgo-muted">{w.entryType}</span>
                 </div>
-                <span className="qgo-queue-eta">{w.estimatedWaitMinutes}m</span>
               </li>
             ))}
           </ul>

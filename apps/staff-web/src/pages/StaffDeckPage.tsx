@@ -543,9 +543,6 @@ export function StaffDeckPage() {
                               </div>
                               <div className="qgo-queue-right">
                                 {w.checkedIn ? <span className="qgo-queue-checkin">✓</span> : null}
-                                <span className="qgo-queue-eta">
-                                  {w.estimatedWaitMinutes == null ? "—" : `~${w.estimatedWaitMinutes}m`}
-                                </span>
                               </div>
                             </li>
                           );
@@ -616,9 +613,6 @@ export function StaffDeckPage() {
                               </div>
                               <div className="qgo-queue-right">
                                 {w.checkedIn ? <span className="qgo-queue-checkin">✓</span> : null}
-                                <span className="qgo-queue-eta">
-                                  {w.estimatedWaitMinutes == null ? "—" : `~${w.estimatedWaitMinutes}m`}
-                                </span>
                               </div>
                             </li>
                           );
