@@ -89,20 +89,34 @@ public sealed class MlHttpWaitTimeEstimator : IWaitTimeEstimator
 
         return new Dictionary<string, object?>
         {
+            // Queue state
             ["QueueLength"] = queueLen,
             ["CrossLaneQueueLength"] = f.CrossLaneQueueLength ?? (f.OnlineQueueLength + f.WalkInQueueLength),
             ["PeopleAheadCallNext"] = f.PeopleAheadCallNext ?? peopleAhead,
+            ["NowServing"] = f.NowServing,
+            // Capacity
             ["ActiveCounters"] = Math.Max(1, f.ActiveCounters),
             ["ListeningCounters"] = listening,
+            // Time
             ["HourOfDay"] = f.HourOfDay,
             ["DayOfWeek"] = f.DayOfWeek,
             ["IsPeakHour"] = f.IsPeakHour ? 1 : 0,
+            // Service duration
             ["DefaultAvgServiceMinutes"] = f.EffectiveAvgServiceMinutes,
+            // Entry
             ["EnqueueSequence"] = f.EnqueueSequence,
             ["EntryType"] = f.EntryType,
             ["CheckedIn"] = f.CheckedIn ? 1 : 0,
+            // Slot features
             ["SlotActive"] = slotActive,
             ["CallNextPriority"] = callNextPriority,
+            ["SlotDurationMinutes"] = f.SlotDurationMinutes,
+            ["MinutesUntilSlotEnd"] = f.MinutesUntilSlotEnd,
+            ["MinutesSinceSlotStart"] = f.MinutesSinceSlotStart,
+            ["OnlineSlotsPerSlot"] = f.OnlineSlotsPerSlot,
+            ["OnlineBookedInSlot"] = f.OnlineBookedInSlot,
+            ["WalkInInSlot"] = f.WalkInInSlot,
+            // Identity
             ["BranchCode"] = f.BranchCode,
             ["ServiceCode"] = f.ServiceCode,
             ["TicketPrefix"] = prefix,

@@ -108,6 +108,14 @@ class Handler(BaseHTTPRequestHandler):
                 "EnqueueSequence": 1,
                 "BranchCode": 0,
                 "IsPeakHour": 0,
+                # v2 slot features — NaN is correct for walk-ins (HistGBR native)
+                "NowServing": 0,
+                "SlotDurationMinutes": None,
+                "MinutesUntilSlotEnd": None,
+                "MinutesSinceSlotStart": None,
+                "OnlineSlotsPerSlot": None,
+                "OnlineBookedInSlot": None,
+                "WalkInInSlot": None,
             }
             for k, v in defaults.items():
                 if k in X.columns and (X.at[0, k] is None or (isinstance(X.at[0, k], float) and pd.isna(X.at[0, k]))):

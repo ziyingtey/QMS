@@ -41,10 +41,11 @@ public sealed class WaitTimeFeatureBuilder(QmsDbContext db)
             .CountAsync(ct);
         var walkInQueueLength = queueLength - onlineQueueLength;
 
-        // People ahead: same eligibility + priority rules as Call Next
+        // People ahead: match Call Next's CreatedAt FIFO ordering exactly.
+        // QueueCallNextSelector picks earliest CreatedAt (then Id tiebreak),
+        // so PeopleAhead = count of eligible tickets that Call Next would pick before this one.
         var earlyCallMinutes = branch.OnlineEarlyCallMinutes;
 
-        // Only count eligible tickets
         var eligibleAhead = waitingQuery.Where(q =>
             (q.EntryType == QueueEntryType.WalkIn && q.CheckedIn)
             || (q.EntryType == QueueEntryType.OnlineBooked
@@ -52,37 +53,14 @@ public sealed class WaitTimeFeatureBuilder(QmsDbContext db)
                 && q.AssignedSlotStart.HasValue
                 && q.AssignedSlotStart.Value.AddMinutes(-earlyCallMinutes) <= snapshotAt));
 
-        // Determine this entry's priority (P0 = online checked-in in active slot, P1 = rest)
+        var peopleAhead = await eligibleAhead
+            .CountAsync(q => q.CreatedAt < entry.CreatedAt
+                || (q.CreatedAt == entry.CreatedAt && q.Id.CompareTo(entry.Id) < 0), ct);
+
+        // P0/P1 kept as an independent ML feature (CallNextPriority) — not used for ordering.
         var myIsP0 = entry.EntryType == QueueEntryType.OnlineBooked && entry.CheckedIn
                      && entry.AssignedSlotStart.HasValue && entry.AssignedSlotStart <= snapshotAt
                      && entry.AssignedSlotEnd.HasValue && entry.AssignedSlotEnd > snapshotAt;
-
-        int peopleAhead;
-        if (myIsP0)
-        {
-            // P0: only other P0 with smaller EnqueueSequence are ahead
-            peopleAhead = await eligibleAhead.CountAsync(q =>
-                q.EntryType == QueueEntryType.OnlineBooked && q.CheckedIn
-                && q.AssignedSlotStart.HasValue && q.AssignedSlotStart <= snapshotAt
-                && q.AssignedSlotEnd.HasValue && q.AssignedSlotEnd > snapshotAt
-                && q.EnqueueSequence < entry.EnqueueSequence, ct);
-        }
-        else
-        {
-            // P1: all P0 are ahead, plus P1 with smaller EnqueueSequence
-            var p0Ahead = await eligibleAhead.CountAsync(q =>
-                q.EntryType == QueueEntryType.OnlineBooked && q.CheckedIn
-                && q.AssignedSlotStart.HasValue && q.AssignedSlotStart <= snapshotAt
-                && q.AssignedSlotEnd.HasValue && q.AssignedSlotEnd > snapshotAt, ct);
-
-            var p1Ahead = await eligibleAhead.CountAsync(q =>
-                !(q.EntryType == QueueEntryType.OnlineBooked && q.CheckedIn
-                  && q.AssignedSlotStart.HasValue && q.AssignedSlotStart <= snapshotAt
-                  && q.AssignedSlotEnd.HasValue && q.AssignedSlotEnd > snapshotAt)
-                && q.EnqueueSequence < entry.EnqueueSequence, ct);
-
-            peopleAhead = p0Ahead + p1Ahead;
-        }
 
         // Now serving
         var nowServing = await db.QueueEntries.AsNoTracking()

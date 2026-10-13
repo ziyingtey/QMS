@@ -1,11 +1,12 @@
 """
-Generate Tier-B synthetic seed data for QMS wait-time model training.
+Generate synthetic seed data for QMS wait-time model training.
 
-Simulates Malaysian bank branches with:
-  - Per-service letter queues (A/B/…) and daily sequence
-  - Online vs walk-in; online P0 when checked-in and slot active
-  - Multi-counter work profiles listening to several queues
-  - WaitingMinutes ≈ Call Next drain (longest-wait among queue heads)
+Discrete-event simulation of Malaysian bank branches matching production logic:
+  - CreatedAt FIFO call ordering (matches QueueCallNextSelector)
+  - Multi-counter drain with per-counter service assignments (matches CounterSimulationEstimator)
+  - Online bookings with slot features + walk-ins
+  - All 24 features aligned with MlHttpWaitTimeEstimator.BuildPayload
+  - Target = ServingStartedAt - QueueEligibleAt (matches MlTrainingObservation)
 
 Output: ml/data/wait_training.csv
 
@@ -17,6 +18,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -25,246 +27,485 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parent
 OUTPUT = ROOT / "data" / "wait_training.csv"
 
+# ── Branch configs ──
 BRANCHES = [
-    {"BranchCode": 101033, "name": "Bandar Sri Permaisuri", "base_traffic": 1.0},
-    {"BranchCode": 101045, "name": "Taman Midah", "base_traffic": 0.8},
-    {"BranchCode": 101012, "name": "Bangsar", "base_traffic": 1.3},
-    {"BranchCode": 101078, "name": "Cheras Selatan", "base_traffic": 0.9},
-    {"BranchCode": 101056, "name": "Wangsa Maju", "base_traffic": 1.1},
+    {"BranchCode": 101033, "name": "Bandar Sri Permaisuri", "base_traffic": 1.0,
+     "slot_duration": 30, "early_call": 15, "tz_offset": 480},
+    {"BranchCode": 101045, "name": "Taman Midah", "base_traffic": 0.8,
+     "slot_duration": 30, "early_call": 15, "tz_offset": 480},
+    {"BranchCode": 101012, "name": "Bangsar", "base_traffic": 1.3,
+     "slot_duration": 30, "early_call": 10, "tz_offset": 480},
+    {"BranchCode": 101078, "name": "Cheras Selatan", "base_traffic": 0.9,
+     "slot_duration": 30, "early_call": 15, "tz_offset": 480},
+    {"BranchCode": 101056, "name": "Wangsa Maju", "base_traffic": 1.1,
+     "slot_duration": 30, "early_call": 15, "tz_offset": 480},
 ]
 
-# Each service owns a queue prefix (档 B). Some counters listen to several prefixes.
 SERVICES = [
-    {"code": "DEPOSIT", "prefix": "A", "avg_min": 6, "weight": 0.16},
-    {"code": "WITHDRAW", "prefix": "A", "avg_min": 5, "weight": 0.06},  # shares A with deposit
-    {"code": "LOAN", "prefix": "B", "avg_min": 30, "weight": 0.08},
-    {"code": "CREDIT_CARD", "prefix": "C", "avg_min": 12, "weight": 0.10},
-    {"code": "ACC_OPEN", "prefix": "D", "avg_min": 25, "weight": 0.08},
-    {"code": "CUST_SVC", "prefix": "E", "avg_min": 10, "weight": 0.14},
-    {"code": "ATM_CDM", "prefix": "F", "avg_min": 8, "weight": 0.10},
-    {"code": "FIXED_DEP", "prefix": "G", "avg_min": 15, "weight": 0.06},
-    {"code": "INSURANCE", "prefix": "H", "avg_min": 20, "weight": 0.06},
-    {"code": "BIZ_BANK", "prefix": "I", "avg_min": 18, "weight": 0.06},
-    {"code": "ONLINE_SUP", "prefix": "J", "avg_min": 12, "weight": 0.05},
-    {"code": "REMITTANCE", "prefix": "K", "avg_min": 10, "weight": 0.05},
+    {"code": "DEPOSIT",    "prefix": "A", "avg_min": 6,  "online_slots": 4, "weight": 0.16},
+    {"code": "WITHDRAW",   "prefix": "A", "avg_min": 5,  "online_slots": 4, "weight": 0.06},
+    {"code": "LOAN",       "prefix": "B", "avg_min": 30, "online_slots": 2, "weight": 0.08},
+    {"code": "CREDIT_CARD","prefix": "C", "avg_min": 12, "online_slots": 3, "weight": 0.10},
+    {"code": "ACC_OPEN",   "prefix": "D", "avg_min": 25, "online_slots": 2, "weight": 0.08},
+    {"code": "CUST_SVC",   "prefix": "E", "avg_min": 10, "online_slots": 5, "weight": 0.14},
+    {"code": "ATM_CDM",    "prefix": "F", "avg_min": 8,  "online_slots": 3, "weight": 0.10},
+    {"code": "FIXED_DEP",  "prefix": "G", "avg_min": 15, "online_slots": 2, "weight": 0.06},
+    {"code": "INSURANCE",  "prefix": "H", "avg_min": 20, "online_slots": 2, "weight": 0.06},
+    {"code": "BIZ_BANK",   "prefix": "I", "avg_min": 18, "online_slots": 2, "weight": 0.06},
+    {"code": "ONLINE_SUP", "prefix": "J", "avg_min": 12, "online_slots": 3, "weight": 0.05},
+    {"code": "REMITTANCE", "prefix": "K", "avg_min": 10, "online_slots": 3, "weight": 0.05},
 ]
 
-# Counter work profiles: which prefixes a counter listens to
+# Counter profiles: which prefixes a counter listens to
 PROFILES = [
-    ["A", "E"],           # teller: deposit/withdraw lane + CS
-    ["A", "F"],           # cashier + ATM support
-    ["B", "C"],           # loan + cards
-    ["D", "G", "H"],      # account/products
-    ["I", "J", "K"],      # biz / online / remittance
-    ["A", "B", "C", "E"], # flexible multi-queue
+    ["A", "E"],
+    ["A", "F"],
+    ["B", "C"],
+    ["D", "G", "H"],
+    ["I", "J", "K"],
+    ["A", "B", "C", "E"],
 ]
 
 
-def hour_traffic_multiplier(hour: int) -> float:
-    pattern = {9: 1.4, 10: 1.6, 11: 1.3, 12: 0.7, 13: 0.8, 14: 1.3, 15: 1.5, 16: 1.2}
-    return pattern.get(hour, 0.5)
+@dataclass
+class Ticket:
+    """A simulated queue ticket."""
+    ticket_id: int
+    branch_code: int
+    service_code: str
+    prefix: str
+    default_avg_min: float
+    online_slots_per_slot: int
+    entry_type: int  # 0=OnlineBooked, 1=WalkIn
+    checked_in: bool
+    created_at: float  # minutes from day start (e.g., 540 = 9:00)
+    slot_start: float | None = None  # for online bookings
+    slot_end: float | None = None
+    queue_eligible_at: float = 0.0  # walk-in=created_at, online=slot_start
+    serving_started_at: float | None = None
+    service_end_at: float | None = None  # actual end time (observable: counter becomes free)
+    abandoned: bool = False
+    enqueue_seq: int = 0
 
 
-def day_traffic_multiplier(day: int) -> float:
-    pattern = {1: 1.4, 2: 1.1, 3: 1.0, 4: 1.0, 5: 1.3, 6: 0.0, 7: 0.0}
-    return pattern.get(day, 1.0)
+@dataclass
+class Counter:
+    """A simulated service counter."""
+    counter_id: int
+    allowed_prefixes: list[str]
+    free_at: float = 0.0  # when this counter becomes free
+    currently_serving: Ticket | None = None
 
 
-def simulate_call_next_wait(
+def hour_traffic(hour: int) -> float:
+    return {9: 1.4, 10: 1.6, 11: 1.3, 12: 0.7, 13: 0.8, 14: 1.3, 15: 1.5, 16: 1.2}.get(hour, 0.5)
+
+
+def day_traffic(dow: int) -> float:
+    # 0=Mon..4=Fri, 5=Sat, 6=Sun (python weekday)
+    return {0: 1.4, 1: 1.1, 2: 1.0, 3: 1.0, 4: 1.3}.get(dow, 0.0)
+
+
+def simulate_day(
     rng: np.random.Generator,
-    my_priority: int,
-    my_wait_start_rank: float,
-    queue_prefix: str,
-    listening_profiles: list[list[str]],
-    queue_depths: dict[str, int],
-    avg_by_prefix: dict[str, float],
-    n_active: int,
-) -> tuple[float, int]:
-    """
-    Approximate Call Next drain wait for 'me'.
-    Among counters listening to my prefix, each free counter repeatedly picks
-    longest-wait head among its queues (P0 heads beat P1).
-    Returns (wait_minutes, people_ahead_in_drain_order).
-    """
-    # Counters that can hear my queue
-    able = [p for p in listening_profiles if queue_prefix in p]
-    if not able:
-        able = listening_profiles[:1]
-    n_able = max(1, min(n_active, len(able)))
-
-    # Build competing heads: for each listened prefix, invent head wait ranks
-    # People ahead ≈ how many Call Next picks happen before me on able counters.
-    competitors = []
-    for pref, depth in queue_depths.items():
-        if depth <= 0:
-            continue
-        # tickets in this queue ahead of a typical position
-        for i in range(depth):
-            # earlier in queue = longer wait already (smaller rank = earlier eligible)
-            wait_rank = i + rng.uniform(0, 0.5)
-            pri = 0 if (pref == queue_prefix and my_priority == 0 and i == 0) else (
-                0 if rng.random() < 0.12 else 1
-            )
-            competitors.append((pri, wait_rank, pref))
-
-    # Insert me
-    competitors.append((my_priority, my_wait_start_rank, queue_prefix))
-    # Sort like successive Call Next across one pooled set of able counters:
-    # group by queue take head, then P0 pool then longest wait — approximate by
-    # sorting all with (priority, wait_rank) but only counting tickets on prefixes
-    # that share at least one able counter with me.
-    relevant_prefs = set()
-    for p in able:
-        relevant_prefs.update(p)
-
-    pool = [c for c in competitors if c[2] in relevant_prefs]
-    # Drain order: P0 first by wait_rank, then P1 by wait_rank
-    pool.sort(key=lambda x: (x[0], x[1]))
-
-    my_idx = None
-    for i, c in enumerate(pool):
-        if c[2] == queue_prefix and abs(c[1] - my_wait_start_rank) < 1e-9 and c[0] == my_priority:
-            my_idx = i
-            break
-    if my_idx is None:
-        my_idx = len(pool) // 2
-
-    people_ahead = my_idx
-    # Service time for each ahead ticket depends on its queue avg
-    total_work = 0.0
-    for c in pool[:my_idx]:
-        total_work += avg_by_prefix.get(c[2], 10.0) * rng.uniform(0.7, 1.3)
-
-    wait = total_work / n_able
-    return max(0.0, wait), people_ahead
-
-
-def generate(n_rows: int = 30000, seed: int = 42) -> pd.DataFrame:
-    rng = np.random.default_rng(seed)
+    branch: dict,
+    day_of_week: int,
+    n_profiles: int,
+) -> list[dict]:
+    """Simulate one full day at one branch using discrete-event Call Next drain."""
 
     svc_codes = [s["code"] for s in SERVICES]
     svc_weights = np.array([s["weight"] for s in SERVICES], dtype=float)
     svc_weights /= svc_weights.sum()
     svc_by_code = {s["code"]: s for s in SERVICES}
-    avg_by_prefix: dict[str, float] = {}
-    for s in SERVICES:
-        avg_by_prefix.setdefault(s["prefix"], s["avg_min"])
-        # if shared prefix, blend
-        avg_by_prefix[s["prefix"]] = 0.5 * avg_by_prefix[s["prefix"]] + 0.5 * s["avg_min"]
 
-    rows: list[dict] = []
-    while len(rows) < n_rows:
-        br = rng.choice(BRANCHES)
-        day_of_week = int(rng.choice([1, 2, 3, 4, 5], p=[0.25, 0.2, 0.18, 0.17, 0.2]))
-        day_mult = day_traffic_multiplier(day_of_week)
-        if day_mult == 0:
+    slot_dur = branch["slot_duration"]
+    early_call = branch["early_call"]
+
+    # Set up counters
+    profile_indices = rng.choice(len(PROFILES), size=n_profiles, replace=False)
+    counters = [
+        Counter(counter_id=i, allowed_prefixes=PROFILES[idx])
+        for i, idx in enumerate(profile_indices)
+    ]
+
+    # Generate arrivals for the day (9:00=540 to 16:30=990)
+    day_mult = day_traffic(day_of_week)
+    if day_mult == 0:
+        return []
+
+    tickets: list[Ticket] = []
+    ticket_id = 0
+
+    for hour in range(9, 17):
+        h_mult = hour_traffic(hour)
+        # ~arrivals this hour based on traffic
+        lam = branch["base_traffic"] * h_mult * day_mult * 8  # ~8 per base hour
+        n_arrivals = max(0, rng.poisson(lam))
+
+        for _ in range(n_arrivals):
+            minute_in_hour = rng.uniform(0, 60)
+            created_at = hour * 60 + minute_in_hour
+
+            svc_code = str(rng.choice(svc_codes, p=svc_weights))
+            svc = svc_by_code[svc_code]
+
+            # 35% online, 65% walk-in
+            entry_type = 0 if rng.random() < 0.35 else 1
+
+            slot_start = None
+            slot_end = None
+            queue_eligible_at = created_at
+
+            if entry_type == 0:  # OnlineBooked
+                # Online booking: created_at = booking time (could be earlier)
+                # Simulate booking 1-72 hours before slot
+                booking_hours_before = rng.exponential(4)
+                actual_created = created_at - booking_hours_before * 60
+                # Slot aligned to slot_dur boundaries
+                slot_idx = int(created_at) // slot_dur
+                slot_start = slot_idx * slot_dur
+                slot_end = slot_start + slot_dur
+                queue_eligible_at = slot_start  # online: eligible at slot start
+                created_at = actual_created  # booking time
+
+                checked_in = rng.random() < 0.88
+                # ~8% abandon (never check in or leave before called)
+                abandoned = not checked_in and rng.random() < 0.6
+            else:  # WalkIn
+                checked_in = True
+                abandoned = rng.random() < 0.05  # 5% walk-ins abandon
+
+            ticket_id += 1
+            tickets.append(Ticket(
+                ticket_id=ticket_id,
+                branch_code=branch["BranchCode"],
+                service_code=svc_code,
+                prefix=svc["prefix"],
+                default_avg_min=svc["avg_min"],
+                online_slots_per_slot=svc["online_slots"],
+                entry_type=entry_type,
+                checked_in=checked_in,
+                created_at=created_at,
+                slot_start=slot_start,
+                slot_end=slot_end,
+                queue_eligible_at=queue_eligible_at,
+                abandoned=abandoned,
+                enqueue_seq=ticket_id,
+            ))
+
+    if not tickets:
+        return []
+
+    # ── Discrete-event Call Next drain ──
+    # Simulate counters pulling tickets in CreatedAt FIFO order (matching QueueCallNextSelector)
+    waiting = [t for t in tickets if not t.abandoned]
+    # For online: only eligible when checked_in and slot_start - early_call <= now
+    # For walk-in: eligible when checked_in
+
+    # Track rolling avg service times per prefix (simulated from completed services)
+    completed_durations: dict[str, list[float]] = {s["prefix"]: [] for s in SERVICES}
+    # Seed with some baseline durations
+    for s in SERVICES:
+        for _ in range(10):
+            completed_durations[s["prefix"]].append(
+                s["avg_min"] * rng.uniform(0.6, 1.4)
+            )
+
+    def rolling_avg(prefix: str) -> float:
+        durations = completed_durations[prefix]
+        if len(durations) > 30:
+            durations = durations[-30:]
+        return float(np.mean(durations)) if durations else 10.0
+
+    def is_eligible(t: Ticket, now: float) -> bool:
+        if t.serving_started_at is not None or t.abandoned:
+            return False
+        if t.entry_type == 1:  # walk-in
+            # Walk-in only exists after they arrive (created_at = arrival time)
+            return t.checked_in and t.created_at <= now
+        # online
+        if not t.checked_in:
+            return False
+        if t.slot_start is None:
+            return False
+        return (t.slot_start - early_call) <= now
+
+    def get_eligible_pool(now: float) -> list[Ticket]:
+        return [t for t in waiting if is_eligible(t, now) and t.serving_started_at is None]
+
+    # Process time from 9:00 to 17:30 in small steps
+    # Actually, let's do event-driven: find next counter free time, pull ticket
+    current_time = 540.0  # 9:00
+    end_time = 1050.0  # 17:30
+
+    for c in counters:
+        c.free_at = current_time
+
+    guard = 0
+    max_iterations = len(waiting) * 3 + 1000
+
+    while guard < max_iterations:
+        guard += 1
+
+        # Find earliest free counter
+        earliest_counter = min(counters, key=lambda c: c.free_at)
+        now = earliest_counter.free_at
+
+        if now > end_time:
+            break
+
+        # Find eligible tickets for this counter's prefixes
+        pool = [t for t in get_eligible_pool(now)
+                if t.prefix in earliest_counter.allowed_prefixes]
+
+        if not pool:
+            # No eligible tickets — advance time a bit to check for new eligibility
+            next_eligible_time = end_time
+            for t in waiting:
+                if t.serving_started_at is not None or t.abandoned:
+                    continue
+                if t.entry_type == 0 and t.checked_in and t.slot_start is not None:
+                    eligible_at = t.slot_start - early_call
+                    if eligible_at > now:
+                        next_eligible_time = min(next_eligible_time, eligible_at)
+
+            if next_eligible_time >= end_time:
+                # Check if any other counter still has work
+                all_free = all(c.free_at <= now for c in counters)
+                if all_free:
+                    break
+                else:
+                    earliest_counter.free_at = now + 1  # advance 1 min
+                    continue
+
+            earliest_counter.free_at = next_eligible_time
             continue
 
-        hour = int(rng.choice([9, 10, 11, 12, 13, 14, 15, 16],
-                              p=[0.14, 0.16, 0.13, 0.08, 0.10, 0.13, 0.15, 0.11]))
-        hour_mult = hour_traffic_multiplier(hour)
-        traffic = br["base_traffic"] * hour_mult * day_mult
+        # CreatedAt FIFO: pick earliest CreatedAt (matching QueueCallNextSelector)
+        pool.sort(key=lambda t: (t.created_at, t.ticket_id))
+        ticket = pool[0]
 
-        svc_code = str(rng.choice(svc_codes, p=svc_weights))
-        svc = svc_by_code[svc_code]
-        prefix = svc["prefix"]
-        default_avg = svc["avg_min"]
+        # Service this ticket
+        service_duration = ticket.default_avg_min * rng.uniform(0.5, 1.8)
+        # Occasionally a "difficult customer" — long service
+        if rng.random() < 0.03:
+            service_duration *= rng.uniform(2.0, 4.0)
 
-        # EntryType: 0=OnlineBooked, 1=WalkIn (match QMS enum)
-        entry_type = 0 if rng.random() < 0.35 else 1
-        if entry_type == 1:
-            checked_in = 1
-            slot_active = 0
-            # walk-in always eligible P1 (unless we invent VIP — keep P1)
-            call_priority = 1
-        else:
-            checked_in = 1 if rng.random() < 0.88 else 0
-            # among checked-in online, ~40% currently in active slot → P0
-            slot_active = 1 if checked_in and rng.random() < 0.40 else 0
-            call_priority = 0 if slot_active else 1
+        ticket.serving_started_at = now
+        ticket.service_end_at = now + service_duration  # record actual end time
+        earliest_counter.free_at = now + service_duration
+        earliest_counter.currently_serving = ticket
 
-        # Depths per prefix at this branch snapshot
-        prefixes = sorted({s["prefix"] for s in SERVICES})
-        queue_depths = {
-            p: int(max(0, rng.poisson(lam=max(0.4, traffic * (2.2 if p == prefix else 1.2)))))
-            for p in prefixes
-        }
-        # Ensure my queue has at least me
-        queue_depths[prefix] = max(1, queue_depths[prefix])
+        # Track completed duration for rolling avg
+        completed_durations[ticket.prefix].append(service_duration)
 
-        # Active counters + which profiles are open
-        n_profiles = min(len(PROFILES), max(2, int(rng.integers(3, 7))))
-        listening = [PROFILES[i] for i in rng.choice(len(PROFILES), size=n_profiles, replace=False)]
-        if hour_mult >= 1.3:
-            active_counters = int(rng.integers(max(2, n_profiles - 1), n_profiles + 1))
-        else:
-            active_counters = int(rng.integers(2, max(3, n_profiles)))
-        active_counters = max(1, min(active_counters, n_profiles))
+    # ── Build snapshot rows for each served ticket ──
+    # Snapshot at queue_eligible_at (when the person starts waiting)
+    rows: list[dict] = []
+    served_tickets = [t for t in tickets if t.serving_started_at is not None]
 
-        # Listening counters that include my prefix
-        listening_counters = sum(1 for p in listening[:active_counters] if prefix in p)
-        listening_counters = max(1, listening_counters)
-
-        queue_length = int(queue_depths[prefix])  # same-queue length (legacy feature)
-        # Cross-lane pressure: total people on queues my counters hear
-        heard = set()
-        for p in listening[:active_counters]:
-            heard.update(p)
-        cross_lane_queue_length = int(sum(queue_depths[p] for p in heard))
+    for t in served_tickets:
+        snap_time = t.queue_eligible_at
+        hour = int(snap_time // 60)
+        if hour < 0 or hour > 23:
+            hour = max(0, min(23, hour))
 
         is_peak = 1 if (9 <= hour <= 11 or 14 <= hour <= 16) else 0
-        enqueue_seq = int(rng.integers(1, max(2, queue_length + 5)))
 
-        # My position in own queue (0 = head)
-        my_pos = int(rng.integers(0, queue_length))
-        my_wait_rank = float(my_pos) + rng.uniform(0, 0.3)
+        # Queue state at snapshot time
+        same_svc_waiting = [
+            o for o in tickets
+            if o.service_code == t.service_code
+            and not o.abandoned
+            and o.queue_eligible_at <= snap_time
+            and (o.serving_started_at is None or o.serving_started_at > snap_time)
+        ]
+        queue_length = len(same_svc_waiting)
 
-        wait_minutes, people_ahead = simulate_call_next_wait(
-            rng,
-            call_priority,
-            my_wait_rank,
-            prefix,
-            listening[:active_counters],
-            queue_depths,
-            avg_by_prefix,
-            listening_counters,
+        # PeopleAhead: CreatedAt FIFO — count eligible with CreatedAt < mine
+        eligible_at_snap = [
+            o for o in same_svc_waiting
+            if is_eligible(o, snap_time)
+            and (o.created_at < t.created_at
+                 or (o.created_at == t.created_at and o.ticket_id < t.ticket_id))
+        ]
+        people_ahead = len(eligible_at_snap)
+
+        # Online / walk-in queue lengths
+        online_q = sum(1 for o in same_svc_waiting if o.entry_type == 0)
+        walkin_q = sum(1 for o in same_svc_waiting if o.entry_type == 1)
+
+        # NowServing: tickets being served at snapshot time for this service.
+        # Uses actual service_end_at (observable: counter is busy) instead of
+        # default_avg_min * 1.2 estimate which would be a data leak.
+        now_serving = sum(
+            1 for o in tickets
+            if o.service_code == t.service_code
+            and o.serving_started_at is not None
+            and o.service_end_at is not None
+            and o.serving_started_at <= snap_time
+            and o.service_end_at > snap_time
         )
 
-        # Peak / Monday effects + noise
-        wait_minutes *= 1.0 + 0.12 * is_peak
-        if day_of_week == 1 and hour <= 10:
-            wait_minutes *= 1.12
-        wait_minutes += float(rng.normal(0, max(0.8, wait_minutes * 0.12)))
-        wait_minutes = float(np.clip(wait_minutes, 0, 90))
-        if queue_length <= 1 and call_priority == 0:
-            wait_minutes = min(wait_minutes, float(rng.uniform(0.5, 4.0)))
+        # Counter counts
+        active_counters = len(counters)
+        svc_eligible_counters = sum(
+            1 for c in counters if t.prefix in c.allowed_prefixes
+        )
+
+        # Rolling avg at snapshot time
+        roll_avg = rolling_avg(t.prefix)
+
+        # Slot features
+        slot_duration = slot_dur
+        minutes_since_slot_start = None
+        minutes_until_slot_end = None
+        online_booked_in_slot = 0
+        walkin_in_slot = 0
+        slot_active = 0
+
+        if t.slot_start is not None and t.slot_end is not None:
+            minutes_since_slot_start = max(0.0, snap_time - t.slot_start)
+            minutes_until_slot_end = max(0.0, t.slot_end - snap_time)
+            slot_active = 1 if t.slot_start <= snap_time < t.slot_end else 0
+
+            # Count others in same slot
+            for o in tickets:
+                if (o.service_code == t.service_code
+                        and o.slot_start == t.slot_start
+                        and o.slot_end == t.slot_end
+                        and not o.abandoned):
+                    if o.entry_type == 0:
+                        online_booked_in_slot += 1
+                    else:
+                        walkin_in_slot += 1
+        else:
+            # Walk-in: slot features are NaN (HistGBR handles natively)
+            slot_duration = slot_dur  # branch-level, always known
+            minutes_since_slot_start = None
+            minutes_until_slot_end = None
+
+        # CallNextPriority: P0 if online + checked_in + slot active
+        call_priority = 0 if (t.entry_type == 0 and t.checked_in and slot_active == 1) else 1
+
+        # Cross-lane queue length: all queues my counters hear
+        heard_prefixes = set()
+        for c in counters:
+            if t.prefix in c.allowed_prefixes:
+                heard_prefixes.update(c.allowed_prefixes)
+        cross_lane = sum(
+            1 for o in tickets
+            if o.prefix in heard_prefixes
+            and not o.abandoned
+            and o.queue_eligible_at <= snap_time
+            and (o.serving_started_at is None or o.serving_started_at > snap_time)
+        )
+
+        # Target: actual waiting minutes
+        wait_min = t.serving_started_at - t.queue_eligible_at
 
         rows.append({
-            "BranchCode": br["BranchCode"],
-            "ServiceCode": svc_code,
-            "TicketPrefix": prefix,
-            "DefaultAvgServiceMinutes": default_avg,
-            "EntryType": entry_type,
-            "EnqueueSequence": enqueue_seq,
-            "CheckedIn": checked_in,
-            "SlotActive": slot_active,
-            "CallNextPriority": call_priority,
+            # Queue state
             "QueueLength": queue_length,
-            "CrossLaneQueueLength": cross_lane_queue_length,
+            "CrossLaneQueueLength": cross_lane,
             "PeopleAheadCallNext": people_ahead,
+            "NowServing": now_serving,
+            # Capacity
             "ActiveCounters": active_counters,
-            "ListeningCounters": listening_counters,
+            "ListeningCounters": svc_eligible_counters,
+            # Time
             "HourOfDay": hour,
             "DayOfWeek": day_of_week,
             "IsPeakHour": is_peak,
-            "WaitingMinutes": round(wait_minutes, 2),
+            # Service duration
+            "DefaultAvgServiceMinutes": t.default_avg_min,
+            "RollingAvgServiceMinutes": round(roll_avg, 2),
+            # Entry
+            "EnqueueSequence": t.enqueue_seq,
+            "EntryType": t.entry_type,
+            "CheckedIn": 1 if t.checked_in else 0,
+            # Slot features
+            "SlotActive": slot_active,
+            "CallNextPriority": call_priority,
+            "SlotDurationMinutes": slot_duration,
+            "MinutesUntilSlotEnd": minutes_until_slot_end,
+            "MinutesSinceSlotStart": minutes_since_slot_start,
+            "OnlineSlotsPerSlot": t.online_slots_per_slot,
+            "OnlineBookedInSlot": online_booked_in_slot,
+            "WalkInInSlot": walkin_in_slot,
+            # Identity
+            "BranchCode": t.branch_code,
+            "ServiceCode": t.service_code,
+            "TicketPrefix": t.prefix,
+            # Target
+            "WaitingMinutes": round(wait_min, 2),
         })
 
-    return pd.DataFrame(rows)
+    # Also emit abandoned tickets (for training cleaning practice)
+    for t in tickets:
+        if t.abandoned:
+            rows.append({
+                "QueueLength": 0,
+                "CrossLaneQueueLength": 0,
+                "PeopleAheadCallNext": 0,
+                "NowServing": 0,
+                "ActiveCounters": len(counters),
+                "ListeningCounters": sum(1 for c in counters if t.prefix in c.allowed_prefixes),
+                "HourOfDay": int(t.created_at // 60),
+                "DayOfWeek": day_of_week,
+                "IsPeakHour": 0,
+                "DefaultAvgServiceMinutes": t.default_avg_min,
+                "RollingAvgServiceMinutes": round(rolling_avg(t.prefix), 2),
+                "EnqueueSequence": t.enqueue_seq,
+                "EntryType": t.entry_type,
+                "CheckedIn": 0,
+                "SlotActive": 0,
+                "CallNextPriority": 1,
+                "SlotDurationMinutes": slot_dur,
+                "MinutesUntilSlotEnd": None,
+                "MinutesSinceSlotStart": None,
+                "OnlineSlotsPerSlot": t.online_slots_per_slot,
+                "OnlineBookedInSlot": 0,
+                "WalkInInSlot": 0,
+                "BranchCode": t.branch_code,
+                "ServiceCode": t.service_code,
+                "TicketPrefix": t.prefix,
+                "WaitingMinutes": None,  # abandoned — no service
+            })
+
+    return rows
+
+
+def generate(n_rows: int = 30000, seed: int = 42) -> pd.DataFrame:
+    rng = np.random.default_rng(seed)
+    all_rows: list[dict] = []
+
+    # Simulate multiple days across branches until we have enough rows
+    day_count = 0
+    while len(all_rows) < n_rows:
+        for br in BRANCHES:
+            if len(all_rows) >= n_rows:
+                break
+            dow = day_count % 5  # Mon-Fri only
+            n_profiles = min(len(PROFILES), max(2, int(rng.integers(3, 7))))
+            day_rows = simulate_day(rng, br, dow, n_profiles)
+            all_rows.extend(day_rows)
+        day_count += 1
+
+    df = pd.DataFrame(all_rows)
+
+    # Winsorize extreme wait times at 99th percentile (instead of hard cap)
+    served = df["WaitingMinutes"].notna()
+    if served.sum() > 0:
+        p99 = df.loc[served, "WaitingMinutes"].quantile(0.99)
+        df.loc[served, "WaitingMinutes"] = df.loc[served, "WaitingMinutes"].clip(upper=p99)
+
+    return df
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Generate Tier-B synthetic QMS seed data")
+    parser = argparse.ArgumentParser(description="Generate synthetic QMS seed data (v2)")
     parser.add_argument("--rows", type=int, default=30000)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--output", type=Path, default=OUTPUT)
@@ -274,12 +515,19 @@ def main():
     args.output.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(args.output, index=False)
 
-    print(f"Generated {len(df)} Tier-B rows → {args.output}")
-    print(f"  Prefixes: {sorted(df['TicketPrefix'].unique())}")
-    print(f"  P0 ratio: {(df['CallNextPriority'] == 0).mean():.1%}")
-    print(f"  Wait mean/median/max: {df['WaitingMinutes'].mean():.1f} / "
-          f"{df['WaitingMinutes'].median():.1f} / {df['WaitingMinutes'].max():.1f} m")
+    served = df[df["WaitingMinutes"].notna()]
+    abandoned = df[df["WaitingMinutes"].isna()]
+
+    print(f"Generated {len(df)} rows ({len(served)} served, {len(abandoned)} abandoned) → {args.output}")
+    print(f"  Branches: {sorted(df['BranchCode'].unique())}")
+    print(f"  Services: {sorted(df['ServiceCode'].unique())}")
     print(f"  Online ratio: {(df['EntryType'] == 0).mean():.1%}")
+    print(f"  P0 ratio: {(df['CallNextPriority'] == 0).mean():.1%}")
+    if len(served) > 0:
+        w = served["WaitingMinutes"]
+        print(f"  Wait (served): mean={w.mean():.1f} median={w.median():.1f} "
+              f"p95={w.quantile(0.95):.1f} max={w.max():.1f} min")
+    print(f"  Features: {len(df.columns)} columns")
 
 
 if __name__ == "__main__":
