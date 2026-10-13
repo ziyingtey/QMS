@@ -64,18 +64,35 @@ public sealed class BranchesController(QmsDbContext db, QmsQueueService queue) :
         }
     }
 
-    /// <summary>Values to encode on a static branch QR (HTTPS landing or deep link; mobile app parses query and calls walk-in API).</summary>
-    [AllowAnonymous]
+    /// <summary>
+    /// Current branch walk-in QR (staff/manager, for the branch display). The URL opens the public staff-web page
+    /// <c>/walk-in?branch=..&amp;t=..</c>; <c>t</c> is a daily HMAC token that rotates at branch-local midnight.
+    /// </summary>
+    [Authorize(Policy = "Staff")]
     [HttpGet("{branchId:guid}/walk-in-link")]
-    public ActionResult<WalkInLinkDto> WalkInLink(Guid branchId, [FromQuery] Guid serviceTypeId)
+    public async Task<ActionResult<WalkInLinkDto>> WalkInLink(
+        Guid branchId,
+        [FromServices] WalkInTokenService walkInTokens,
+        [FromServices] Microsoft.Extensions.Options.IOptions<WalkInOptions> walkInOptions,
+        CancellationToken cancellationToken)
     {
-        var origin = $"{Request.Scheme}://{Request.Host.Value}";
-        var qrUrl = $"{origin}/qms-walk-in?branchId={branchId}&serviceTypeId={serviceTypeId}";
-        return Ok(new WalkInLinkDto(
-            branchId,
-            serviceTypeId,
-            qrUrl,
-            "POST /api/queue/walk-in with JSON body { branchId, serviceTypeId } — response: ticketNumber, walkInCapacitySlotStart, walkInCapacitySlotEnd (walk-in buffer used, may be next window if current is full)"));
+        var branch = await db.Branches.AsNoTracking().Where(b => b.Id == branchId)
+            .Select(b => new { b.Id, b.ServiceZoneOffsetMinutes }).FirstOrDefaultAsync(cancellationToken);
+        if (branch is null) return NotFound();
+        if (!walkInTokens.IsConfigured)
+            return Problem("Walk-in QR is not configured (WalkIn:TokenSecret).", statusCode: StatusCodes.Status503ServiceUnavailable);
+
+        var zone = TimeSpan.FromMinutes(branch.ServiceZoneOffsetMinutes);
+        var local = DateTimeOffset.UtcNow.ToOffset(zone);
+        var today = DateOnly.FromDateTime(local.DateTime);
+        var token = walkInTokens.Compute(branchId, today);
+        var validUntil = new DateTimeOffset(local.Year, local.Month, local.Day, 0, 0, 0, zone).AddDays(1);
+
+        var configured = walkInOptions.Value.PublicWebBaseUrl?.Trim().TrimEnd('/');
+        var origin = string.IsNullOrEmpty(configured) ? $"{Request.Scheme}://{Request.Host.Value}" : configured;
+        var qrUrl = $"{origin}/walk-in?branch={branchId}&t={token}";
+        return Ok(new WalkInLinkDto(branchId, qrUrl, token, today.ToString("yyyy-MM-dd"),
+            validUntil.ToString("yyyy-MM-dd'T'HH:mm:ss.fffzzz", System.Globalization.CultureInfo.InvariantCulture)));
     }
 
     private static BranchDto MapBranchDto(Branch b)
@@ -140,6 +157,7 @@ public sealed record BranchDto(
 
 public sealed record WalkInLinkDto(
     Guid BranchId,
-    Guid ServiceTypeId,
     string QrUrl,
-    string WalkInApiHint);
+    string Token,
+    string BranchLocalDate,
+    string ValidUntil);

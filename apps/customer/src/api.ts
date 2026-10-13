@@ -499,14 +499,6 @@ export async function apiServiceLaneSummary(branchId: string, serviceTypeId: str
   return res.json() as Promise<ServiceLaneSummary>;
 }
 
-export async function apiWalkInLink(branchId: string, serviceTypeId: string): Promise<{ qrUrl: string; walkInApiHint: string }> {
-  const res = await fetch(
-    `${API_BASE}/api/branches/${branchId}/walk-in-link?serviceTypeId=${encodeURIComponent(serviceTypeId)}`,
-  );
-  if (!res.ok) throw new Error(await parseError(res));
-  return res.json() as Promise<{ qrUrl: string; walkInApiHint: string }>;
-}
-
 export async function apiQueueStatus(branchId: string, ticket: string): Promise<QueueStatus> {
   const res = await fetch(
     `${API_BASE}/api/queue/status?branchId=${encodeURIComponent(branchId)}&ticket=${encodeURIComponent(ticket)}`,
@@ -515,21 +507,7 @@ export async function apiQueueStatus(branchId: string, ticket: string): Promise<
   return res.json() as Promise<QueueStatus>;
 }
 
-export type WalkInResult = {
-  ticketNumber: string;
-  walkInCapacitySlotStart: string;
-  walkInCapacitySlotEnd: string;
-};
-
-export async function apiWalkIn(branchId: string, serviceTypeId: string): Promise<WalkInResult> {
-  const res = await fetch(`${API_BASE}/api/queue/walk-in`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ branchId, serviceTypeId }),
-  });
-  if (!res.ok) throw new Error(await parseError(res));
-  return res.json() as Promise<WalkInResult>;
-}
+// Walk-in (apiWalkIn / apiWalkInLink) removed: walk-in now uses the branch QR web page, not the app.
 
 export type CustomerNotificationDto = {
   id: string;

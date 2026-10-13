@@ -4,13 +4,12 @@ import { StatusBar } from "expo-status-bar";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, FlatList, Platform, Pressable, RefreshControl, StatusBar as RNStatusBar, StyleSheet, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { apiServiceLaneSummary, apiWalkIn, type ServiceLaneSummary } from "../api";
+import { apiServiceLaneSummary, type ServiceLaneSummary } from "../api";
 import type { BookingStackParamList } from "../navigation/navigationRef";
 import { exitBookingFlow } from "../navigation/bookingExit";
 import { useCustomer } from "../context/CustomerContext";
 import { useBranchRealtime } from "../useBranchRealtime";
 import { theme } from "../theme";
-import { formatSlotRange } from "../utils/dateFormat";
 
 type Props = NativeStackScreenProps<BookingStackParamList, "BookingServices">;
 
@@ -18,7 +17,7 @@ export function BookingServicesScreen({ navigation, route }: Props) {
   const { branch, returnTo } = route.params;
   const insets = useSafeAreaInsets();
   const topPad = Platform.OS === "android" ? (RNStatusBar.currentHeight ?? 0) + 8 : Math.max(insets.top, 12);
-  const { navigateToQueueTrack, token } = useCustomer();
+  const { token } = useCustomer();
   const [laneByService, setLaneByService] = useState<Record<string, ServiceLaneSummary>>({});
   const [listRefreshing, setListRefreshing] = useState(false);
   const [search, setSearch] = useState("");
@@ -61,19 +60,7 @@ export function BookingServicesScreen({ navigation, route }: Props) {
     }
   };
 
-  const walkIn = async (serviceId: string) => {
-    const svc = branch.services.find((s) => s.id === serviceId);
-    if (!svc) return;
-    try {
-      const res = await apiWalkIn(branch.id, svc.id);
-      const pool = formatSlotRange(res.walkInCapacitySlotStart, res.walkInCapacitySlotEnd, branch.serviceZoneOffsetMinutes);
-      Alert.alert("Walk-in ticket", `Ticket ${res.ticketNumber}\nWalk-in pool: ${pool}`, [
-        { text: "View queue", onPress: () => navigateToQueueTrack(branch.id, res.ticketNumber) },
-      ]);
-    } catch (e) {
-      Alert.alert("Walk-in", e instanceof Error ? e.message : String(e));
-    }
-  };
+  // Walk-in tickets are no longer taken in the app: customers scan the branch QR (public web page /walk-in).
 
   return (
     <View style={styles.screen}>
@@ -168,13 +155,6 @@ export function BookingServicesScreen({ navigation, route }: Props) {
                 >
                   <Ionicons name="calendar-outline" size={14} color="#fff" />
                   <Text style={styles.bookBtnText}>Book a Slot</Text>
-                </Pressable>
-                <Pressable
-                  style={styles.walkInBtn}
-                  onPress={() => void walkIn(item.id)}
-                >
-                  <Ionicons name="footsteps-outline" size={14} color={theme.primaryDark} />
-                  <Text style={styles.walkInBtnText}>Walk-in</Text>
                 </Pressable>
               </View>
             </View>
@@ -282,17 +262,4 @@ const styles = StyleSheet.create({
     backgroundColor: theme.primaryDark,
   },
   bookBtnText: { fontSize: 12, fontWeight: "700", color: "#fff" },
-  walkInBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 5,
-    flex: 1,
-    paddingVertical: 8,
-    borderRadius: 10,
-    borderWidth: 1.5,
-    borderColor: "#e2e8f0",
-    backgroundColor: "#fff",
-  },
-  walkInBtnText: { fontSize: 12, fontWeight: "700", color: theme.primaryDark },
 });

@@ -32,6 +32,9 @@ public class QueueEntry
     /// <summary>Whether the customer has physically arrived (check-in).</summary>
     public bool CheckedIn { get; set; }
 
+    /// <summary>Anonymous device id (X-Device-Id header) of the public walk-in page that took this ticket. Not personal data.</summary>
+    public string? WalkInDeviceId { get; set; }
+
     // ── Queue Timeline ──
 
     /// <summary>

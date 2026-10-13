@@ -161,6 +161,8 @@ public sealed class QmsDbContext : DbContext
                 .IsUnique()
                 .HasFilter("[State] IN (0, 1, 2)"); // Waiting, Called, Serving
             e.Property(x => x.TicketNumber).HasMaxLength(32);
+            e.Property(x => x.WalkInDeviceId).HasMaxLength(64);
+            e.HasIndex(x => new { x.BranchId, x.WalkInDeviceId }).HasFilter("[WalkInDeviceId] IS NOT NULL");
             e.HasOne(x => x.Branch).WithMany().HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.NoAction);
             e.HasOne(x => x.ServiceType).WithMany(s => s.QueueEntries).HasForeignKey(x => x.ServiceTypeId).OnDelete(DeleteBehavior.NoAction);
             e.HasOne(x => x.Queue).WithMany(q => q.QueueEntries).HasForeignKey(x => x.QueueId).OnDelete(DeleteBehavior.NoAction);

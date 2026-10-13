@@ -13,6 +13,9 @@ using QMS.Application.Waiting;
 using QMS.Infrastructure;
 using QMS.Infrastructure.Persistence;
 using System.Text;
+using System.Security.Claims;
+using System.Threading.RateLimiting;
+using Microsoft.AspNetCore.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -101,6 +104,31 @@ builder.Services.AddSingleton<IEmailSender, SmtpEmailSender>();
 builder.Services.AddScoped<AuthSessionService>();
 builder.Services.AddScoped<CustomerNotificationService>();
 builder.Services.AddScoped<QmsQueueService>();
+builder.Services.Configure<WalkInOptions>(builder.Configuration.GetSection(WalkInOptions.SectionName));
+builder.Services.AddSingleton<WalkInTokenService>();
+// Public walk-in rate limit: staff/manager unlimited; per X-Device-Id 3 / 10 min; no device id → per IP 30 / 10 min.
+builder.Services.AddRateLimiter(o =>
+{
+    o.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    o.OnRejected = async (ctx, ct) =>
+    {
+        ctx.HttpContext.Response.ContentType = "application/json";
+        await ctx.HttpContext.Response.WriteAsync(
+            "{\"message\":\"Too many tickets from this device. Please wait a few minutes or ask our staff for help.\"}", ct);
+    };
+    o.AddPolicy("walk-in-public", http =>
+    {
+        if (http.User.IsInRole("Staff") || http.User.IsInRole("Manager"))
+            return RateLimitPartition.GetNoLimiter("staff");
+        var device = http.Request.Headers["X-Device-Id"].ToString().Trim();
+        if (!string.IsNullOrEmpty(device) && device.Length <= 64)
+            return RateLimitPartition.GetFixedWindowLimiter("dev:" + device,
+                _ => new FixedWindowRateLimiterOptions { PermitLimit = 3, Window = TimeSpan.FromMinutes(10), QueueLimit = 0 });
+        var ip = http.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        return RateLimitPartition.GetFixedWindowLimiter("ip:" + ip,
+            _ => new FixedWindowRateLimiterOptions { PermitLimit = 30, Window = TimeSpan.FromMinutes(10), QueueLimit = 0 });
+    });
+});
 builder.Services.AddHostedService<BookingLifecycleHostedService>();
 builder.Services.AddHostedService<BranchQueueDayRolloverHostedService>();
 builder.Services.AddHostedService<BranchAfterHoursCounterHostedService>();
@@ -145,6 +173,7 @@ if (!app.Environment.IsDevelopment())
 app.UseStaticFiles();
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseRateLimiter();
 app.MapControllers();
 app.MapHub<QueueHub>("/hubs/queue");
 

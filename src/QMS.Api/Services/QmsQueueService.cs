@@ -191,7 +191,7 @@ public sealed class QmsQueueService(
     // WALK-IN
     // ─────────────────────────────────────────────────────────────────────
 
-    public async Task<WalkInCreatedDto> WalkInAsync(Guid branchId, Guid serviceTypeId, CancellationToken cancellationToken = default)
+    public async Task<WalkInCreatedDto> WalkInAsync(Guid branchId, Guid serviceTypeId, CancellationToken cancellationToken = default, string? walkInDeviceId = null)
     {
         var branch = await db.Branches.FirstOrDefaultAsync(b => b.Id == branchId, cancellationToken)
                      ?? throw new InvalidOperationException("Branch not found");
@@ -236,6 +236,7 @@ public sealed class QmsQueueService(
             AssignedSlotEnd = chosenEnd,
             CheckedIn = true,
             QueueEligibleAt = nowUtc,
+            WalkInDeviceId = walkInDeviceId,
         };
 
         db.QueueEntries.Add(entry);

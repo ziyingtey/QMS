@@ -8,6 +8,8 @@ import { PreviewHubPage } from "./pages/preview/PreviewHubPage";
 import { PreviewManagerPage } from "./pages/preview/PreviewManagerPage";
 import { PreviewStaffPage } from "./pages/preview/PreviewStaffPage";
 import { StaffDeckPage } from "./pages/StaffDeckPage";
+import { WalkInPublicPage } from "./pages/WalkInPublicPage";
+import { WalkInQrPage } from "./pages/WalkInQrPage";
 
 function RequireAuth({ children }: { children: ReactNode }) {
   return getStoredToken() || getStoredRefreshToken() ? children : <Navigate to="/login" replace />;
@@ -35,6 +37,16 @@ export default function App() {
           <Route path="/preview/staff-unassigned" element={<PreviewStaffPage variant="not-assigned" />} />
           <Route path="/preview/manager" element={<PreviewManagerPage />} />
           <Route path="/login" element={<LoginRedirect />} />
+          {/* Public: opened from the branch QR (no auth guard) */}
+          <Route path="/walk-in" element={<WalkInPublicPage />} />
+          <Route
+            path="/walk-in-qr"
+            element={
+              <RequireAuth>
+                <WalkInQrPage />
+              </RequireAuth>
+            }
+          />
           <Route
             path="/"
             element={

@@ -1,6 +1,7 @@
 import * as signalR from "@microsoft/signalr";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import { StaffWalkInIssue } from "../components/StaffWalkInIssue";
 import {
   apiBranches,
   apiCallNext,
@@ -443,6 +444,8 @@ export function StaffDeckPage() {
             <h2>Queue</h2>
             <span className="qgo-muted">{waiting.length} waiting</span>
           </header>
+
+          {branchId ? <StaffWalkInIssue branchId={branchId} services={branch?.services ?? []} /> : null}
 
           {/* Lane filter: "All lanes" default for multi-service counters */}
           {multiLane ? (
