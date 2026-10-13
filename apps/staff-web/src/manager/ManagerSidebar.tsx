@@ -1,6 +1,11 @@
-import { LayoutDashboard, Monitor, Clock, BarChart3, ListOrdered, CalendarCheck, Layers } from "lucide-react";
+import { Link } from "react-router-dom";
+import { QrCode, LayoutDashboard, Monitor, Clock, BarChart3, ListOrdered, CalendarCheck, Layers } from "lucide-react";
 
 export type ManagerTab = "dashboard" | "counters" | "queue" | "queues" | "appointments" | "capacity" | "analytics";
+
+type NavItem = { id: ManagerTab; label: string; Icon: typeof LayoutDashboard };
+
+type NavGroup = { id: string; label: string; items: NavItem[]; indent?: boolean };
 
 type Props = {
   active: ManagerTab;
@@ -11,14 +16,27 @@ type Props = {
   waitingCount?: number;
 };
 
-const NAV: { id: ManagerTab; label: string; Icon: typeof LayoutDashboard }[] = [
-  { id: "dashboard", label: "Dashboard", Icon: LayoutDashboard },
-  { id: "counters", label: "Counters", Icon: Monitor },
-  { id: "queue", label: "Live queue", Icon: ListOrdered },
-  { id: "queues", label: "Queues", Icon: Layers },
-  { id: "appointments", label: "Appointments", Icon: CalendarCheck },
-  { id: "capacity", label: "Schedule & capacity", Icon: Clock },
-  { id: "analytics", label: "Analytics", Icon: BarChart3 },
+const NAV_GROUPS: NavGroup[] = [
+  {
+    id: "daily-ops",
+    label: "Daily ops",
+    items: [
+      { id: "dashboard", label: "Dashboard", Icon: LayoutDashboard },
+      { id: "queue", label: "Live Monitor", Icon: ListOrdered },
+      { id: "appointments", label: "Appointments", Icon: CalendarCheck },
+      { id: "analytics", label: "Analytics", Icon: BarChart3 },
+    ],
+  },
+  {
+    id: "settings",
+    label: "Settings",
+    indent: true,
+    items: [
+      { id: "counters", label: "Counters", Icon: Monitor },
+      { id: "queues", label: "Service Lanes", Icon: Layers },
+      { id: "capacity", label: "Schedule & Capacity", Icon: Clock },
+    ],
+  },
 ];
 
 export function ManagerSidebar({ active, onChange, branchName, branchOpen, alertCount, waitingCount = 0 }: Props) {
@@ -36,24 +54,39 @@ export function ManagerSidebar({ active, onChange, branchName, branchOpen, alert
       </div>
 
       <nav className="qgo-mgr-sidebar__nav">
-        {NAV.map((item) => (
-          <button
-            key={item.id}
-            type="button"
-            className={`qgo-mgr-sidebar__link${active === item.id ? " is-active" : ""}`}
-            onClick={() => onChange(item.id)}
+        {NAV_GROUPS.map((group) => (
+          <div
+            key={group.id}
+            className={`qgo-mgr-sidebar__group${group.indent ? " qgo-mgr-sidebar__group--settings" : ""}`}
           >
-            <item.Icon size={18} strokeWidth={2.2} className="qgo-mgr-sidebar__icon" aria-hidden />
-            <span>{item.label}</span>
-            {item.id === "analytics" && alertCount > 0 ? (
-              <span className="qgo-mgr-sidebar__badge">{alertCount}</span>
-            ) : null}
-            {item.id === "queue" && waitingCount > 0 ? (
-              <span className="qgo-mgr-sidebar__badge">{waitingCount}</span>
-            ) : null}
-          </button>
+            <div className="qgo-mgr-sidebar__section-label">{group.label}</div>
+            {group.items.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                className={`qgo-mgr-sidebar__link${active === item.id ? " is-active" : ""}${
+                  group.indent ? " qgo-mgr-sidebar__link--indent" : ""
+                }`}
+                onClick={() => onChange(item.id)}
+              >
+                <item.Icon size={18} strokeWidth={2.2} className="qgo-mgr-sidebar__icon" aria-hidden />
+                <span>{item.label}</span>
+                {item.id === "analytics" && alertCount > 0 ? (
+                  <span className="qgo-mgr-sidebar__badge">{alertCount}</span>
+                ) : null}
+                {item.id === "queue" && waitingCount > 0 ? (
+                  <span className="qgo-mgr-sidebar__badge">{waitingCount}</span>
+                ) : null}
+              </button>
+            ))}
+          </div>
         ))}
       </nav>
+
+      <Link to="/walk-in-qr" className="qgo-mgr-sidebar__link" style={{ textDecoration: "none" }}>
+        <QrCode size={18} strokeWidth={2.2} className="qgo-mgr-sidebar__icon" aria-hidden />
+        <span>Walk-in QR</span>
+      </Link>
 
       <p className="qgo-mgr-sidebar__foot">Branch operations & decision support</p>
     </aside>

@@ -1072,8 +1072,33 @@
 .qgo-mgr-sidebar__nav {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 14px;
   flex: 1;
+}
+
+.qgo-mgr-sidebar__group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.qgo-mgr-sidebar__section-label {
+  margin: 0 0 2px;
+  padding: 0 12px;
+  font-size: 0.65rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: #94a3b8;
+}
+
+.qgo-mgr-sidebar__group--settings {
+  padding-top: 6px;
+  border-top: 1px solid var(--qgo-border);
+}
+
+.qgo-mgr-sidebar__link--indent {
+  padding-left: 18px;
 }
 
 .qgo-mgr-sidebar__link {
@@ -2942,7 +2967,22 @@
     flex-direction: row;
     flex-wrap: wrap;
     width: 100%;
-    gap: 6px;
+    gap: 8px;
+  }
+
+  .qgo-mgr-sidebar__group {
+    display: contents;
+  }
+
+  .qgo-mgr-sidebar__group--settings {
+    border-top: none;
+    padding-top: 0;
+  }
+
+  .qgo-mgr-sidebar__section-label {
+    width: 100%;
+    padding: 4px 4px 0;
+    margin: 0;
   }
 
   .qgo-mgr-sidebar__link {
@@ -2951,6 +2991,10 @@
     justify-content: center;
     padding: 10px 8px;
     font-size: 0.78rem;
+  }
+
+  .qgo-mgr-sidebar__link--indent {
+    padding-left: 8px;
   }
 
   .qgo-mgr-sidebar__foot {

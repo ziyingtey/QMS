@@ -151,7 +151,7 @@ export const MOCK_SETTINGS: BranchOperationalSettings = {
 };
 
 export const MOCK_INSIGHTS: ManagerInsights = {
-  noShowsToday: 2,
+  missedToday: 2,
   alerts: [
     { severity: "Warning", message: "Personal Banking queue depth is elevated — consider opening Counter 4." },
     { severity: "Info", message: "Next booking window is 85% full for Personal Banking." },

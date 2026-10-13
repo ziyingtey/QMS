@@ -64,7 +64,7 @@ export function ManagerDashboardTab({
             <div className="qgo-mgr-hero-card qgo-mgr-hero-card--amber">
               <Timer size={22} strokeWidth={2} />
               <div className="qgo-mgr-hero-card__num">{live.avgTicketToCallMinutes}m</div>
-              <div className="qgo-mgr-hero-card__label">Avg ticket-to-call</div>
+              <div className="qgo-mgr-hero-card__label">Avg. Wait Time</div>
             </div>
             <div className="qgo-mgr-hero-card qgo-mgr-hero-card--blue">
               <MonitorCheck size={22} strokeWidth={2} />

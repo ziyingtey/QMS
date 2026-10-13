@@ -264,7 +264,7 @@ export type ManagerInsights = {
   alerts: ManagerInsightAlert[];
   suggestions: ManagerSuggestion[];
   lanes: ManagerLaneAnalytics[];
-  noShowsToday: number;
+  missedToday: number;
 };
 
 async function parseError(res: Response): Promise<string> {

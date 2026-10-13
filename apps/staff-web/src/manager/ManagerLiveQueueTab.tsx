@@ -52,7 +52,7 @@ export function ManagerLiveQueueTab({ live, waiting, queues = [], rows, staffPic
     <div className="qgo-mgr-queue-page">
       <header className="qgo-mgr-toolbar">
         <div>
-          <h1>Live queue</h1>
+          <h1>Live Monitor</h1>
           <p className="qgo-muted">Whole-branch queue status and waiting customers.</p>
         </div>
         <span className="qgo-live-pill">

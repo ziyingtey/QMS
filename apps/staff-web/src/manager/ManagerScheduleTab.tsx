@@ -75,7 +75,7 @@ export function ManagerScheduleTab(props: Props) {
     <div className="qgo-mgr-schedule">
       <header className="qgo-mgr-toolbar qgo-mgr-toolbar--inset">
         <div>
-          <h1>Schedule & capacity</h1>
+          <h1>Schedule & Capacity</h1>
           <p className="qgo-muted">Booking rules, slot limits, and branch hours.</p>
         </div>
       </header>

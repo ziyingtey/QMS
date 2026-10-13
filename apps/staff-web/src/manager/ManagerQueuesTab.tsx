@@ -43,7 +43,7 @@ export function ManagerQueuesTab({ branch, queues, busy, onUpdate, onSetServices
     <div className="qgo-mgr-queue-page">
       <header className="qgo-mgr-toolbar">
         <div>
-          <h1>Queues</h1>
+          <h1>Service Lanes</h1>
           <p className="qgo-muted">
             Bank-style service queues — letter prefix, SLA, and which services share a number series. Counters listen by
             enabling those services (work profile).

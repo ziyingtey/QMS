@@ -22,7 +22,7 @@ export function ManagerAlertsPanel({ insights, onGoToCounter, compact = false }:
     <div className={`qgo-mgr-alerts${compact ? " qgo-mgr-alerts--compact" : ""}`}>
       <div className="qgo-mgr-alerts__meta">
         <span>
-          No-shows today: <strong>{insights.noShowsToday}</strong>
+          No-shows today: <strong>{insights.missedToday}</strong>
         </span>
       </div>
 
