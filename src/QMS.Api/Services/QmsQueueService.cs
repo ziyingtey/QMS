@@ -137,7 +137,7 @@ public sealed class QmsQueueService(
         if (onlineUsed >= service.OnlineSlotsPerSlot)
             throw new InvalidOperationException("Online capacity for this slot is full.");
 
-        var (queue, seq, ticket) = await IssueTicketAsync(branch, service, cancellationToken);
+        var (queue, seq, ticket) = await IssueTicketAsync(branch, service, cancellationToken, serviceDay: slotStart);
 
         var booking = new Booking
         {
@@ -276,8 +276,13 @@ public sealed class QmsQueueService(
             .FirstOrDefaultAsync(b => b.Id == bookingId && b.CustomerId == userId, cancellationToken)
             ?? throw new InvalidOperationException("Booking not found");
 
-        if (latitude is not null && longitude is not null)
+        // Geofence is mandatory when the branch has it configured (GeofenceMeters > 0).
+        // Without this, the app can omit coordinates and check in from anywhere.
+        if (booking.Branch.GeofenceMeters > 0)
         {
+            if (latitude is null || longitude is null)
+                throw new InvalidOperationException("Location is required for check-in. Please enable location services.");
+
             var d = GeoDistance.Meters(latitude.Value, longitude.Value, booking.Branch.Latitude, booking.Branch.Longitude);
             if (d > booking.Branch.GeofenceMeters)
                 throw new InvalidOperationException($"Check-in location is outside the branch geofence (~{Math.Round(d)}m from branch, max {booking.Branch.GeofenceMeters}m).");
@@ -364,7 +369,7 @@ public sealed class QmsQueueService(
             var zoneR = TimeSpan.FromMinutes(branch.ServiceZoneOffsetMinutes);
             var qid = qe.QueueId ?? service.QueueId
                       ?? throw new InvalidOperationException("Queue missing for reschedule.");
-            var newSeq = await AllocateQueueSequenceAsync(qid, booking.BranchId, zoneR, cancellationToken);
+            var newSeq = await AllocateQueueSequenceAsync(qid, booking.BranchId, zoneR, cancellationToken, serviceDay: newSlotStart);
 
             // Record reschedule movement
             db.QueueMovements.Add(new QueueMovement
@@ -439,33 +444,37 @@ public sealed class QmsQueueService(
         string ticketNumber,
         CancellationToken cancellationToken = default)
     {
+        // Pick the most recent ticket with this number — prevents yesterday's A001
+        // (now Missed/Completed) from shadowing today's A001.
         var entry = await db.QueueEntries.AsNoTracking()
             .Include(q => q.ServiceType)
             .Include(q => q.Branch)
             .Include(q => q.Counter)
             .Include(q => q.Booking)
-            .FirstOrDefaultAsync(q => q.BranchId == branchId && q.TicketNumber == ticketNumber, cancellationToken);
+            .Where(q => q.BranchId == branchId && q.TicketNumber == ticketNumber)
+            .OrderByDescending(q => q.CreatedAt)
+            .FirstOrDefaultAsync(cancellationToken);
         if (entry is null) return null;
 
         var nowUtc = DateTimeOffset.UtcNow;
         var earlyMinutes = entry.Branch.OnlineEarlyCallMinutes;
 
-        // People Ahead: uses same eligibility + priority ordering as Call Next.
-        // Find all counters that can serve this ticket's service type.
-        var counterServiceIds = await db.Counters.AsNoTracking()
-            .Include(c => c.AllowedServices)
-            .Where(c => c.BranchId == branchId && c.Mode == CounterMode.Active
-                        && c.AllowedServices.Any(a => a.ServiceTypeId == entry.ServiceTypeId))
-            .SelectMany(c => c.AllowedServices.Select(a => a.ServiceTypeId))
-            .Distinct()
-            .ToListAsync(cancellationToken);
-
-        // If no active counter serves this service, show all same-service waiting as ahead
-        if (counterServiceIds.Count == 0)
-            counterServiceIds = new List<Guid> { entry.ServiceTypeId };
-
-        // Count tickets ahead using Call Next priority rules
-        var totalAhead = await CountPeopleAheadAsync(entry, counterServiceIds, nowUtc, earlyMinutes, cancellationToken);
+        // People Ahead: same-service, eligible tickets with earlier CreatedAt.
+        // Cross-service counter competition is captured by the ETA/ML model via
+        // CrossLaneQueueLength — the customer-facing count stays same-service
+        // so it matches what they can visually verify in the branch.
+        var totalAhead = await db.QueueEntries.AsNoTracking()
+            .Where(q => q.BranchId == branchId
+                        && q.ServiceTypeId == entry.ServiceTypeId
+                        && q.State == QueueEntryState.Waiting)
+            .Where(q =>
+                (q.EntryType == QueueEntryType.WalkIn && q.CheckedIn)
+                || (q.EntryType == QueueEntryType.OnlineBooked
+                    && q.CheckedIn
+                    && q.AssignedSlotStart.HasValue
+                    && q.AssignedSlotStart.Value.AddMinutes(-earlyMinutes) <= nowUtc))
+            .CountAsync(q => q.CreatedAt < entry.CreatedAt
+                || (q.CreatedAt == entry.CreatedAt && q.Id.CompareTo(entry.Id) < 0), cancellationToken);
 
         // ── ETA: ML → Counter Simulation → Formula (shared with Staff/Manager) ──
         double eta;
@@ -568,6 +577,9 @@ public sealed class QmsQueueService(
                 c => c.BranchId == branchId && c.StaffId == staffId, cancellationToken)
             ?? throw new InvalidOperationException("No counter assigned to this staff user.");
 
+        if (counter.Mode != CounterMode.Active)
+            throw new InvalidOperationException($"Counter is {counter.Mode} — must be Active to call next.");
+
         if (counter.AllowedServices.Count == 0)
             throw new InvalidOperationException("This counter has no allowed service lanes.");
 
@@ -617,7 +629,9 @@ public sealed class QmsQueueService(
         DateTimeOffset nowUtc, int earlyCallMinutes,
         CancellationToken ct)
     {
-        using var tx = await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.ReadCommitted, ct);
+        // Serializable prevents two counters from reading the same ticket as Waiting
+        // concurrently — ReadCommitted allows both to read before either writes.
+        using var tx = await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable, ct);
 
         try
         {
@@ -1501,7 +1515,11 @@ public sealed class QmsQueueService(
         }
 
         var waitingTotal = await db.QueueEntries.CountAsync(
-            q => q.BranchId == branchId && q.State == QueueEntryState.Waiting, cancellationToken);
+            q => q.BranchId == branchId && q.State == QueueEntryState.Waiting
+                 && q.CheckedIn
+                 && (q.CreatedAt >= dayStartOffset
+                     || (q.Booking != null && q.Booking.SlotStart >= dayStartOffset)),
+            cancellationToken);
         var activeAll = await db.Counters.CountAsync(
             c => c.BranchId == branchId && c.Mode == CounterMode.Active, cancellationToken);
 
@@ -1525,7 +1543,11 @@ public sealed class QmsQueueService(
         foreach (var svc in services)
         {
             var w = await db.QueueEntries.CountAsync(
-                q => q.BranchId == branchId && q.ServiceTypeId == svc.Id && q.State == QueueEntryState.Waiting, cancellationToken);
+                q => q.BranchId == branchId && q.ServiceTypeId == svc.Id && q.State == QueueEntryState.Waiting
+                     && q.CheckedIn
+                     && (q.CreatedAt >= dayStartOffset
+                         || (q.Booking != null && q.Booking.SlotStart >= dayStartOffset)),
+                cancellationToken);
             var serving = await db.QueueEntries.CountAsync(
                 q => q.BranchId == branchId && q.ServiceTypeId == svc.Id && q.State == QueueEntryState.Serving, cancellationToken);
             var ac = await CountActiveLaneCountersAsync(branchId, svc.Id, cancellationToken);
@@ -1951,19 +1973,30 @@ public sealed class QmsQueueService(
             cancellationToken);
     }
 
-    /// <summary>Allocate next daily sequence within a service queue (档 B). Lower = earlier in that queue.</summary>
+    /// <summary>Allocate next daily sequence within a service queue.
+    /// The "day" is the SERVICE day — the day the ticket will actually be served:
+    ///   - Walk-in: today (created now, served today)
+    ///   - Online booking: the slot date (created Monday, served Friday → Friday's sequence)
+    /// Without this, Monday's booking for Friday A011 collides with Friday's walk-in A011.
+    /// </summary>
     private async Task<long> AllocateQueueSequenceAsync(
-        Guid queueId, Guid branchId, TimeSpan branchZone, CancellationToken cancellationToken)
+        Guid queueId, Guid branchId, TimeSpan branchZone, CancellationToken cancellationToken,
+        DateTimeOffset? serviceDay = null)
     {
         var nowBranch = DateTimeOffset.UtcNow.ToOffset(branchZone);
-        var dayStart = new DateTimeOffset(nowBranch.Year, nowBranch.Month, nowBranch.Day, 0, 0, 0, branchZone);
+        var targetDay = serviceDay?.ToOffset(branchZone) ?? nowBranch;
+        var dayStart = new DateTimeOffset(targetDay.Year, targetDay.Month, targetDay.Day, 0, 0, 0, branchZone);
         var dayEnd = dayStart.AddDays(1);
 
+        // Find max seq among all tickets whose service day matches:
+        // walk-ins created today + online bookings with slot on this day
         var maxSeq = await db.QueueEntries
             .Where(q => q.QueueId == queueId
                         && q.BranchId == branchId
-                        && q.CreatedAt >= dayStart
-                        && q.CreatedAt < dayEnd)
+                        && ((q.CreatedAt >= dayStart && q.CreatedAt < dayEnd)
+                            || (q.AssignedSlotStart.HasValue
+                                && q.AssignedSlotStart.Value >= dayStart
+                                && q.AssignedSlotStart.Value < dayEnd)))
             .MaxAsync(q => (long?)q.EnqueueSequence, cancellationToken);
 
         return (maxSeq ?? 0L) + 1L;
@@ -2236,7 +2269,8 @@ public sealed class QmsQueueService(
 
 
     private async Task<(BranchQueue Queue, long Seq, string Ticket)> IssueTicketAsync(
-        Branch branch, ServiceType service, CancellationToken cancellationToken)
+        Branch branch, ServiceType service, CancellationToken cancellationToken,
+        DateTimeOffset? serviceDay = null)
     {
         if (service.QueueId is null)
             throw new InvalidOperationException(
@@ -2248,7 +2282,7 @@ public sealed class QmsQueueService(
             throw new InvalidOperationException(
                 $"Queue «{queue.TicketPrefix} · {queue.Name}» is inactive — reactivate it in Manager → Queues, or move this service to another queue.");
         var zone = TimeSpan.FromMinutes(branch.ServiceZoneOffsetMinutes);
-        var seq = await AllocateQueueSequenceAsync(queue.Id, branch.Id, zone, cancellationToken);
+        var seq = await AllocateQueueSequenceAsync(queue.Id, branch.Id, zone, cancellationToken, serviceDay);
         var ticket = FormatTicket(queue.TicketPrefix, seq);
         return (queue, seq, ticket);
     }

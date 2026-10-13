@@ -23,7 +23,10 @@ public sealed class DashboardController(QmsDbContext db, QmsQueueService queue) 
         var dayEndOffset = new DateTimeOffset(dayEnd, TimeSpan.Zero);
 
         var waiting = await db.QueueEntries.CountAsync(
-            q => q.BranchId == branchId && q.State == QueueEntryState.Waiting,
+            q => q.BranchId == branchId && q.State == QueueEntryState.Waiting
+                 && q.CheckedIn
+                 && (q.CreatedAt >= dayStartOffset
+                     || (q.Booking != null && q.Booking.SlotStart >= dayStartOffset)),
             cancellationToken);
 
         var serving = await db.QueueEntries.CountAsync(
@@ -94,11 +97,17 @@ public sealed class DashboardController(QmsDbContext db, QmsQueueService queue) 
         foreach (var s in services)
         {
             var ahead = await db.QueueEntries.CountAsync(
-                q => q.BranchId == branchId && q.ServiceTypeId == s.Id && q.State == QueueEntryState.Waiting,
+                q => q.BranchId == branchId && q.ServiceTypeId == s.Id && q.State == QueueEntryState.Waiting
+                     && q.CheckedIn
+                     && (q.CreatedAt >= dayStartOffset
+                         || (q.Booking != null && q.Booking.SlotStart >= dayStartOffset)),
+                cancellationToken);
+            var laneServing = await db.QueueEntries.CountAsync(
+                q => q.BranchId == branchId && q.ServiceTypeId == s.Id && q.State == QueueEntryState.Serving,
                 cancellationToken);
             var laneCounters = await queue.CountActiveLaneCountersAsync(branchId, s.Id, cancellationToken);
-            // Aggregate lane ETA — uses legacy formula (no per-entry features available)
-            var eta = WaitTimeEstimator.EstimateMinutes(ahead, s.DefaultAvgServiceMinutes, Math.Max(1, laneCounters));
+            // Aggregate lane ETA — same formula as Manager Insights: (waiting + serving) × avg / counters
+            var eta = WaitTimeEstimator.EstimateMinutes(ahead + laneServing, s.DefaultAvgServiceMinutes, Math.Max(1, laneCounters));
             etaByService.Add(new ServiceEtaDto(s.Id, ahead, double.IsInfinity(eta) ? null : Math.Round(eta, 1)));
         }
 

@@ -99,7 +99,11 @@ public sealed class BranchQueueDayRolloverHostedService(
                         && (q.State == QueueEntryState.Waiting
                             || q.State == QueueEntryState.Called
                             || q.State == QueueEntryState.Serving)
-                        && q.CreatedAt < startOfToday)
+                        && q.CreatedAt < startOfToday
+                        // Don't purge online bookings whose slot is today or later —
+                        // they were created yesterday but are meant to be served today.
+                        && !(q.Booking != null
+                             && q.Booking.SlotStart >= startOfToday))
             .ToListAsync(ct);
 
         foreach (var q in entries)
