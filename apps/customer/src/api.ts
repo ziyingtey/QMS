@@ -445,7 +445,7 @@ export async function apiCreateBooking(body: {
 
 export async function apiCheckIn(
   bookingId: string,
-  coords?: { latitude: number; longitude: number },
+  coords?: { latitude: number; longitude: number; accuracy?: number },
 ): Promise<void> {
   const res = await fetch(`${API_BASE}/api/bookings/${bookingId}/check-in`, {
     method: "POST",
@@ -453,7 +453,9 @@ export async function apiCheckIn(
       ...(await customerAuthHeaders()),
       "Content-Type": "application/json",
     },
-    body: JSON.stringify(coords ? { latitude: coords.latitude, longitude: coords.longitude } : {}),
+    body: JSON.stringify(
+      coords ? { latitude: coords.latitude, longitude: coords.longitude, accuracy: coords.accuracy ?? null } : {},
+    ),
   });
   if (!res.ok) throw new Error(await parseError(res));
 }
@@ -499,10 +501,10 @@ export async function apiServiceLaneSummary(branchId: string, serviceTypeId: str
   return res.json() as Promise<ServiceLaneSummary>;
 }
 
-export async function apiQueueStatus(branchId: string, ticket: string): Promise<QueueStatus> {
-  const res = await fetch(
-    `${API_BASE}/api/queue/status?branchId=${encodeURIComponent(branchId)}&ticket=${encodeURIComponent(ticket)}`,
-  );
+export async function apiQueueStatus(branchId: string, ticket: string, bookingId?: string | null): Promise<QueueStatus> {
+  let url = `${API_BASE}/api/queue/status?branchId=${encodeURIComponent(branchId)}&ticket=${encodeURIComponent(ticket)}`;
+  if (bookingId) url += `&bookingId=${encodeURIComponent(bookingId)}`;
+  const res = await fetch(url);
   if (!res.ok) throw new Error(await parseError(res));
   return res.json() as Promise<QueueStatus>;
 }

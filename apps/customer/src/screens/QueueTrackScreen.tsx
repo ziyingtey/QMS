@@ -15,11 +15,19 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { apiCheckIn, apiQueueStatus, userFacingApiError, type QueueStatus } from "../api";
+import { getCheckInCoords } from "../checkInLocation";
+import { openLocationSettingsAlert, useLiveBranchDistance } from "../useLiveBranchDistance";
 import { useCustomer } from "../context/CustomerContext";
 import type { QueueStackParamList } from "../navigation/navigationRef";
 import { theme } from "../theme";
 import { formatBookingDateMedium, formatSlotRange, defaultBranchOffsetMinutes } from "../utils/dateFormat";
 import { useBranchRealtime } from "../useBranchRealtime";
+
+const NativeMaps = Platform.OS !== "web" ? require("react-native-maps") : null;
+
+function formatMeters(m: number): string {
+  return m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${Math.round(m)} m`;
+}
 
 type Props = NativeStackScreenProps<QueueStackParamList, "QueueTrack">;
 
@@ -71,11 +79,11 @@ export function QueueTrackScreen({ route, navigation }: Props) {
 
   const refresh = useCallback(async () => {
     try {
-      setStatus(await apiQueueStatus(branchId, ticket));
+      setStatus(await apiQueueStatus(branchId, ticket, booking?.id ?? bookingIdParam));
     } catch {
       setStatus(null);
     }
-  }, [branchId, ticket]);
+  }, [branchId, ticket, booking?.id, bookingIdParam]);
 
   useEffect(() => {
     void refresh();
@@ -118,8 +126,10 @@ export function QueueTrackScreen({ route, navigation }: Props) {
     status?.state === "Missed" ||
     booking?.status === "Cancelled" ||
     booking?.status === "NoShow" ||
+    booking?.status === "Expired" ||
     status?.bookingStatus === "Cancelled" ||
-    status?.bookingStatus === "NoShow";
+    status?.bookingStatus === "NoShow" ||
+    status?.bookingStatus === "Expired";
   const bookingIsActive =
     !entryIsTerminal &&
     (!booking ||
@@ -138,6 +148,18 @@ export function QueueTrackScreen({ route, navigation }: Props) {
       (!status || status.state === "Waiting"),
   );
 
+  // Live distance to the branch while check-in is possible (watch stops on blur / after check-in).
+  const checkInBranch = useMemo(() => {
+    const br = branches.find((b) => b.id === (booking?.branchId ?? branchId));
+    return br ? { latitude: br.latitude, longitude: br.longitude, geofenceMeters: br.geofenceMeters } : null;
+  }, [branches, booking?.branchId, branchId]);
+  const live = useLiveBranchDistance(checkInBranch, needsCheckIn);
+  // No branch data or no geofence → let the backend decide.
+  const canTapCheckIn = !checkInBranch || checkInBranch.geofenceMeters <= 0 || live.inside;
+  const MapView = NativeMaps?.default;
+  const Marker = NativeMaps?.Marker;
+  const Circle = NativeMaps?.Circle;
+
   // Determine phase
   const phase: Phase = useMemo(() => {
     if (!status) return "loading";
@@ -145,6 +167,8 @@ export function QueueTrackScreen({ route, navigation }: Props) {
     // NoShow (never checked in; slot ended) — before generic Missed / Cancelled
     if (bookingStatus === "NoShow") return "noshow";
     // Customer cancel. Legacy data: staff/grace miss used to set Cancelled; if wasCalled, treat as missed.
+    // Expired = checked in but day ended without being called
+    if (bookingStatus === "Expired") return "missed";
     if (bookingStatus === "Cancelled") {
       if (status.wasCalled) return "missed";
       return "cancelled";
@@ -184,7 +208,9 @@ export function QueueTrackScreen({ route, navigation }: Props) {
     if (!appointmentBookingId || checkingIn) return;
     setCheckingIn(true);
     try {
-      await apiCheckIn(appointmentBookingId);
+      const coords = await getCheckInCoords();
+      if (!coords) return;
+      await apiCheckIn(appointmentBookingId, coords);
       await Promise.all([refresh(), refreshBookings()]);
       Alert.alert("Checked in", "You're in the queue. We'll call your ticket when it's your turn.");
     } catch (e) {
@@ -515,16 +541,77 @@ export function QueueTrackScreen({ route, navigation }: Props) {
           <View style={styles.checkInCard}>
             <Text style={styles.checkInTitle}>Check in when you arrive</Text>
             <Text style={styles.checkInSub}>
-              Tap Check in so staff can call your ticket. You do not need to share your location.
+              Tap Check in so staff can call your ticket. We use your location only to confirm you're at the branch.
             </Text>
-            <Pressable
-              style={[styles.btnCheckIn, (checkingIn || busy) && styles.btnCheckInDisabled]}
-              disabled={checkingIn || busy}
-              onPress={() => void onCheckIn()}
-            >
-              <Ionicons name="checkmark-circle-outline" size={20} color="#fff" />
-              <Text style={styles.btnCheckInText}>{checkingIn ? "Checking in…" : "Check in"}</Text>
-            </Pressable>
+
+            {checkInBranch && checkInBranch.geofenceMeters > 0 && MapView && Circle && Marker && live.coords ? (
+              <View style={styles.proxMap} pointerEvents="none">
+                <MapView
+                  style={StyleSheet.absoluteFill}
+                  region={{
+                    latitude: (checkInBranch.latitude + live.coords.latitude) / 2,
+                    longitude: (checkInBranch.longitude + live.coords.longitude) / 2,
+                    latitudeDelta: Math.max(0.004, Math.abs(checkInBranch.latitude - live.coords.latitude) * 2.6),
+                    longitudeDelta: Math.max(0.004, Math.abs(checkInBranch.longitude - live.coords.longitude) * 2.6),
+                  }}
+                  scrollEnabled={false}
+                  zoomEnabled={false}
+                  rotateEnabled={false}
+                  pitchEnabled={false}
+                >
+                  <Circle
+                    center={{ latitude: checkInBranch.latitude, longitude: checkInBranch.longitude }}
+                    radius={checkInBranch.geofenceMeters}
+                    strokeColor={theme.primary}
+                    fillColor="rgba(30,74,140,0.15)"
+                  />
+                  <Marker coordinate={{ latitude: checkInBranch.latitude, longitude: checkInBranch.longitude }} title={branchName} />
+                  <Circle
+                    center={{ latitude: live.coords.latitude, longitude: live.coords.longitude }}
+                    radius={6}
+                    strokeColor="#fff"
+                    fillColor={live.inside ? "#16a34a" : "#f59e0b"}
+                  />
+                </MapView>
+              </View>
+            ) : null}
+
+            {checkInBranch && checkInBranch.geofenceMeters > 0 ? (
+              <View style={styles.proxRow}>
+                <Ionicons
+                  name={live.inside ? "location" : "navigate-outline"}
+                  size={16}
+                  color={live.inside ? "#16a34a" : theme.textMutedOnLight}
+                />
+                <Text style={[styles.proxText, live.inside && styles.proxTextInside]}>
+                  {live.permission === "denied"
+                    ? "Location is off — turn it on to check in."
+                    : live.distance == null
+                      ? "Finding your location…"
+                      : live.inside
+                        ? `You're at the branch (${formatMeters(live.distance)} away). You can check in now.`
+                        : `You are ${formatMeters(live.distance)} from the branch. Check in opens within ~${checkInBranch.geofenceMeters} m.`}
+                </Text>
+              </View>
+            ) : null}
+
+            {live.permission === "denied" ? (
+              <Pressable style={styles.btnCheckIn} onPress={openLocationSettingsAlert}>
+                <Ionicons name="settings-outline" size={20} color="#fff" />
+                <Text style={styles.btnCheckInText}>Turn on location</Text>
+              </Pressable>
+            ) : (
+              <Pressable
+                style={[styles.btnCheckIn, (checkingIn || busy || !canTapCheckIn) && styles.btnCheckInDisabled]}
+                disabled={checkingIn || busy || !canTapCheckIn}
+                onPress={() => void onCheckIn()}
+              >
+                <Ionicons name={canTapCheckIn ? "checkmark-circle-outline" : "walk-outline"} size={20} color="#fff" />
+                <Text style={styles.btnCheckInText}>
+                  {checkingIn ? "Checking in…" : canTapCheckIn ? "Check in" : "Get closer to check in"}
+                </Text>
+              </Pressable>
+            )}
           </View>
         )}
 
@@ -801,5 +888,9 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   btnCheckInDisabled: { opacity: 0.6 },
+  proxMap: { height: 150, borderRadius: 12, overflow: "hidden", marginBottom: 10 },
+  proxRow: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 12 },
+  proxText: { flex: 1, fontSize: 14, fontWeight: "600", color: theme.textMutedOnLight },
+  proxTextInside: { color: "#16a34a" },
   btnCheckInText: { fontWeight: "800", color: "#fff", fontSize: 16 },
 });

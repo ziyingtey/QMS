@@ -1,4 +1,5 @@
 import * as Location from "expo-location";
+import { getCheckInCoords } from "../checkInLocation";
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { Alert, Platform } from "react-native";
 import {
@@ -446,7 +447,9 @@ export function CustomerProvider({ children }: { children: React.ReactNode }) {
       if (!t) return;
       setBusy(true);
       try {
-        await apiCheckIn(bookingId);
+        const coords = await getCheckInCoords();
+        if (!coords) return;
+        await apiCheckIn(bookingId, coords);
         Alert.alert("Marked as arrived", "You can join the call queue for your slot. Pull down on Queue to refresh.");
         await refreshBookings();
       } catch (e) {
