@@ -156,10 +156,9 @@ public sealed class QmsDbContext : DbContext
         {
             e.ToTable("QUEUE_TICKETS");
             e.HasIndex(x => x.BookingId).IsUnique().HasFilter("[BookingId] IS NOT NULL");
-            // Daily-reset numbers (A001) may repeat across days; unique only among open tickets
-            e.HasIndex(x => new { x.BranchId, x.TicketNumber })
-                .IsUnique()
-                .HasFilter("[State] IN (0, 1, 2)"); // Waiting, Called, Serving
+            // Ticket numbers reset daily; unique per branch + calendar day
+            e.HasIndex(x => new { x.BranchId, x.ServiceDay, x.TicketNumber })
+                .IsUnique();
             e.Property(x => x.TicketNumber).HasMaxLength(32);
             e.Property(x => x.WalkInDeviceId).HasMaxLength(64);
             e.HasIndex(x => new { x.BranchId, x.WalkInDeviceId }).HasFilter("[WalkInDeviceId] IS NOT NULL");

@@ -137,7 +137,7 @@ public sealed class QmsQueueService(
         if (onlineUsed >= service.OnlineSlotsPerSlot)
             throw new InvalidOperationException("Online capacity for this slot is full.");
 
-        var (queue, seq, ticket) = await IssueTicketAsync(branch, service, cancellationToken, serviceDay: slotStart);
+        var (queue, seq, ticket, svcDay) = await IssueTicketAsync(branch, service, cancellationToken, serviceDay: slotStart);
 
         var booking = new Booking
         {
@@ -161,6 +161,7 @@ public sealed class QmsQueueService(
             State = QueueEntryState.Waiting,
             BookingId = booking.Id,
             EnqueueSequence = seq,
+            ServiceDay = svcDay,
             AssignedSlotStart = slotStart,
             AssignedSlotEnd = slotEnd,
             CheckedIn = false,
@@ -218,7 +219,7 @@ public sealed class QmsQueueService(
         if (chosenStart < windowStart) chosenStart = windowStart;
         var chosenEnd = chosenStart.AddMinutes(slotM);
 
-        var (queue, seq, ticket) = await IssueTicketAsync(branch, service, cancellationToken);
+        var (queue, seq, ticket, svcDay) = await IssueTicketAsync(branch, service, cancellationToken);
 
         var nowUtc = DateTimeOffset.UtcNow;
         var entry = new QueueEntry
@@ -232,6 +233,7 @@ public sealed class QmsQueueService(
             State = QueueEntryState.Waiting,
             CreatedAt = nowUtc,
             EnqueueSequence = seq,
+            ServiceDay = svcDay,
             AssignedSlotStart = chosenStart,
             AssignedSlotEnd = chosenEnd,
             CheckedIn = true,
@@ -271,22 +273,40 @@ public sealed class QmsQueueService(
         Guid bookingId,
         double? latitude,
         double? longitude,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        double? accuracyMeters = null)
     {
         var booking = await db.Bookings.Include(b => b.QueueEntry).Include(b => b.Branch)
             .FirstOrDefaultAsync(b => b.Id == bookingId && b.CustomerId == userId, cancellationToken)
             ?? throw new InvalidOperationException("Booking not found");
+
+        // Only Confirmed or Pending bookings can be checked in
+        if (booking.Status is not (BookingStatus.Confirmed or BookingStatus.Pending))
+            throw new InvalidOperationException("This booking cannot be checked in (current status: " + booking.Status + ").");
+
+        // Date guard: can only check in on the booking's service day
+        var zone = TimeSpan.FromMinutes(booking.Branch.ServiceZoneOffsetMinutes);
+        var nowAtBranch = DateTimeOffset.UtcNow.ToOffset(zone);
+        var todayLocal = DateOnly.FromDateTime(nowAtBranch.DateTime);
+        var slotDay = DateOnly.FromDateTime(booking.SlotStart.ToOffset(zone).DateTime);
+        if (todayLocal != slotDay)
+            throw new InvalidOperationException(
+                $"Check-in is only available on the day of your appointment ({slotDay:yyyy-MM-dd}). Today is {todayLocal:yyyy-MM-dd}.");
 
         // Geofence is mandatory when the branch has it configured (GeofenceMeters > 0).
         // Without this, the app can omit coordinates and check in from anywhere.
         if (booking.Branch.GeofenceMeters > 0)
         {
             if (latitude is null || longitude is null)
-                throw new InvalidOperationException("Location is required for check-in. Please enable location services.");
+                throw new InvalidOperationException("Location is required to confirm you are at the branch. Please allow location access and try again. [geofence]");
 
             var d = GeoDistance.Meters(latitude.Value, longitude.Value, booking.Branch.Latitude, booking.Branch.Longitude);
-            if (d > booking.Branch.GeofenceMeters)
-                throw new InvalidOperationException($"Check-in location is outside the branch geofence (~{Math.Round(d)}m from branch, max {booking.Branch.GeofenceMeters}m).");
+            // GPS tolerance: indoors a phone fix is often off by 20–60 m, so subtract the reported
+            // accuracy radius (capped at 100 m) before comparing with the geofence.
+            var tolerance = accuracyMeters is > 0 ? Math.Min(accuracyMeters.Value, 100d) : 0d;
+            if (d - tolerance > booking.Branch.GeofenceMeters)
+                throw new InvalidOperationException(
+                    $"You need to be at the branch to check in (you are ~{Math.Round(d)} m away; must be within ~{booking.Branch.GeofenceMeters} m). [geofence]");
         }
 
         booking.CheckedInAt = DateTimeOffset.UtcNow;
@@ -354,6 +374,11 @@ public sealed class QmsQueueService(
         if (await IsBranchClosedOnAsync(booking.BranchId, newBookingDay, zone, cancellationToken))
             throw new InvalidOperationException("The branch is closed on the selected day.");
 
+        // Booking window check (must be within current + next week)
+        var todayInBranch = DateOnly.FromDateTime(nowAtBranch.DateTime);
+        if (!IsWithinBookingWindow(newBookingDay, todayInBranch, branch.NextWeekBookingOpensOnDay))
+            throw new InvalidOperationException("Booking is only available for the current and next week.");
+
         var onlineUsed = await CountActiveOnlineBookingsForSlotAsync(
             booking.BranchId, booking.ServiceTypeId, newSlotStart, newSlotEnd, bookingId, cancellationToken);
         if (onlineUsed >= service.OnlineSlotsPerSlot)
@@ -367,10 +392,10 @@ public sealed class QmsQueueService(
             var oldSlotStart = qe.AssignedSlotStart;
             var oldSlotEnd = qe.AssignedSlotEnd;
             var oldSeq = qe.EnqueueSequence;
-            var zoneR = TimeSpan.FromMinutes(branch.ServiceZoneOffsetMinutes);
-            var qid = qe.QueueId ?? service.QueueId
-                      ?? throw new InvalidOperationException("Queue missing for reschedule.");
-            var newSeq = await AllocateQueueSequenceAsync(qid, booking.BranchId, zoneR, cancellationToken, serviceDay: newSlotStart);
+            var oldTicket = qe.TicketNumber;
+
+            // Re-issue ticket for the new service day (prevents cross-day ticket collision)
+            var (queue, newSeq, newTicket, newSvcDay) = await IssueTicketAsync(branch, service, cancellationToken, serviceDay: newSlotStart);
 
             // Record reschedule movement
             db.QueueMovements.Add(new QueueMovement
@@ -387,11 +412,12 @@ public sealed class QmsQueueService(
                 Reason = QueueMovementReason.ManualReschedule,
             });
 
+            qe.QueueId = queue.Id;
             qe.EnqueueSequence = newSeq;
+            qe.TicketNumber = newTicket;
+            qe.ServiceDay = newSvcDay;
             qe.AssignedSlotStart = newSlotStart;
             qe.AssignedSlotEnd = newSlotEnd;
-            // Reschedule resets current eligibility to new slot start
-            // InitialQueueEligibleAt remains unchanged (original booking slot)
             qe.QueueEligibleAt = newSlotStart;
         }
 
@@ -443,29 +469,56 @@ public sealed class QmsQueueService(
     public async Task<QueueStatusDto?> GetQueueStatusAsync(
         Guid branchId,
         string ticketNumber,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        Guid? bookingId = null)
     {
-        // Pick the most recent ticket with this number — prevents yesterday's A001
-        // (now Missed/Completed) from shadowing today's A001.
-        var entry = await db.QueueEntries.AsNoTracking()
-            .Include(q => q.ServiceType)
-            .Include(q => q.Branch)
-            .Include(q => q.Counter)
-            .Include(q => q.Booking)
+        // If bookingId is provided, use it for exact lookup (avoids cross-day ticket shadowing).
+        if (bookingId.HasValue)
+        {
+            var byBooking = await db.QueueEntries.AsNoTracking()
+                .Include(q => q.ServiceType).Include(q => q.Branch).Include(q => q.Counter).Include(q => q.Booking)
+                .FirstOrDefaultAsync(q => q.BookingId == bookingId.Value && q.BranchId == branchId, cancellationToken);
+            if (byBooking is not null)
+                return await BuildQueueStatusDto(byBooking, cancellationToken);
+        }
+
+        // Prefer today's ticket; fall back to most recent if none found today.
+        // With daily-reset numbers (A001 each day), ServiceDay disambiguates.
+        var branch0 = await db.Branches.AsNoTracking().FirstOrDefaultAsync(b => b.Id == branchId, cancellationToken);
+        DateOnly? todayAtBranch = null;
+        if (branch0 is not null)
+        {
+            var zone0 = TimeSpan.FromMinutes(branch0.ServiceZoneOffsetMinutes);
+            todayAtBranch = DateOnly.FromDateTime(DateTimeOffset.UtcNow.ToOffset(zone0).DateTime);
+        }
+
+        var entry = todayAtBranch is not null
+            ? await db.QueueEntries.AsNoTracking()
+                .Include(q => q.ServiceType).Include(q => q.Branch).Include(q => q.Counter).Include(q => q.Booking)
+                .Where(q => q.BranchId == branchId && q.TicketNumber == ticketNumber && q.ServiceDay == todayAtBranch.Value)
+                .FirstOrDefaultAsync(cancellationToken)
+            : null;
+
+        // Fall back: most recent ticket with this number (e.g. querying yesterday's completed ticket)
+        entry ??= await db.QueueEntries.AsNoTracking()
+            .Include(q => q.ServiceType).Include(q => q.Branch).Include(q => q.Counter).Include(q => q.Booking)
             .Where(q => q.BranchId == branchId && q.TicketNumber == ticketNumber)
-            .OrderByDescending(q => q.CreatedAt)
+            .OrderByDescending(q => q.ServiceDay)
+            .ThenByDescending(q => q.CreatedAt)
             .FirstOrDefaultAsync(cancellationToken);
         if (entry is null) return null;
 
+        return await BuildQueueStatusDto(entry, cancellationToken);
+    }
+
+    private async Task<QueueStatusDto> BuildQueueStatusDto(QueueEntry entry, CancellationToken cancellationToken)
+    {
         var nowUtc = DateTimeOffset.UtcNow;
         var earlyMinutes = entry.Branch.OnlineEarlyCallMinutes;
 
         // People Ahead: same-service, eligible tickets with earlier CreatedAt.
-        // Cross-service counter competition is captured by the ETA/ML model via
-        // CrossLaneQueueLength — the customer-facing count stays same-service
-        // so it matches what they can visually verify in the branch.
         var totalAhead = await db.QueueEntries.AsNoTracking()
-            .Where(q => q.BranchId == branchId
+            .Where(q => q.BranchId == entry.BranchId
                         && q.ServiceTypeId == entry.ServiceTypeId
                         && q.State == QueueEntryState.Waiting)
             .Where(q =>
@@ -486,13 +539,13 @@ public sealed class QmsQueueService(
             eta = resolved;
         else
         {
-            var activeCounters = await CountActiveLaneCountersAsync(branchId, entry.ServiceTypeId, cancellationToken);
+            var activeCounters = await CountActiveLaneCountersAsync(entry.BranchId, entry.ServiceTypeId, cancellationToken);
             var avg = entry.ServiceType.DefaultAvgServiceMinutes;
             eta = WaitTimeEstimator.EstimateMinutes(totalAhead, avg, Math.Max(1, activeCounters));
         }
 
         var currentServing = await db.QueueEntries.AsNoTracking()
-            .Where(q => q.BranchId == branchId && q.ServiceTypeId == entry.ServiceTypeId && q.State == QueueEntryState.Serving)
+            .Where(q => q.BranchId == entry.BranchId && q.ServiceTypeId == entry.ServiceTypeId && q.State == QueueEntryState.Serving)
             .OrderBy(q => q.ServingStartedAt)
             .Select(q => q.TicketNumber)
             .FirstOrDefaultAsync(cancellationToken);
@@ -618,6 +671,40 @@ public sealed class QmsQueueService(
                 cancellationToken);
         }
 
+        // "Almost your turn" — notify the person who is now next in line (after this claim)
+        try
+        {
+            var nextEligible = await db.QueueEntries.AsNoTracking()
+                .Include(q => q.Booking)
+                .Where(q => q.BranchId == branchId
+                            && allowedServiceIds.Contains(q.ServiceTypeId)
+                            && q.State == QueueEntryState.Waiting)
+                .Where(q =>
+                    (q.EntryType == QueueEntryType.WalkIn && q.CheckedIn)
+                    || (q.EntryType == QueueEntryType.OnlineBooked
+                        && q.CheckedIn
+                        && q.AssignedSlotStart.HasValue
+                        && q.AssignedSlotStart.Value.AddMinutes(-earlyMinutes) <= nowUtc))
+                .ToListAsync(cancellationToken);
+
+            var almostNext = QueueCallNextSelector.SelectLongestWaitQueueHead(nextEligible, nowUtc);
+            if (almostNext?.Booking?.CustomerId is Guid almostId)
+            {
+                await notifications.NotifyAsync(
+                    almostId,
+                    NotificationKind.AlmostReady,
+                    $"Almost your turn! Ticket {almostNext.TicketNumber} — you are next in line. Please be ready.",
+                    almostNext.BookingId,
+                    almostNext.TicketNumber,
+                    branchId,
+                    cancellationToken);
+            }
+        }
+        catch
+        {
+            // Best-effort — must not block Call Next
+        }
+
         return new CallNextDto(claimed.TicketNumber, counter.Number, null);
     }
 
@@ -686,12 +773,17 @@ public sealed class QmsQueueService(
 
     public async Task MarkMissedAsync(Guid staffId, string ticketNumber, CancellationToken cancellationToken = default)
     {
-        var counter = await db.Counters.FirstOrDefaultAsync(c => c.StaffId == staffId, cancellationToken)
-                      ?? throw new InvalidOperationException("Counter not found for staff.");
+        var counter = await db.Counters.Include(c => c.Branch)
+            .FirstOrDefaultAsync(c => c.StaffId == staffId, cancellationToken)
+            ?? throw new InvalidOperationException("Counter not found for staff.");
+
+        var zone = TimeSpan.FromMinutes(counter.Branch.ServiceZoneOffsetMinutes);
+        var todayLocal = DateOnly.FromDateTime(DateTimeOffset.UtcNow.ToOffset(zone).DateTime);
 
         var entry = await db.QueueEntries.Include(q => q.Booking)
             .FirstOrDefaultAsync(
                 q => q.BranchId == counter.BranchId && q.TicketNumber == ticketNumber
+                     && q.ServiceDay == todayLocal
                      && (q.State == QueueEntryState.Called || q.State == QueueEntryState.Serving),
                 cancellationToken)
             ?? throw new InvalidOperationException("Ticket not found or not in Called/Serving state.");
@@ -1986,18 +2078,13 @@ public sealed class QmsQueueService(
     {
         var nowBranch = DateTimeOffset.UtcNow.ToOffset(branchZone);
         var targetDay = serviceDay?.ToOffset(branchZone) ?? nowBranch;
-        var dayStart = new DateTimeOffset(targetDay.Year, targetDay.Month, targetDay.Day, 0, 0, 0, branchZone);
-        var dayEnd = dayStart.AddDays(1);
+        var targetDate = DateOnly.FromDateTime(targetDay.DateTime);
 
-        // Find max seq among all tickets whose service day matches:
-        // walk-ins created today + online bookings with slot on this day
+        // Max seq among all tickets for the same service day (via ServiceDay column).
         var maxSeq = await db.QueueEntries
             .Where(q => q.QueueId == queueId
                         && q.BranchId == branchId
-                        && ((q.CreatedAt >= dayStart && q.CreatedAt < dayEnd)
-                            || (q.AssignedSlotStart.HasValue
-                                && q.AssignedSlotStart.Value >= dayStart
-                                && q.AssignedSlotStart.Value < dayEnd)))
+                        && q.ServiceDay == targetDate)
             .MaxAsync(q => (long?)q.EnqueueSequence, cancellationToken);
 
         return (maxSeq ?? 0L) + 1L;
@@ -2220,12 +2307,13 @@ public sealed class QmsQueueService(
         var oldSlotStart = entry.AssignedSlotStart;
         var oldSlotEnd = entry.AssignedSlotEnd;
 
-        var (queue, seq, newTicket) = await IssueTicketAsync(counter.Branch, target, cancellationToken);
+        var (queue, seq, newTicket, newSvcDay) = await IssueTicketAsync(counter.Branch, target, cancellationToken);
 
         entry.ServiceTypeId = target.Id;
         entry.QueueId = queue.Id;
         entry.EnqueueSequence = seq;
         entry.TicketNumber = newTicket;
+        entry.ServiceDay = newSvcDay;
         entry.State = QueueEntryState.Waiting;
         entry.CalledAt = null;
         entry.CounterId = null;
@@ -2269,7 +2357,7 @@ public sealed class QmsQueueService(
     }
 
 
-    private async Task<(BranchQueue Queue, long Seq, string Ticket)> IssueTicketAsync(
+    private async Task<(BranchQueue Queue, long Seq, string Ticket, DateOnly ServiceDay)> IssueTicketAsync(
         Branch branch, ServiceType service, CancellationToken cancellationToken,
         DateTimeOffset? serviceDay = null)
     {
@@ -2285,7 +2373,13 @@ public sealed class QmsQueueService(
         var zone = TimeSpan.FromMinutes(branch.ServiceZoneOffsetMinutes);
         var seq = await AllocateQueueSequenceAsync(queue.Id, branch.Id, zone, cancellationToken, serviceDay);
         var ticket = FormatTicket(queue.TicketPrefix, seq);
-        return (queue, seq, ticket);
+
+        // Compute the branch-local calendar date this ticket belongs to
+        var nowBranch = DateTimeOffset.UtcNow.ToOffset(zone);
+        var targetDay = serviceDay?.ToOffset(zone) ?? nowBranch;
+        var svcDay = DateOnly.FromDateTime(targetDay.DateTime);
+
+        return (queue, seq, ticket, svcDay);
     }
 
 

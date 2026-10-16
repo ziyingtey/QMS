@@ -83,9 +83,9 @@ public sealed class QueueController(QmsQueueService queue, QmsDbContext db, Walk
 
     [AllowAnonymous]
     [HttpGet("status")]
-    public async Task<ActionResult<QueueStatusDto>> Status([FromQuery] Guid branchId, [FromQuery] string ticket, CancellationToken cancellationToken)
+    public async Task<ActionResult<QueueStatusDto>> Status([FromQuery] Guid branchId, [FromQuery] string ticket, [FromQuery] Guid? bookingId, CancellationToken cancellationToken)
     {
-        var status = await queue.GetQueueStatusAsync(branchId, ticket, cancellationToken);
+        var status = await queue.GetQueueStatusAsync(branchId, ticket, cancellationToken, bookingId);
         return status is null ? NotFound() : Ok(status);
     }
 

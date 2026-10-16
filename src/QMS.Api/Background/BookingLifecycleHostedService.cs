@@ -116,10 +116,16 @@ public sealed class BookingLifecycleHostedService(
 
         foreach (var (customerId, bookingId, ticket, branchId) in missedForNotify)
         {
+            // Distinguish NoShow (never checked in) from Called-then-missed
+            var isNoShow = noShowBookings.Any(b => b.CustomerId == customerId && b.Id == bookingId);
+            var message = isNoShow
+                ? $"Your appointment (ticket {ticket}) has been marked as no-show because you did not check in before your slot ended. You can book a new appointment in the app."
+                : $"Ticket {ticket} was called but you were not present. Please approach a counter or book a new appointment if you still need service.";
+
             await notifications.NotifyAsync(
                 customerId,
                 NotificationKind.Missed,
-                $"Ticket {ticket} was missed. Please take a new queue number if you still need service.",
+                message,
                 bookingId,
                 ticket,
                 branchId,

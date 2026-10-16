@@ -7,5 +7,6 @@ public enum NotificationKind
     Delay = 2,
     Overcrowding = 3,
     Missed = 4,
-    BookingCancelled = 5
+    BookingCancelled = 5,
+    AlmostReady = 6
 }

@@ -111,8 +111,10 @@ public sealed class BranchQueueDayRolloverHostedService(
             q.State = QueueEntryState.Missed;
             if (q.Booking is { } b)
             {
-                if (b.Status is BookingStatus.Pending or BookingStatus.Confirmed or BookingStatus.CheckedIn)
-                    b.Status = BookingStatus.Cancelled;
+                if (b.Status == BookingStatus.CheckedIn)
+                    b.Status = BookingStatus.Expired; // checked in but never called — not a customer cancel
+                else if (b.Status is BookingStatus.Pending or BookingStatus.Confirmed)
+                    b.Status = BookingStatus.Expired;
             }
         }
     }

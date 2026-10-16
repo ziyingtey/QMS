@@ -47,13 +47,14 @@ public sealed class BookingsController(QmsQueueService queue, QmsDbContext db) :
                 bookingId,
                 body?.Latitude,
                 body?.Longitude,
-                cancellationToken);
+                cancellationToken,
+                body?.Accuracy);
             return NoContent();
         }
         catch (InvalidOperationException ex)
         {
-            if (ex.Message.Contains("geofence", StringComparison.OrdinalIgnoreCase))
-                return BadRequest(new { message = ex.Message });
+            if (ex.Message.Contains("[geofence]", StringComparison.Ordinal))
+                return BadRequest(new { message = ex.Message.Replace(" [geofence]", ""), code = "geofence" });
             return NotFound(new { message = ex.Message });
         }
     }
@@ -120,7 +121,8 @@ public sealed class BookingsController(QmsQueueService queue, QmsDbContext db) :
     }
 }
 
-public sealed record CheckInRequest(double? Latitude, double? Longitude);
+/// <param name="Accuracy">Reported GPS accuracy radius in metres (optional; used as tolerance, capped at 100 m).</param>
+public sealed record CheckInRequest(double? Latitude, double? Longitude, double? Accuracy = null);
 public sealed record RescheduleBookingRequest(DateTimeOffset SlotStart, DateTimeOffset SlotEnd);
 public sealed record CreateBookingRequest(Guid BranchId, Guid ServiceTypeId, DateTimeOffset SlotStart, DateTimeOffset SlotEnd);
 public sealed record BookingSummaryDto(

@@ -32,6 +32,13 @@ public class QueueEntry
     /// <summary>Whether the customer has physically arrived (check-in).</summary>
     public bool CheckedIn { get; set; }
 
+    /// <summary>
+    /// The branch-local calendar date this ticket is meant to be served on.
+    /// Online booking → slot date; walk-in → today. Ticket numbers reset daily;
+    /// uniqueness is enforced per (BranchId, ServiceDay, TicketNumber).
+    /// </summary>
+    public DateOnly ServiceDay { get; set; }
+
     /// <summary>Anonymous device id (X-Device-Id header) of the public walk-in page that took this ticket. Not personal data.</summary>
     public string? WalkInDeviceId { get; set; }
 
