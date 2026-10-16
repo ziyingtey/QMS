@@ -475,7 +475,7 @@ export function HomeScreen({
             </View>
             <View style={{ flex: 1 }}>
               <Text style={styles.emptyTicketTitle}>No active ticket</Text>
-              <Text style={styles.emptyTicketSub}>Book a slot or walk in from the Booking tab</Text>
+              <Text style={styles.emptyTicketSub}>Book a slot in the Booking tab. Walking in? Scan the QR code at the branch.</Text>
             </View>
             <Ionicons name="chevron-forward" size={18} color="#8a8a8a" />
           </Pressable>

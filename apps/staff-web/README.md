@@ -1,5 +1,25 @@
 # IH-QMS Staff Web
 
+Vite + React + TypeScript front-end for staff and managers.
+
+## Routes
+
+| Route | Who | Purpose |
+|-------|-----|---------|
+| `/` | Staff | Staff Deck: call next, start/end service, issue walk-in at counter |
+| `/manager` | Manager | Dashboard, queues, counters, schedule, analytics |
+| `/walk-in` | Public | Page opened by scanning the branch QR (`?t=` daily token) to take a walk-in ticket |
+| `/walk-in-qr` | Staff/Manager | Shows/prints today's branch walk-in QR |
+| `/preview/*` | Dev | Mock-data previews of the deck/manager UI |
+
+## Run
+
+```bash
+npm install
+npm run dev -- --host   # --host to open from a phone on the LAN
+npm run build           # type-check + production build
+```
+
 The staff UI calls **QMS.Api** for login, branches, queue, and SignalR.
 
 ## “Failed to fetch” on one laptop but not another
@@ -18,79 +38,3 @@ VITE_DEV_API_PROXY_TARGET=http://<WINDOWS_LAN_IP>:5154
 Then **restart** `npm run dev`. Open the site at the URL Vite prints (e.g. `http://localhost:5173`). Login calls go to `http://localhost:5173/api/...` and Vite proxies them to Windows.
 
 **Without proxy:** set `VITE_API_URL=http://<WINDOWS_LAN_IP>:5154` and ensure the **browser’s** machine can reach that IP (firewall, `dotnet run --urls "http://0.0.0.0:5154"`).
-
----
-
-# React + TypeScript + Vite
-
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
-
-Currently, two official plugins are available:
-
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
-
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
-
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
-
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
