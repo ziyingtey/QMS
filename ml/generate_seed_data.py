@@ -6,7 +6,9 @@ Discrete-event simulation of Malaysian bank branches matching production logic:
   - Multi-counter drain with per-counter service assignments (matches CounterSimulationEstimator)
   - Online bookings with slot features + walk-ins
   - All 24 features aligned with MlHttpWaitTimeEstimator.BuildPayload
-  - Target = ServingStartedAt - QueueEligibleAt (matches MlTrainingObservation)
+  - Check-in time for online bookings: 80% arrive 0-20 min early, 20% arrive 0-15 min late;
+    QueueEligibleAt = max(CheckInAt, SlotStart - EarlyCall)
+  - Target = ServingStartedAt - QueueEligibleAt (matches MlTrainingObservation; never negative)
 
 Output: ml/data/wait_training.csv
 
@@ -81,11 +83,12 @@ class Ticket:
     created_at: float  # minutes from day start (e.g., 540 = 9:00)
     slot_start: float | None = None  # for online bookings
     slot_end: float | None = None
-    queue_eligible_at: float = 0.0  # walk-in=created_at, online=slot_start
+    queue_eligible_at: float = 0.0  # walk-in=created_at, online=max(checkin_at, slot_start - early_call)
     serving_started_at: float | None = None
     service_end_at: float | None = None  # actual end time (observable: counter becomes free)
     abandoned: bool = False
     enqueue_seq: int = 0
+    checkin_at: float | None = None  # physical check-in time (online) / created_at (walk-in)
 
 
 @dataclass
@@ -95,6 +98,10 @@ class Counter:
     allowed_prefixes: list[str]
     free_at: float = 0.0  # when this counter becomes free
     currently_serving: Ticket | None = None
+
+
+# Realistic manager settings for Branch.OnlineEarlyCallMinutes (drawn per branch-day)
+EARLY_CALL_CHOICES = [0, 5, 10, 15, 20, 30]
 
 
 def hour_traffic(hour: int) -> float:
@@ -120,7 +127,9 @@ def simulate_day(
     svc_by_code = {s["code"]: s for s in SERVICES}
 
     slot_dur = branch["slot_duration"]
-    early_call = branch["early_call"]
+    # Manager-configurable Branch.OnlineEarlyCallMinutes: draw per branch-day so the
+    # model sees the full realistic range (0..30) instead of a fixed per-branch value.
+    early_call = int(rng.choice(EARLY_CALL_CHOICES))
 
     # Set up counters
     profile_indices = rng.choice(len(PROFILES), size=n_profiles, replace=False)
@@ -136,6 +145,18 @@ def simulate_day(
 
     tickets: list[Ticket] = []
     ticket_id = 0
+
+    # Seeded before arrivals so the RNG draw order matches the notebook.
+    # Track rolling avg service times per prefix (simulated from completed services)
+    # Each entry is (completion_time, duration) so snapshots can filter by time
+    # Seed with 10 baseline durations per prefix (time=0 = before day starts).
+    # Dict comprehension (same as notebook): services sharing a prefix (DEPOSIT/WITHDRAW -> "A")
+    # each draw 10 values, but the later service's seed overwrites the earlier one.
+    completed_durations: dict[str, list[tuple[float, float]]] = {
+        s["prefix"]: [(0.0, s["avg_min"] * rng.uniform(0.6, 1.4)) for _ in range(10)]
+        for s in SERVICES
+    }
+
 
     for hour in range(9, 17):
         h_mult = hour_traffic(hour)
@@ -156,6 +177,7 @@ def simulate_day(
             slot_start = None
             slot_end = None
             queue_eligible_at = created_at
+            checkin_at = created_at  # walk-in: check-in = ticket creation
 
             if entry_type == 0:  # OnlineBooked
                 # Online booking: created_at = booking time (could be earlier)
@@ -166,12 +188,20 @@ def simulate_day(
                 slot_idx = int(created_at) // slot_dur
                 slot_start = slot_idx * slot_dur
                 slot_end = slot_start + slot_dur
-                queue_eligible_at = slot_start  # online: eligible at slot start
                 created_at = actual_created  # booking time
 
                 checked_in = rng.random() < 0.88
                 # ~8% abandon (never check in or leave before called)
                 abandoned = not checked_in and rng.random() < 0.6
+                if checked_in:
+                    # Arrival relative to slot start: 80% early (0-20 min), 20% late (0-15 min)
+                    offset = -rng.uniform(0, 20) if rng.random() < 0.8 else rng.uniform(0, 15)
+                    checkin_at = slot_start + offset
+                    # Eligible once physically checked in AND early-call window has opened
+                    queue_eligible_at = max(checkin_at, slot_start - early_call)
+                else:
+                    checkin_at = None
+                    queue_eligible_at = slot_start  # never served; dropped in cleaning
             else:  # WalkIn
                 checked_in = True
                 abandoned = rng.random() < 0.05  # 5% walk-ins abandon
@@ -192,6 +222,7 @@ def simulate_day(
                 queue_eligible_at=queue_eligible_at,
                 abandoned=abandoned,
                 enqueue_seq=ticket_id,
+                checkin_at=checkin_at,
             ))
 
     if not tickets:
@@ -200,22 +231,15 @@ def simulate_day(
     # ── Discrete-event Call Next drain ──
     # Simulate counters pulling tickets in CreatedAt FIFO order (matching QueueCallNextSelector)
     waiting = [t for t in tickets if not t.abandoned]
-    # For online: only eligible when checked_in and slot_start - early_call <= now
+    # For online: only eligible when checkin_at <= now and slot_start - early_call <= now
     # For walk-in: eligible when checked_in
 
-    # Track rolling avg service times per prefix (simulated from completed services)
-    completed_durations: dict[str, list[float]] = {s["prefix"]: [] for s in SERVICES}
-    # Seed with some baseline durations
-    for s in SERVICES:
-        for _ in range(10):
-            completed_durations[s["prefix"]].append(
-                s["avg_min"] * rng.uniform(0.6, 1.4)
-            )
-
-    def rolling_avg(prefix: str) -> float:
-        durations = completed_durations[prefix]
-        if len(durations) > 30:
-            durations = durations[-30:]
+    def rolling_avg(prefix: str, before: float | None = None) -> float:
+        """Rolling avg of last 30 completed durations, optionally filtered to completions before a given time."""
+        entries = completed_durations[prefix]
+        if before is not None:
+            entries = [(t, d) for t, d in entries if t <= before]
+        durations = [d for _, d in entries[-30:]]
         return float(np.mean(durations)) if durations else 10.0
 
     def is_eligible(t: Ticket, now: float) -> bool:
@@ -225,11 +249,10 @@ def simulate_day(
             # Walk-in only exists after they arrive (created_at = arrival time)
             return t.checked_in and t.created_at <= now
         # online
-        if not t.checked_in:
+        if not t.checked_in or t.slot_start is None or t.checkin_at is None:
             return False
-        if t.slot_start is None:
-            return False
-        return (t.slot_start - early_call) <= now
+        # Must be physically checked in and within the early-call window
+        return t.checkin_at <= now and (t.slot_start - early_call) <= now
 
     def get_eligible_pool(now: float) -> list[Ticket]:
         return [t for t in waiting if is_eligible(t, now) and t.serving_started_at is None]
@@ -266,7 +289,7 @@ def simulate_day(
                 if t.serving_started_at is not None or t.abandoned:
                     continue
                 if t.entry_type == 0 and t.checked_in and t.slot_start is not None:
-                    eligible_at = t.slot_start - early_call
+                    eligible_at = max(t.checkin_at, t.slot_start - early_call)
                     if eligible_at > now:
                         next_eligible_time = min(next_eligible_time, eligible_at)
 
@@ -297,8 +320,8 @@ def simulate_day(
         earliest_counter.free_at = now + service_duration
         earliest_counter.currently_serving = ticket
 
-        # Track completed duration for rolling avg
-        completed_durations[ticket.prefix].append(service_duration)
+        # Track completed duration for rolling avg (with completion time for temporal filtering)
+        completed_durations[ticket.prefix].append((now + service_duration, service_duration))
 
     # ── Build snapshot rows for each served ticket ──
     # Snapshot at queue_eligible_at (when the person starts waiting)
@@ -354,8 +377,8 @@ def simulate_day(
             1 for c in counters if t.prefix in c.allowed_prefixes
         )
 
-        # Rolling avg at snapshot time
-        roll_avg = rolling_avg(t.prefix)
+        # Rolling avg at snapshot time (only completions before snap_time — no future leakage)
+        roll_avg = rolling_avg(t.prefix, before=snap_time)
 
         # Slot features
         slot_duration = slot_dur
@@ -429,6 +452,7 @@ def simulate_day(
             "SlotActive": slot_active,
             "CallNextPriority": call_priority,
             "SlotDurationMinutes": slot_duration,
+            "EarlyCallMinutes": early_call,
             "MinutesUntilSlotEnd": minutes_until_slot_end,
             "MinutesSinceSlotStart": minutes_since_slot_start,
             "OnlineSlotsPerSlot": t.online_slots_per_slot,
@@ -456,13 +480,14 @@ def simulate_day(
                 "DayOfWeek": day_of_week,
                 "IsPeakHour": 0,
                 "DefaultAvgServiceMinutes": t.default_avg_min,
-                "RollingAvgServiceMinutes": round(rolling_avg(t.prefix), 2),
+                "RollingAvgServiceMinutes": round(rolling_avg(t.prefix, before=t.created_at), 2),
                 "EnqueueSequence": t.enqueue_seq,
                 "EntryType": t.entry_type,
                 "CheckedIn": 0,
                 "SlotActive": 0,
                 "CallNextPriority": 1,
                 "SlotDurationMinutes": slot_dur,
+                "EarlyCallMinutes": early_call,
                 "MinutesUntilSlotEnd": None,
                 "MinutesSinceSlotStart": None,
                 "OnlineSlotsPerSlot": t.online_slots_per_slot,

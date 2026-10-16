@@ -34,6 +34,8 @@ public sealed record WaitTimeFeatures
 
     // ── Slot ──
     public int SlotDurationMinutes { get; init; }
+    /// <summary>Branch.OnlineEarlyCallMinutes: how many minutes before slot start an online booking may be called.</summary>
+    public int EarlyCallMinutes { get; init; }
     public double? MinutesUntilSlotEnd { get; init; }
     public double? MinutesSinceSlotStart { get; init; }
     public int OnlineSlotsPerSlot { get; init; }

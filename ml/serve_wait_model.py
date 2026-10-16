@@ -108,9 +108,11 @@ class Handler(BaseHTTPRequestHandler):
                 "EnqueueSequence": 1,
                 "BranchCode": 0,
                 "IsPeakHour": 0,
+                "RollingAvgServiceMinutes": None,  # NaN — HistGBR handles natively
                 # v2 slot features — NaN is correct for walk-ins (HistGBR native)
                 "NowServing": 0,
                 "SlotDurationMinutes": None,
+                "EarlyCallMinutes": None,  # only used if the bundle was trained with it
                 "MinutesUntilSlotEnd": None,
                 "MinutesSinceSlotStart": None,
                 "OnlineSlotsPerSlot": None,
@@ -122,6 +124,10 @@ class Handler(BaseHTTPRequestHandler):
                     X.at[0, k] = v
                 elif k in cols and k not in feats:
                     X[k] = v
+            # Coerce numeric columns so None becomes NaN (object dtype breaks HistGBR)
+            for c in numeric:
+                if c in X.columns:
+                    X[c] = pd.to_numeric(X[c], errors="coerce")
             pred = float(Handler.bundle["pipeline"].predict(X)[0])
             pred = max(0.0, pred)
             self._send(200, {"minutes": round(pred, 2), "source": "ml"})

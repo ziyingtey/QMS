@@ -103,6 +103,7 @@ public sealed class MlHttpWaitTimeEstimator : IWaitTimeEstimator
             ["IsPeakHour"] = f.IsPeakHour ? 1 : 0,
             // Service duration
             ["DefaultAvgServiceMinutes"] = f.EffectiveAvgServiceMinutes,
+            ["RollingAvgServiceMinutes"] = f.RollingAvgServiceMinutes,
             // Entry
             ["EnqueueSequence"] = f.EnqueueSequence,
             ["EntryType"] = f.EntryType,
@@ -111,6 +112,7 @@ public sealed class MlHttpWaitTimeEstimator : IWaitTimeEstimator
             ["SlotActive"] = slotActive,
             ["CallNextPriority"] = callNextPriority,
             ["SlotDurationMinutes"] = f.SlotDurationMinutes,
+            ["EarlyCallMinutes"] = f.EarlyCallMinutes,
             ["MinutesUntilSlotEnd"] = f.MinutesUntilSlotEnd,
             ["MinutesSinceSlotStart"] = f.MinutesSinceSlotStart,
             ["OnlineSlotsPerSlot"] = f.OnlineSlotsPerSlot,

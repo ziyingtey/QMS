@@ -28,11 +28,14 @@ public sealed class WaitTimeFeatureBuilder(QmsDbContext db)
         var hour = localTime.Hour;
         var isPeak = (hour >= 9 && hour <= 11) || (hour >= 14 && hour <= 16);
 
-        // Queue state: all waiting tickets for this branch+service at snapshot time
+        // Queue state: only today's waiting tickets (by ServiceDay) for this branch+service.
+        // Future-day bookings are in Waiting state but must not inflate queue length / ML features.
+        var snapshotDay = DateOnly.FromDateTime(snapshotAt.ToOffset(zone).DateTime);
         var waitingQuery = db.QueueEntries.AsNoTracking()
             .Where(q => q.BranchId == entry.BranchId
                         && q.ServiceTypeId == entry.ServiceTypeId
-                        && q.State == QueueEntryState.Waiting);
+                        && q.State == QueueEntryState.Waiting
+                        && q.ServiceDay == snapshotDay);
 
         var queueLength = await waitingQuery.CountAsync(ct);
 
@@ -129,6 +132,7 @@ public sealed class WaitTimeFeatureBuilder(QmsDbContext db)
             CheckedIn = entry.CheckedIn,
             EnqueueSequence = entry.EnqueueSequence,
             SlotDurationMinutes = branch.SlotDurationMinutes,
+            EarlyCallMinutes = branch.OnlineEarlyCallMinutes,
             MinutesUntilSlotEnd = minutesUntilSlotEnd,
             MinutesSinceSlotStart = minutesSinceSlotStart,
             OnlineSlotsPerSlot = service.OnlineSlotsPerSlot,
@@ -181,6 +185,7 @@ public sealed class WaitTimeFeatureBuilder(QmsDbContext db)
             DayOfWeek = f.DayOfWeek,
             IsPeakHour = f.IsPeakHour,
             SlotDurationMinutes = f.SlotDurationMinutes,
+            EarlyCallMinutes = f.EarlyCallMinutes,
             MinutesUntilSlotEnd = f.MinutesUntilSlotEnd,
             MinutesSinceSlotStart = f.MinutesSinceSlotStart,
             OnlineSlotsPerSlot = f.OnlineSlotsPerSlot,

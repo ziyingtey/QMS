@@ -55,6 +55,8 @@ public class MlTrainingObservation
 
     // ── Slot / Capacity Features ──
     public int SlotDurationMinutes { get; set; }
+    /// <summary>Branch.OnlineEarlyCallMinutes at snapshot time (ML feature EarlyCallMinutes).</summary>
+    public int EarlyCallMinutes { get; set; }
     public double? MinutesUntilSlotEnd { get; set; }
     public double? MinutesSinceSlotStart { get; set; }
     public int OnlineSlotsPerSlot { get; set; }

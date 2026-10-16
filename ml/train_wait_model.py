@@ -63,6 +63,7 @@ FEATURE_NUMERIC = [
     "IsPeakHour",
     # Service duration
     "DefaultAvgServiceMinutes",
+    "RollingAvgServiceMinutes",
     # Entry
     "EnqueueSequence",
     "EntryType",
@@ -71,6 +72,7 @@ FEATURE_NUMERIC = [
     "SlotActive",
     "CallNextPriority",
     "SlotDurationMinutes",
+    "EarlyCallMinutes",  # Branch.OnlineEarlyCallMinutes (NaN for external datasets)
     "MinutesUntilSlotEnd",
     "MinutesSinceSlotStart",
     "OnlineSlotsPerSlot",
@@ -108,6 +110,7 @@ SELECT
     o.DayOfWeek,
     o.IsPeakHour,
     o.SlotDurationMinutes,
+    o.EarlyCallMinutes,
     o.MinutesUntilSlotEnd,
     o.MinutesSinceSlotStart,
     o.OnlineSlotsPerSlot,
@@ -243,8 +246,8 @@ def clean_data(df: pd.DataFrame) -> pd.DataFrame:
     # Drop abandoned tickets (WaitingMinutes is null = never served)
     df = df.dropna(subset=[TARGET])
 
-    # Drop negative / zero service times (system glitches)
-    df = df[df[TARGET] > 0].copy()
+    # Drop negative service times (system glitches); keep 0 = instant service (empty queue)
+    df = df[df[TARGET] >= 0].copy()
 
     # Winsorize outliers at 99th percentile per source (different domains have different scales)
     if "DataSource" in df.columns:
@@ -316,7 +319,8 @@ def build_model() -> Pipeline:
         ]
     )
     regressor = HistGradientBoostingRegressor(
-        loss="poisson",  # natural for wait times (non-negative, right-skewed)
+        loss="quantile",       # asymmetric: under-prediction hurts UX more than over-prediction
+        quantile=0.75,         # predict p75 — 75% of customers served within this estimate
         max_depth=6,
         learning_rate=0.08,
         max_iter=300,
@@ -561,6 +565,8 @@ def main() -> None:
         "feature_importance": feature_importance,
         "model_config": {
             "algorithm": "HistGradientBoostingRegressor",
+            "loss": "quantile (p75)",
+            "quantile": 0.75,
             "max_depth": 6,
             "learning_rate": 0.08,
             "max_iter": 300,
