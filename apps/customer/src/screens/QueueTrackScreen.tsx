@@ -267,6 +267,17 @@ export function QueueTrackScreen({ route, navigation }: Props) {
     );
   };
 
+  // Online booking that hasn't checked in yet: not in the queue, so hide ETA / people ahead.
+  const awaitingCheckIn =
+    booking != null && (booking.status === "Confirmed" || booking.status === "Pending");
+  const slotCountdown = (() => {
+    if (!booking?.slotStart) return null;
+    const mins = Math.round((new Date(booking.slotStart).getTime() - Date.now()) / 60000);
+    if (mins <= 0) return "Your slot has started";
+    if (mins < 60) return `Starts in ${mins} min`;
+    return `Starts in ${Math.floor(mins / 60)}h ${mins % 60}m`;
+  })();
+
   // Progress tracker steps
   const progressSteps = ["Waiting", "Next", "Called", "Completed"];
   const activeStep = phase === "waiting" || phase === "almost" ? 0
@@ -366,14 +377,27 @@ export function QueueTrackScreen({ route, navigation }: Props) {
             </View>
 
             <View style={styles.statusCard}>
-              <Text style={styles.hourglassEmoji}>⏳</Text>
-              <Text style={styles.statusTitle}>Please Wait</Text>
+              <Text style={styles.hourglassEmoji}>{awaitingCheckIn ? "📍" : "⏳"}</Text>
+              <Text style={styles.statusTitle}>{awaitingCheckIn ? "Check in to join the queue" : "Please Wait"}</Text>
               <Text style={styles.statusSub}>
-                You are in queue. We'll notify you when it's almost your turn.
+                {awaitingCheckIn
+                  ? "Check in when you arrive and you'll join the queue then. We'll show your wait time after check-in."
+                  : "You are in queue. We'll notify you when it's almost your turn."}
               </Text>
             </View>
 
             {/* Live Status */}
+            {awaitingCheckIn && booking ? (
+            <View style={styles.liveCard}>
+              <View style={styles.liveGrid}>
+                <View style={styles.liveCell}>
+                  <Text style={styles.liveLab}>Your Slot</Text>
+                  <Text style={styles.liveVal}>{formatSlotRange(booking.slotStart, booking.slotEnd, branchOffset)}</Text>
+                  {slotCountdown ? <Text style={styles.liveLab}>{slotCountdown}</Text> : null}
+                </View>
+              </View>
+            </View>
+            ) : (
             <View style={styles.liveCard}>
               <View style={styles.liveGrid}>
                 <View style={styles.liveCell}>
@@ -392,6 +416,7 @@ export function QueueTrackScreen({ route, navigation }: Props) {
                 </View>
               </View>
             </View>
+            )}
           </>
         )}
 
