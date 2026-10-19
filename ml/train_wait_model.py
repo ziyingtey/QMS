@@ -1,10 +1,10 @@
 """
-Wait-time regression pipeline for QMS (v2).
+Wait-time regression pipeline for QMS (v4).
 
 Lifecycle: Ingestion → Cleaning → Feature Engineering → Modeling → Evaluation
 
 Predicts WaitingMinutes (QueueEligibleAt → CalledAt, i.e. until a counter calls the ticket)
-using all 26 features aligned with MlHttpWaitTimeEstimator.BuildPayload / WaitTimeFeatureBuilder.
+using all 28 features aligned with MlHttpWaitTimeEstimator.BuildPayload / WaitTimeFeatureBuilder.
 
 Data sources (first match wins):
   1. --csv path (synthetic from generate_seed_data.py or real export)
@@ -57,6 +57,10 @@ FEATURE_NUMERIC = [
     # Capacity
     "ActiveCounters",
     "ListeningCounters",
+    # Counter state: listening counters with no Called/Serving ticket, and the deterministic Call Next drain ETA
+    # (CounterSimulationEstimator / counter_sim_eta). Not stored in ML_TRAINING_DATA yet -> NaN for SQL rows.
+    "IdleListeningCounters",
+    "CounterSimEtaMinutes",
     # Time
     "HourOfDay",
     "DayOfWeek",
@@ -86,6 +90,17 @@ FEATURE_CATEGORICAL = ["ServiceCode", "TicketPrefix"]
 
 ALL_FEATURES = FEATURE_NUMERIC + FEATURE_CATEGORICAL
 TARGET = "WaitingMinutes"
+
+# Monotonic constraints (+1 increasing, -1 decreasing; others 0): more people ahead / a longer simulated drain /
+# more waiting in the heard lanes never shortens the ETA, more listening / idle counters never lengthens it.
+# Keeps e.g. "0 ahead + idle counter" ~0 and the ETA rising with People Ahead.
+MONOTONIC = {
+    "PeopleAheadCallNext": 1,
+    "CrossLaneQueueLength": 1,
+    "CounterSimEtaMinutes": 1,
+    "IdleListeningCounters": -1,
+    "ListeningCounters": -1,
+}
 
 # ── SQL export query (ML_TRAINING_DATA v3; every model feature is stored, nothing reconstructed) ──
 # Only FeatureSchemaVersion = 'v3' rows: older 'v2' rows used Sun=0 DayOfWeek, snapshotted online
@@ -330,10 +345,12 @@ def build_model() -> Pipeline:
         loss="quantile",       # asymmetric: under-prediction hurts UX more than over-prediction
         quantile=0.75,         # predict p75 — 75% of customers served within this estimate
         max_depth=6,
-        learning_rate=0.08,
-        max_iter=300,
+        learning_rate=0.05,
+        max_iter=600,
         min_samples_leaf=8,
         categorical_features="from_dtype",
+        # column order after the ColumnTransformer = FEATURE_NUMERIC + FEATURE_CATEGORICAL
+        monotonic_cst=[MONOTONIC.get(f, 0) for f in FEATURE_NUMERIC] + [0] * len(FEATURE_CATEGORICAL),
         random_state=42,
     )
     return Pipeline([
@@ -403,7 +420,7 @@ def evaluate(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, float]:
 # ─────────────────────────────────────────────────────────
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Train QMS wait-time model (v2)")
+    parser = argparse.ArgumentParser(description="Train QMS wait-time model (v4)")
     parser.add_argument("--csv", type=Path, default=None)
     parser.add_argument("--connection-string",
                         default=os.environ.get("QMS_SQL_CONNECTION", ""))
@@ -576,9 +593,10 @@ def main() -> None:
             "loss": "quantile (p75)",
             "quantile": 0.75,
             "max_depth": 6,
-            "learning_rate": 0.08,
-            "max_iter": 300,
+            "learning_rate": 0.05,
+            "max_iter": 600,
             "min_samples_leaf": 8,
+            "monotonic_cst": MONOTONIC,
             "nan_handling": "native (no imputation needed)",
         },
     }
@@ -589,7 +607,7 @@ def main() -> None:
             "feature_numeric": FEATURE_NUMERIC,
             "feature_categorical": FEATURE_CATEGORICAL,
             "target": TARGET,
-            "version": "v2",
+            "version": "v4",
         },
         MODEL_PATH,
     )

@@ -108,6 +108,9 @@ class Handler(BaseHTTPRequestHandler):
                 "CrossLaneQueueLength": row.get("QueueLength", 0) or 0,
                 "PeopleAheadCallNext": row.get("PeopleAhead", row.get("QueueLength", 0)) or 0,
                 "ListeningCounters": row.get("ActiveCounters", 1) or 1,
+                # Counter state (v4); NaN when the caller does not send them
+                "IdleListeningCounters": None,
+                "CounterSimEtaMinutes": None,
                 "SlotActive": 0,
                 "CallNextPriority": 1,
                 # Production prefix per service code (database/insert-service-queues-all-branches.sql);
