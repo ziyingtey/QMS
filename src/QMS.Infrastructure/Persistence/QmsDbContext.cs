@@ -207,6 +207,7 @@ public sealed class QmsDbContext : DbContext
             e.HasIndex(x => x.SnapshotAt);   // time-based train/test split
             e.Property(x => x.ServiceCode).HasMaxLength(32);
             e.Property(x => x.FeatureSchemaVersion).HasMaxLength(16);
+            e.Property(x => x.TicketPrefix).HasMaxLength(8);
             e.HasOne(x => x.Branch).WithMany(b => b.MlTrainingObservations).HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.Cascade);
             e.HasOne(x => x.ServiceType).WithMany(s => s.MlTrainingObservations).HasForeignKey(x => x.ServiceTypeId).OnDelete(DeleteBehavior.NoAction);
         });

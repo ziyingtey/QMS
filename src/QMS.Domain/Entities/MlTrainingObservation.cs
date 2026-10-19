@@ -3,10 +3,11 @@ namespace QMS.Domain.Entities;
 /// <summary>
 /// Snapshot-based ML training observation.
 /// Features are captured at prediction time (SnapshotAt) — the moment the ticket becomes queue-eligible.
-/// Target (ActualWaitingMinutes) is filled later when ServingStartedAt is known.
+/// Target (ActualWaitingMinutes = CalledAt - QueueEligibleAt) is filled later when the ticket is called.
 ///
 /// Walk-in: snapshot at creation (immediately eligible).
-/// Online:  snapshot when AssignedSlotStart arrives (slot begins).
+/// Online:  snapshot once checked in, at max(CheckedInAt, AssignedSlotStart - OnlineEarlyCallMinutes)
+///          (same queue_eligible_at as the training simulation); QueueEligibleAt is set to that moment.
 /// </summary>
 public class MlTrainingObservation
 {
@@ -22,10 +23,13 @@ public class MlTrainingObservation
     // ── Timing ──
     public DateTimeOffset SnapshotAt { get; set; }
     public DateTimeOffset? QueueEligibleAt { get; set; }
+    /// <summary>When the counter called the ticket (Call Next). End point of the target.</summary>
+    public DateTimeOffset? CalledAt { get; set; }
+    /// <summary>Recorded for reference only (after the customer walks up); not the target end point.</summary>
     public DateTimeOffset? ServingStartedAt { get; set; }
 
-    // ── Target (filled when Serving starts, NULL until then) ──
-    /// <summary>ServingStartedAt - QueueEligibleAt. NULL until customer starts being served.</summary>
+    // ── Target (filled when the ticket is called, NULL until then) ──
+    /// <summary>CalledAt - QueueEligibleAt (training simulation: counter pick time - queue_eligible_at). NULL until called.</summary>
     public double? ActualWaitingMinutes { get; set; }
 
     // ── Entry / Customer ──
@@ -38,6 +42,8 @@ public class MlTrainingObservation
     public int PeopleAhead { get; set; }
     public int OnlineQueueLength { get; set; }
     public int WalkInQueueLength { get; set; }
+    /// <summary>Queue-eligible tickets in every lane heard by the counters that serve this lane (ML feature CrossLaneQueueLength).</summary>
+    public int CrossLaneQueueLength { get; set; }
 
     // ── Capacity at SnapshotAt ──
     public int ActiveCounters { get; set; }
@@ -62,11 +68,22 @@ public class MlTrainingObservation
     public int OnlineSlotsPerSlot { get; set; }
     public int OnlineBookedInSlot { get; set; }
     public int WalkInInSlot { get; set; }
+    /// <summary>1 if an online ticket's slot is active at SnapshotAt (always 0 for walk-ins).</summary>
+    public int SlotActive { get; set; }
+    /// <summary>0 = P0 (online + checked in + slot active), 1 = P1.</summary>
+    public int CallNextPriority { get; set; }
 
     // ── Branch / Service Identity ──
     public int BranchCode { get; set; }
     public string ServiceCode { get; set; } = string.Empty;
+    /// <summary>First letter of the ticket number (queue prefix), ML categorical feature.</summary>
+    public string TicketPrefix { get; set; } = string.Empty;
 
     // ── Model Metadata ──
+    /// <summary>
+    /// "v2" = legacy rows (Sun=0 DayOfWeek, online snapshot at SlotStart, CrossLane == QueueLength,
+    /// target ending at ServingStartedAt). "v3" = rows aligned with the training simulation
+    /// (see WaitTimeFeatureBuilder.FeatureSchemaVersion). Train only on v3.
+    /// </summary>
     public string FeatureSchemaVersion { get; set; } = "v2";
 }
