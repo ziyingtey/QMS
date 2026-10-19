@@ -528,19 +528,10 @@ public sealed class QmsQueueService(
         var nowUtc = DateTimeOffset.UtcNow;
         var earlyMinutes = entry.Branch.OnlineEarlyCallMinutes;
 
-        // People Ahead: same-service, eligible tickets with earlier CreatedAt.
-        var totalAhead = await db.QueueEntries.AsNoTracking()
-            .Where(q => q.BranchId == entry.BranchId
-                        && q.ServiceTypeId == entry.ServiceTypeId
-                        && q.State == QueueEntryState.Waiting)
-            .Where(q =>
-                (q.EntryType == QueueEntryType.WalkIn && q.CheckedIn)
-                || (q.EntryType == QueueEntryType.OnlineBooked
-                    && q.CheckedIn
-                    && q.AssignedSlotStart.HasValue
-                    && q.AssignedSlotStart.Value.AddMinutes(-earlyMinutes) <= nowUtc))
-            .CountAsync(q => q.CreatedAt < entry.CreatedAt
-                || (q.CreatedAt == entry.CreatedAt && q.Id.CompareTo(entry.Id) < 0), cancellationToken);
+        // People Ahead: cross-lane Call Next order (shared helper, same definition as the ML feature
+        // PeopleAheadCallNext). Counts eligible tickets in every lane heard by the counters that serve my lane
+        // (today's ServiceDay) that Call Next would pick before me. "You are next" follows from it.
+        var totalAhead = await CallNextQueueMath.CountPeopleAheadAsync(db, entry, entry.Branch, nowUtc, cancellationToken);
 
         // ── ETA: ML → Counter Simulation → Formula (shared with Staff/Manager) ──
         // Online booking not yet checked in: not in the call-next pool, so any ETA would be
@@ -587,48 +578,6 @@ public sealed class QmsQueueService(
             entry.ServingEndedAt.HasValue ? FormatIsoOffset(entry.ServingEndedAt.Value) : null,
             entry.Booking?.Status.ToString(),
             entry.CalledAt.HasValue);
-    }
-
-    /// <summary>
-    /// Count tickets ahead of the given entry using Call Next eligibility + priority rules.
-    /// This ensures "People Ahead" exactly matches what Call Next would process first.
-    /// </summary>
-    private async Task<int> CountPeopleAheadAsync(
-        QueueEntry myEntry, List<Guid> competingServiceIds,
-        DateTimeOffset nowUtc, int earlyCallMinutes,
-        CancellationToken ct)
-    {
-        // Simulate Call Next repeatedly on a snapshot until I would be selected.
-        var pool = await db.QueueEntries.AsNoTracking()
-            .Where(q => q.BranchId == myEntry.BranchId
-                        && competingServiceIds.Contains(q.ServiceTypeId)
-                        && q.State == QueueEntryState.Waiting)
-            .Where(q =>
-                (q.EntryType == QueueEntryType.WalkIn && q.CheckedIn)
-                || (q.EntryType == QueueEntryType.OnlineBooked
-                    && q.CheckedIn
-                    && q.AssignedSlotStart.HasValue
-                    && q.AssignedSlotStart.Value.AddMinutes(-earlyCallMinutes) <= nowUtc)
-                || q.Id == myEntry.Id)
-            .ToListAsync(ct);
-
-        // Ensure my ticket is present even if not yet eligible (show 0 ahead / waiting phase)
-        if (pool.All(q => q.Id != myEntry.Id))
-            pool.Add(myEntry);
-
-        var remaining = pool.ToList();
-        var ahead = 0;
-        while (remaining.Count > 0)
-        {
-            var next = QueueCallNextSelector.SelectLongestWaitQueueHead(remaining, nowUtc);
-            if (next is null) break;
-            if (next.Id == myEntry.Id) return ahead;
-            ahead++;
-            remaining.RemoveAll(q => q.Id == next.Id);
-            if (ahead > 500) break; // safety
-        }
-
-        return ahead;
     }
 
     // ─────────────────────────────────────────────────────────────────────

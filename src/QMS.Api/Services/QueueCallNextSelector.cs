@@ -15,6 +15,17 @@ public static class QueueCallNextSelector
     public static DateTimeOffset WaitStart(QueueEntry e) => e.CreatedAt;
 
     /// <summary>
+    /// The Call Next ordering key as a comparer: earlier CreatedAt first, then Id (.NET Guid ordering).
+    /// Identical to the OrderBy(CreatedAt).ThenBy(Id) used below; CallNextQueueMath (People Ahead) and the
+    /// training simulation (sort key (created_at, ticket_id)) use the same key. No P0/P1 priority applies.
+    /// </summary>
+    public static int CompareCallOrder(DateTimeOffset aCreatedAt, Guid aId, DateTimeOffset bCreatedAt, Guid bId)
+    {
+        var byCreated = aCreatedAt.CompareTo(bCreatedAt);
+        return byCreated != 0 ? byCreated : aId.CompareTo(bId);
+    }
+
+    /// <summary>
     /// Pick the next ticket Call Next should claim from an already-eligible pool.
     /// </summary>
     public static QueueEntry? SelectLongestWaitQueueHead(

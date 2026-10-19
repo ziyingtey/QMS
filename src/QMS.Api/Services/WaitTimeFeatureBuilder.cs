@@ -42,26 +42,15 @@ public sealed class WaitTimeFeatureBuilder(QmsDbContext db)
 
         var snapshotDay = DateOnly.FromDateTime(localTime.DateTime);
         var earlyCallMinutes = branch.OnlineEarlyCallMinutes;
-        // Online eligibility "SlotStart - EarlyCall <= snapshotAt" rewritten as "SlotStart <= snapshotAt + EarlyCall".
-        var earlyCallCutoff = snapshotAt.AddMinutes(earlyCallMinutes);
 
-        // Today's Waiting tickets at this branch (by ServiceDay; future-day bookings excluded).
-        var todayWaiting = db.QueueEntries.AsNoTracking()
-            .Where(q => q.BranchId == entry.BranchId
-                        && q.State == QueueEntryState.Waiting
-                        && q.ServiceDay == snapshotDay);
+        // Queue counts only include tickets that are already queue-eligible at the snapshot (training:
+        // queue_eligible_at <= snap_time, not yet picked). Rule shared with Call Next via CallNextQueueMath:
+        // walk-in = checked in (and already created); online = checked in AND SlotStart - EarlyCall <= snapshotAt.
+        var eligibleWaiting = CallNextQueueMath.EligibleWaiting(
+            db.QueueEntries.AsNoTracking(), entry.BranchId, snapshotDay, snapshotAt, earlyCallMinutes);
 
-        // FIX (queue counts): training counts only tickets that are already queue-eligible at the snapshot
-        // (queue_eligible_at <= snap_time, not yet served). Same eligibility rule as Call Next /
-        // CounterSimulationEstimator: walk-in = checked in (and already created); online = checked in AND
-        // SlotStart - OnlineEarlyCallMinutes <= snapshotAt. Previously every Waiting ticket for today was
-        // counted, so online bookings for later slots today inflated QueueLength.
-        var eligibleWaiting = todayWaiting.Where(q =>
-            (q.EntryType == QueueEntryType.WalkIn && q.CheckedIn && q.CreatedAt <= snapshotAt)
-            || (q.EntryType == QueueEntryType.OnlineBooked
-                && q.CheckedIn
-                && q.AssignedSlotStart.HasValue
-                && q.AssignedSlotStart.Value <= earlyCallCutoff));
+        // Heard lanes S (union of AllowedServices of Active counters that serve my lane; S = {me} if none).
+        var lanes = await CallNextQueueMath.ResolveHeardLanesAsync(db, entry.BranchId, entry.ServiceTypeId, ct);
 
         var sameServiceEligible = eligibleWaiting.Where(q => q.ServiceTypeId == entry.ServiceTypeId);
 
@@ -70,12 +59,11 @@ public sealed class WaitTimeFeatureBuilder(QmsDbContext db)
             .CountAsync(q => q.EntryType == QueueEntryType.OnlineBooked, ct);
         var walkInQueueLength = queueLength - onlineQueueLength;
 
-        // People ahead: match Call Next's CreatedAt FIFO ordering exactly.
-        // QueueCallNextSelector picks earliest CreatedAt (then Id tiebreak),
-        // so PeopleAhead = count of eligible tickets that Call Next would pick before this one.
-        var peopleAhead = await sameServiceEligible
-            .CountAsync(q => q.CreatedAt < entry.CreatedAt
-                || (q.CreatedAt == entry.CreatedAt && q.Id.CompareTo(entry.Id) < 0), ct);
+        // People ahead (PeopleAhead / PeopleAheadCallNext): CROSS-LANE, i.e. eligible tickets in every lane of S
+        // that Call Next would pick before me (CreatedAt, then Id). Same helper as the customer queue status and
+        // the same definition as people_ahead in the training simulation. Previously same-service only.
+        var peopleAhead = await CallNextQueueMath.CountPeopleAheadAsync(
+            db, entry, lanes.HeardServiceIds, snapshotDay, snapshotAt, earlyCallMinutes, ct);
 
         var isOnline = entry.EntryType == QueueEntryType.OnlineBooked;
 
@@ -106,31 +94,15 @@ public sealed class WaitTimeFeatureBuilder(QmsDbContext db)
                              && (q.State == QueueEntryState.Serving || q.State == QueueEntryState.Called), ct);
 
         // Counters: training uses all counters working that day (= Active here) and their allowed lanes.
-        var activeCounterList = await db.Counters.AsNoTracking()
-            .Include(c => c.AllowedServices)
-            .Where(c => c.BranchId == entry.BranchId && c.Mode == CounterMode.Active)
-            .ToListAsync(ct);
-        var activeCounters = activeCounterList.Count;
+        var activeCounters = lanes.ActiveCounters.Count;
+        var serviceEligibleCounters = lanes.ListeningCounters.Count;
 
-        // Same rule as QmsQueueService.CounterCanServeLane (no AllowedServices = cannot serve anything).
-        var listeningCounterList = activeCounterList
-            .Where(c => c.AllowedServices.Count > 0
-                        && c.AllowedServices.Any(a => a.ServiceTypeId == entry.ServiceTypeId))
-            .ToList();
-        var serviceEligibleCounters = listeningCounterList.Count;
-
-        // FIX (CrossLaneQueueLength): previously online + walk-in of the SAME service (always == QueueLength).
-        // Training (generate_seed_data.py / notebook): take the counters that can serve my lane, union every
-        // lane those counters handle, and count queue-eligible, not-yet-served tickets in all those lanes.
-        // Example: counter 1 serves {DEPOSIT, WITHDRAW}; 3 eligible DEPOSIT + 4 eligible WITHDRAW.
-        //   Before: CrossLane = 3.  After: CrossLane = 7.
-        var heardServiceIds = listeningCounterList
-            .SelectMany(c => c.AllowedServices.Select(a => a.ServiceTypeId))
-            .Distinct()
-            .ToList();
-        var crossLaneQueueLength = heardServiceIds.Count == 0
-            ? 0
-            : await eligibleWaiting.CountAsync(q => heardServiceIds.Contains(q.ServiceTypeId), ct);
+        // CrossLaneQueueLength: queue-eligible, not-yet-called tickets in all lanes of S (training: heard_prefixes).
+        // Example: counter 1 serves {DEPOSIT, WITHDRAW}; 3 eligible DEPOSIT + 4 eligible WITHDRAW -> 7.
+        // If no Active counter serves my lane, S = {my lane} (same fallback as People Ahead, so
+        // PeopleAheadCallNext <= CrossLaneQueueLength always holds).
+        var heardServiceIds = lanes.HeardServiceIds.ToList();
+        var crossLaneQueueLength = await eligibleWaiting.CountAsync(q => heardServiceIds.Contains(q.ServiceTypeId), ct);
 
         // FIX (RollingAvgServiceMinutes): training = mean of the LAST 30 completed services for the ticket
         // prefix with completion <= snap_time, rounded to 2 dp, and never missing (history is pre-seeded
