@@ -84,8 +84,10 @@ public sealed class MlHttpWaitTimeEstimator : IWaitTimeEstimator
             ?? (f.MinutesSinceSlotStart.HasValue && f.MinutesUntilSlotEnd.HasValue
                 && f.MinutesSinceSlotStart >= 0 && f.MinutesUntilSlotEnd > 0 ? 1 : 0);
 
+        // FIX: P0 = OnlineBooked (EntryType 0, same encoding as training) + checked in + slot active.
+        // The fallback previously tested EntryType == 1 (walk-in). Only used when CallNextPriority is null.
         var callNextPriority = f.CallNextPriority
-            ?? (f.EntryType == 1 && f.CheckedIn && slotActive == 1 ? 0 : 1);
+            ?? (f.EntryType == 0 && f.CheckedIn && slotActive == 1 ? 0 : 1);
 
         return new Dictionary<string, object?>
         {
@@ -102,7 +104,10 @@ public sealed class MlHttpWaitTimeEstimator : IWaitTimeEstimator
             ["DayOfWeek"] = f.DayOfWeek,
             ["IsPeakHour"] = f.IsPeakHour ? 1 : 0,
             // Service duration
-            ["DefaultAvgServiceMinutes"] = f.EffectiveAvgServiceMinutes,
+            // FIX: training's DefaultAvgServiceMinutes is the static per-service default (avg_min);
+            // the rolling value has its own feature. Previously sent EffectiveAvg (rolling ?? default),
+            // e.g. DEPOSIT default 10 but rolling 6.4 -> model got 6.4 here instead of 10.
+            ["DefaultAvgServiceMinutes"] = f.DefaultAvgServiceMinutes,
             ["RollingAvgServiceMinutes"] = f.RollingAvgServiceMinutes,
             // Entry
             ["EnqueueSequence"] = f.EnqueueSequence,
