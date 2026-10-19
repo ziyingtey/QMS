@@ -25,16 +25,16 @@ SELECT NEWID(),
 FROM dbo.BRANCHES AS b
 CROSS JOIN (
     VALUES
-        (N'ACC_OPEN', N'Account Opening', 20),
-        (N'DEPOSIT', N'Deposit Services', 10),
-        (N'WITHDRAW', N'Withdrawal Services', 8),
-        (N'LOAN', N'Loan / Financing', 25),
-        (N'CCARD', N'Credit Card Services', 15),
+        (N'ACC_OPEN', N'Account Opening', 15),
+        (N'DEPOSIT', N'Deposit Services', 3),
+        (N'WITHDRAW', N'Withdrawal Services', 4),
+        (N'LOAN', N'Loan / Financing', 30),
+        (N'CCARD', N'Credit Card Services', 10),
         (N'FDEP', N'Fixed Deposit', 15),
-        (N'INVUT', N'Investment / Unit Trust', 20),
+        (N'INVUT', N'Investment / Unit Trust', 30),
         (N'BANCA', N'Insurance / Bancassurance', 25),
         (N'ATMCDM', N'ATM / CDM Services', 5),
-        (N'ONLBANK', N'Online Banking Support', 12),
+        (N'ONLBANK', N'Online Banking Support', 5),
         (N'BIZBANK', N'Business Banking', 20),
         (N'REMIT', N'Remittance / Transfer', 15),
         (N'CUSTSVC', N'Queue / Customer Service', 10)

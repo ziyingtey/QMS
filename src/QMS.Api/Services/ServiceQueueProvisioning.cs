@@ -27,7 +27,8 @@ public static class ServiceQueueProvisioning
             .ToDictionary(g => g.Key, g => g.Select(x => x.TicketPrefix.ToUpperInvariant()).ToHashSet());
 
         var created = 0;
-        foreach (var svc in services)
+        // Seed-coded services first so they get their fixed prefix before any custom service can take it.
+        foreach (var svc in services.OrderBy(x => SeedPrefixByCode.ContainsKey(x.Code.Trim()) ? 0 : 1))
         {
             if (svc.QueueId is Guid qid && existingQueues.Any(q => q.Id == qid))
                 continue;
@@ -80,8 +81,34 @@ public static class ServiceQueueProvisioning
         }
     }
 
+    /// <summary>
+    /// Fixed ticket prefixes per production service code. Must stay identical to
+    /// database/insert-service-queues-all-branches.sql (source of truth) and to SERVICES in
+    /// ml/generate_seed_data.py + the notebook, so TicketPrefix means the same thing in training and live.
+    /// Without this, prefixes depended on service load order (e.g. ATMCDM could get "AT" instead of "T").
+    /// </summary>
+    private static readonly Dictionary<string, string> SeedPrefixByCode = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["ACC_OPEN"] = "A",
+        ["DEPOSIT"] = "D",
+        ["WITHDRAW"] = "W",
+        ["LOAN"] = "L",
+        ["CCARD"] = "C",
+        ["FDEP"] = "F",
+        ["INVUT"] = "I",
+        ["BANCA"] = "B",
+        ["ATMCDM"] = "T",
+        ["ONLBANK"] = "O",
+        ["BIZBANK"] = "S",
+        ["REMIT"] = "R",
+        ["CUSTSVC"] = "Q",
+    };
+
     private static string ChoosePrefix(string code, string name, HashSet<string> used)
     {
+        if (SeedPrefixByCode.TryGetValue(code.Trim(), out var fixedPrefix) && !used.Contains(fixedPrefix))
+            return fixedPrefix;
+
         static string Norm(string s)
         {
             var sb = new StringBuilder();
