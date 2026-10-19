@@ -144,6 +144,44 @@ def day_traffic(dow: int) -> float:
 
 
 # >>> NB-CELL simulate
+def heard_lanes(prefix: str, counters: list[Counter]) -> tuple[list[set[str]], set[str]]:
+    """Listening counters' prefix sets and the heard lane set S (live CallNextQueueMath.ResolveHeardLanesAsync).
+
+    A counter listens to my prefix if its allowed_prefixes contain it (an empty list serves nothing).
+    S = union of the listening counters' prefixes (includes mine); S = {my prefix} if no counter serves it.
+    """
+    listening = [set(c.allowed_prefixes) for c in counters if c.allowed_prefixes and prefix in c.allowed_prefixes]
+    heard = set().union(*listening) if listening else {prefix}
+    return listening, heard
+
+
+def people_ahead_call_next(t: Ticket, tickets: list[Ticket], counters: list[Counter], snap_time: float) -> int:
+    """PeopleAheadCallNext of ticket t at snap_time (mirrors live CallNextQueueMath.CountPeopleAheadAsync).
+
+    Eligible ahead of me = not abandoned, checked in, queue_eligible_at <= snap_time, not yet picked
+    (serving_started_at None or > snap_time) and before me by the pick key (created_at, ticket_id), which
+    equals the live QueueCallNextSelector key (CreatedAt, Id). I am never counted.
+    For each listening counter, count the eligible-ahead tickets in THAT counter's prefixes; return the
+    minimum over the counters. If no counter serves my prefix, count same-prefix tickets only.
+    Example: counter1 {A,B}, counter2 {B}; A001, A002, A003, B001 -> B001 = min(3, 0) = 0.
+    """
+    listening, heard = heard_lanes(t.prefix, counters)
+    my_key = (t.created_at, t.ticket_id)
+    ahead_prefixes = [
+        o.prefix for o in tickets
+        if o is not t
+        and o.prefix in heard
+        and not o.abandoned
+        and o.checked_in
+        and o.queue_eligible_at <= snap_time
+        and (o.serving_started_at is None or o.serving_started_at > snap_time)
+        and (o.created_at, o.ticket_id) < my_key
+    ]
+    if not listening:
+        return sum(1 for p in ahead_prefixes if p == t.prefix)
+    return min(sum(1 for p in ahead_prefixes if p in lanes) for lanes in listening)
+
+
 def simulate_day(
     rng: np.random.Generator,
     branch: dict,
@@ -449,12 +487,7 @@ def simulate_day(
 
         # Heard lanes S: union of the prefixes of every counter that can serve my prefix (includes mine).
         # Fallback S = {my prefix} if no counter serves it (live CallNextQueueMath does the same).
-        heard_prefixes = set()
-        for c in counters:
-            if t.prefix in c.allowed_prefixes:
-                heard_prefixes.update(c.allowed_prefixes)
-        if not heard_prefixes:
-            heard_prefixes = {t.prefix}
+        _, heard_prefixes = heard_lanes(t.prefix, counters)
         # Waiting in S at snap time: queue-eligible and not yet picked by a counter
         heard_waiting = [
             o for o in tickets
@@ -465,19 +498,12 @@ def simulate_day(
         ]
         cross_lane = len(heard_waiting)
 
-        # PeopleAheadCallNext (cross-lane): tickets in S that are Call Next eligible at snap time and that a
-        # counter would pick before me by the pick key (created_at, ticket_id), which equals the live
-        # QueueCallNextSelector key (CreatedAt, Id). Eligible at snap = checked in, not abandoned,
-        # queue_eligible_at <= snap_time (excludes un-checked-in online bookings), not yet picked.
-        # NOTE: the old code used is_eligible(o, snap_time), which returns False for any ticket the drain
-        # later served, so PeopleAheadCallNext was always 0 in the training data.
-        my_key = (t.created_at, t.ticket_id)
-        people_ahead = sum(
-            1 for o in heard_waiting
-            if o is not t
-            and o.checked_in
-            and (o.created_at, o.ticket_id) < my_key
-        )
+        # PeopleAheadCallNext: per listening counter, eligible tickets in that counter's prefixes that it would
+        # pick before me by (created_at, ticket_id); minimum over the counters (same-prefix only if no counter
+        # serves my prefix). Same definition as live CallNextQueueMath. Each counter's prefixes are a subset of S,
+        # so people_ahead <= cross_lane. (A union-of-S count overstated it, e.g. B001 kept 3 ahead after a
+        # B-only counter opened.)
+        people_ahead = people_ahead_call_next(t, tickets, counters, snap_time)
 
         # Target: CalledAt (counter pick) - QueueEligibleAt
         wait_min = t.serving_started_at - t.queue_eligible_at
