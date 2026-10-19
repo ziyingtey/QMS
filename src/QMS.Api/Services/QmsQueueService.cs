@@ -1026,23 +1026,16 @@ public sealed class QmsQueueService(
     }
 
     /// <summary>
-    /// Keep ML display ETA inside a plausible band vs formula + Call-Next simulation.
-    /// Floor: 50% of formula. Ceiling: 150% of simulation (or 2.5× formula if sim unavailable).
-    /// WaitPredictions still store the raw ML score for later evaluation.
+    /// ML is the primary estimator: the display ETA is the raw ML prediction (no clamp against the
+    /// formula or the Call Next simulation). Only invalid output (NaN, infinity, negative) is replaced,
+    /// by the formula value. WaitPredictions store the same raw ML score.
     /// </summary>
     private static double ApplyMlSanityClamp(double mlMinutes, double formulaMinutes, double simMinutes)
     {
+        _ = simMinutes; // no longer used: the simulation does not cap ML
         if (double.IsNaN(mlMinutes) || double.IsInfinity(mlMinutes) || mlMinutes < 0)
             return Math.Max(0, formulaMinutes);
-
-        var lo = Math.Max(0, formulaMinutes * 0.5);
-        double hi;
-        if (!double.IsInfinity(simMinutes) && !double.IsNaN(simMinutes) && simMinutes >= 0)
-            hi = Math.Max(lo, simMinutes * 1.5);
-        else
-            hi = Math.Max(lo, Math.Max(formulaMinutes * 2.5, mlMinutes));
-
-        return Math.Clamp(mlMinutes, lo, hi);
+        return mlMinutes;
     }
 
     public async Task<IReadOnlyList<WaitingTicketDto>> ListWaitingTicketsAsync(
