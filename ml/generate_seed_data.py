@@ -394,15 +394,6 @@ def simulate_day(
         ]
         queue_length = len(same_svc_waiting)
 
-        # PeopleAhead: CreatedAt FIFO — count eligible with CreatedAt < mine
-        eligible_at_snap = [
-            o for o in same_svc_waiting
-            if is_eligible(o, snap_time)
-            and (o.created_at < t.created_at
-                 or (o.created_at == t.created_at and o.ticket_id < t.ticket_id))
-        ]
-        people_ahead = len(eligible_at_snap)
-
         # NowServing: tickets being served at snapshot time for this service.
         # Uses actual service_end_at (observable: counter is busy) instead of
         # default_avg_min * 1.2 estimate which would be a data leak.
@@ -456,17 +447,36 @@ def simulate_day(
         # CallNextPriority: P0 if online + checked_in + slot active
         call_priority = 0 if (t.entry_type == 0 and t.checked_in and slot_active == 1) else 1
 
-        # Cross-lane queue length: all queues my counters hear
+        # Heard lanes S: union of the prefixes of every counter that can serve my prefix (includes mine).
+        # Fallback S = {my prefix} if no counter serves it (live CallNextQueueMath does the same).
         heard_prefixes = set()
         for c in counters:
             if t.prefix in c.allowed_prefixes:
                 heard_prefixes.update(c.allowed_prefixes)
-        cross_lane = sum(
-            1 for o in tickets
+        if not heard_prefixes:
+            heard_prefixes = {t.prefix}
+        # Waiting in S at snap time: queue-eligible and not yet picked by a counter
+        heard_waiting = [
+            o for o in tickets
             if o.prefix in heard_prefixes
             and not o.abandoned
             and o.queue_eligible_at <= snap_time
             and (o.serving_started_at is None or o.serving_started_at > snap_time)
+        ]
+        cross_lane = len(heard_waiting)
+
+        # PeopleAheadCallNext (cross-lane): tickets in S that are Call Next eligible at snap time and that a
+        # counter would pick before me by the pick key (created_at, ticket_id), which equals the live
+        # QueueCallNextSelector key (CreatedAt, Id). Eligible at snap = checked in, not abandoned,
+        # queue_eligible_at <= snap_time (excludes un-checked-in online bookings), not yet picked.
+        # NOTE: the old code used is_eligible(o, snap_time), which returns False for any ticket the drain
+        # later served, so PeopleAheadCallNext was always 0 in the training data.
+        my_key = (t.created_at, t.ticket_id)
+        people_ahead = sum(
+            1 for o in heard_waiting
+            if o is not t
+            and o.checked_in
+            and (o.created_at, o.ticket_id) < my_key
         )
 
         # Target: CalledAt (counter pick) - QueueEligibleAt
