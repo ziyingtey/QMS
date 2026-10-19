@@ -46,12 +46,17 @@ public sealed class MlHttpWaitTimeEstimator : IWaitTimeEstimator
             var client = _httpClientFactory.CreateClient("MlWait");
             using var req = new HttpRequestMessage(HttpMethod.Post, "/predict")
             {
-                Content = JsonContent.Create(payload, options: JsonOpts),
+                // Serialize up front: JsonContent has no known length, so a synchronous Send streams it chunked
+                // without Content-Length. serve_wait_model.py reads exactly Content-Length bytes, so it got an
+                // empty body and returned 400 "invalid json" (every live call fell back to the formula).
+                Content = new StringContent(
+                    JsonSerializer.Serialize(payload, JsonOpts), System.Text.Encoding.UTF8, "application/json"),
             };
             using var resp = client.Send(req);
             if (!resp.IsSuccessStatusCode)
             {
-                _log.LogDebug("ML wait sidecar returned {Status}", (int)resp.StatusCode);
+                _log.LogWarning("ML wait sidecar returned {Status}: {Body}", (int)resp.StatusCode,
+                    new StreamReader(resp.Content.ReadAsStream()).ReadToEnd());
                 return _formula.Estimate(features);
             }
 
@@ -64,7 +69,7 @@ public sealed class MlHttpWaitTimeEstimator : IWaitTimeEstimator
         }
         catch (Exception ex)
         {
-            _log.LogDebug(ex, "ML wait sidecar unavailable — formula fallback");
+            _log.LogWarning(ex, "ML wait sidecar unavailable — formula fallback");
             return _formula.Estimate(features);
         }
     }
