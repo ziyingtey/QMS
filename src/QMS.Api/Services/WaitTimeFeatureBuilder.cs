@@ -105,10 +105,10 @@ public sealed class WaitTimeFeatureBuilder(QmsDbContext db)
         var heardServiceIds = lanes.HeardServiceIds.ToList();
         var crossLaneQueueLength = await eligibleWaiting.CountAsync(q => heardServiceIds.Contains(q.ServiceTypeId), ct);
 
-        // FIX (RollingAvgServiceMinutes): training = mean of the LAST 30 completed services for the ticket
-        // prefix with completion <= snap_time, rounded to 2 dp, and never missing (history is pre-seeded
-        // around the service's default avg). Previously: average over the last 30 DAYS for this service only,
-        // and null (-> NaN in the sidecar) when empty.
+        // RollingAvgServiceMinutes: shared RollingServiceAverage rule (same as training and
+        // CounterSimulationEstimator): mean of the last 30 completed services with EndedAt <= snapshot, ignoring
+        // durations < 30 s; fewer than 5 valid -> DefaultAvgServiceMinutes. Rounded to 2 dp like training.
+        // Was: every log > 0 s, so a few seconds-long test services sent 0.03 min for a 15-min service.
         // Prefix = queue in production (BranchQueue.TicketPrefix), so pool services that share this queue.
         var rollingServiceIds = service.QueueId is { } queueId
             ? await db.ServiceTypes.AsNoTracking()
@@ -118,20 +118,25 @@ public sealed class WaitTimeFeatureBuilder(QmsDbContext db)
             : new List<Guid>();
         if (!rollingServiceIds.Contains(entry.ServiceTypeId))
             rollingServiceIds.Add(entry.ServiceTypeId);
+        double rollingAvg = Math.Round(
+            await RollingServiceAverage.MinutesAsync(db, rollingServiceIds, snapshotAt, service.DefaultAvgServiceMinutes, ct), 2);
 
-        var recentDurations = await db.ServiceSessionLogs.AsNoTracking()
-            .Where(l => rollingServiceIds.Contains(l.ServiceTypeId)
-                        && l.EndedAt <= snapshotAt
-                        && l.DurationSeconds > 0)
-            .OrderByDescending(l => l.EndedAt)
-            .Take(30)
-            .Select(l => l.DurationSeconds)
+        // IdleListeningCounters: listening counters (Active, serve my service) not holding a Called/Serving ticket.
+        // Training: listening counters with no ticket in service at snap time. Lets the model tell
+        // "0 ahead + idle counter" (wait ~0) from "0 ahead + counter busy with another service".
+        var busyCounterIds = await db.QueueEntries.AsNoTracking()
+            .Where(q => q.BranchId == entry.BranchId
+                        && (q.State == QueueEntryState.Called || q.State == QueueEntryState.Serving)
+                        && q.CounterId != null)
+            .Select(q => q.CounterId!.Value)
+            .Distinct()
             .ToListAsync(ct);
-        // Empty history: fall back to the service default (the simulation seeds its history around avg_min,
-        // so the model never saw NaN for this feature on bank rows).
-        double rollingAvg = recentDurations.Count > 0
-            ? Math.Round(recentDurations.Average() / 60.0, 2)
-            : service.DefaultAvgServiceMinutes;
+        var idleListeningCounters = lanes.ListeningCounters.Count(c => !busyCounterIds.Contains(c.Id));
+
+        // CounterSimEtaMinutes: the deterministic Call Next drain (CounterSimulationEstimator, same code as the
+        // display fallback), mirrored by counter_sim_eta in training. No Active counter serves me -> null (NaN).
+        var simEta = await new CounterSimulationEstimator(db).EstimateAsync(entry, earlyCallMinutes, snapshotAt, ct);
+        double? counterSimEta = double.IsInfinity(simEta) || double.IsNaN(simEta) ? null : Math.Round(simEta, 2);
 
         // Slot features
         double? minutesSinceSlotStart = null;
@@ -159,8 +164,8 @@ public sealed class WaitTimeFeatureBuilder(QmsDbContext db)
 
             onlineBookedInSlot = await slotQuery
                 .CountAsync(q => q.EntryType == QueueEntryType.OnlineBooked, ct);
-            // NOTE: training's WalkInInSlot is always 0 (simulated walk-ins have no slot), so the model
-            // cannot use this value; kept as the real count for future retraining on ML_TRAINING_DATA.
+            // Walk-ins in my slot bucket (AssignedSlotStart/End = the slot they arrived in); training counts the
+            // same (simulated walk-ins get the bucket too; previously always 0 there).
             walkInInSlot = await slotQuery
                 .CountAsync(q => q.EntryType == QueueEntryType.WalkIn, ct);
         }
@@ -173,6 +178,8 @@ public sealed class WaitTimeFeatureBuilder(QmsDbContext db)
             WalkInQueueLength = walkInQueueLength,
             ActiveCounters = activeCounters,
             ServiceEligibleActiveCounters = serviceEligibleCounters,
+            IdleListeningCounters = idleListeningCounters,
+            CounterSimEtaMinutes = counterSimEta,
             NowServing = nowServing,
             RollingAvgServiceMinutes = rollingAvg,
             DefaultAvgServiceMinutes = service.DefaultAvgServiceMinutes,

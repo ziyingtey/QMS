@@ -16,6 +16,10 @@ public sealed record WaitTimeFeatures
     // ── Capacity ──
     public int ActiveCounters { get; init; }
     public int ServiceEligibleActiveCounters { get; init; }
+    /// <summary>Listening counters (Active, serve this service) not holding a Called/Serving ticket.</summary>
+    public int? IdleListeningCounters { get; init; }
+    /// <summary>Deterministic Call Next drain ETA (CounterSimulationEstimator); null when no Active counter serves it.</summary>
+    public double? CounterSimEtaMinutes { get; init; }
     public int NowServing { get; init; }
 
     // ── Service Duration ──

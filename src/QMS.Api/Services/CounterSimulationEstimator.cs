@@ -8,6 +8,8 @@ namespace QMS.Api.Services;
 /// <summary>
 /// Counter availability simulation matching Call Next:
 /// when a counter frees, it pulls earliest-CreatedAt eligible ticket among its AllowedServices.
+/// Also the ML feature CounterSimEtaMinutes (WaitTimeFeatureBuilder); mirrored exactly by counter_sim_eta in
+/// ml/generate_seed_data.py + the notebook, so keep both in sync.
 /// </summary>
 public sealed class CounterSimulationEstimator(QmsDbContext db)
 {
@@ -33,29 +35,30 @@ public sealed class CounterSimulationEstimator(QmsDbContext db)
         if (!allServiceIds.Contains(myEntry.ServiceTypeId))
             return double.PositiveInfinity;
 
-        var services = await db.ServiceTypes.AsNoTracking()
-            .Where(s => allServiceIds.Contains(s.Id))
-            .ToDictionaryAsync(s => s.Id, ct);
-
-        var cutoff = nowUtc.AddDays(-30);
-        var rollingAvgs = await db.ServiceSessionLogs.AsNoTracking()
-            .Where(l => allServiceIds.Contains(l.ServiceTypeId)
-                        && l.EndedAt < nowUtc && l.EndedAt >= cutoff
-                        && l.DurationSeconds > 0)
-            .GroupBy(l => l.ServiceTypeId)
-            .Select(g => new { ServiceId = g.Key, AvgMin = g.Average(l => l.DurationSeconds) / 60.0 })
-            .ToDictionaryAsync(x => x.ServiceId, x => x.AvgMin, ct);
-
-        double AvgDuration(Guid serviceId) =>
-            rollingAvgs.TryGetValue(serviceId, out var avg) ? avg
-            : services.TryGetValue(serviceId, out var svc) ? svc.DefaultAvgServiceMinutes
-            : 5;
-
+        // Busy counters: Called (customer walking up, counter already claimed the ticket) or Serving.
+        // Was: Serving only, so a counter that had just called someone looked free.
         var servingEntries = await db.QueueEntries.AsNoTracking()
             .Where(q => q.BranchId == myEntry.BranchId
-                        && q.State == QueueEntryState.Serving
+                        && (q.State == QueueEntryState.Serving || q.State == QueueEntryState.Called)
                         && q.CounterId != null)
             .ToListAsync(ct);
+
+        var avgServiceIds = allServiceIds.Union(servingEntries.Select(q => q.ServiceTypeId)).ToList();
+        var services = await db.ServiceTypes.AsNoTracking()
+            .Where(s => avgServiceIds.Contains(s.Id))
+            .ToDictionaryAsync(s => s.Id, ct);
+
+        // Average duration per service = the shared RollingServiceAverage rule (last 30 completed services,
+        // ignoring < 30 s, at least 5 valid, else DefaultAvgServiceMinutes). Was: 30-day mean of every log
+        // > 0 s, so a few seconds-long test services made a 15-min service look like 0.05 min.
+        var rollingAvgs = new Dictionary<Guid, double>();
+        foreach (var serviceId in avgServiceIds)
+        {
+            var fallback = services.TryGetValue(serviceId, out var svc) ? svc.DefaultAvgServiceMinutes : 5;
+            rollingAvgs[serviceId] = await RollingServiceAverage.MinutesAsync(db, [serviceId], nowUtc, fallback, ct);
+        }
+
+        double AvgDuration(Guid serviceId) => rollingAvgs.TryGetValue(serviceId, out var avg) ? avg : 5;
 
         var counterFreeAt = new Dictionary<Guid, double>();
         var counterServices = new Dictionary<Guid, HashSet<Guid>>();
@@ -63,7 +66,7 @@ public sealed class CounterSimulationEstimator(QmsDbContext db)
         {
             counterServices[c.Id] = c.AllowedServices.Select(a => a.ServiceTypeId).ToHashSet();
             var serving = servingEntries.FirstOrDefault(q => q.CounterId == c.Id);
-            if (serving?.ServingStartedAt is { } started)
+            if (serving is not null && (serving.ServingStartedAt ?? serving.CalledAt) is { } started)
             {
                 var elapsed = (nowUtc - started).TotalMinutes;
                 counterFreeAt[c.Id] = Math.Max(0, AvgDuration(serving.ServiceTypeId) - elapsed);
@@ -121,12 +124,22 @@ public sealed class CounterSimulationEstimator(QmsDbContext db)
                 return remaining.Any(q => q.Id == myEntry.Id) ? double.PositiveInfinity : 0;
 
             if (bestTicket.Id == myEntry.Id)
-                return Math.Max(0, bestFreeAt);
+                return Math.Max(Math.Max(0, bestFreeAt), MinutesUntilEligible(myEntry, earlyCallMinutes, nowUtc));
 
             remaining.RemoveAll(q => q.Id == bestTicket.Id);
             counterFreeAt[bestCounter] = bestFreeAt + AvgDuration(bestTicket.ServiceTypeId);
         }
 
-        return 0;
+        return MinutesUntilEligible(myEntry, earlyCallMinutes, nowUtc);
     }
+
+    /// <summary>
+    /// Minutes until my own ticket becomes Call Next eligible (0 for walk-ins and open windows). An online
+    /// booking checked in before its early-call window cannot be called before SlotStart - EarlyCall.
+    /// Example: slot 11:30, early call 10, now 10:50 -> 30.
+    /// </summary>
+    private static double MinutesUntilEligible(QueueEntry me, int earlyCallMinutes, DateTimeOffset nowUtc) =>
+        me.EntryType == QueueEntryType.OnlineBooked && me.AssignedSlotStart is { } slotStart
+            ? Math.Max(0, (slotStart.AddMinutes(-earlyCallMinutes) - nowUtc).TotalMinutes)
+            : 0;
 }

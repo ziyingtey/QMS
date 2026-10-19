@@ -104,6 +104,10 @@ public sealed class MlHttpWaitTimeEstimator : IWaitTimeEstimator
             // Capacity
             ["ActiveCounters"] = Math.Max(1, f.ActiveCounters),
             ["ListeningCounters"] = listening,
+            // Counter state (training: IdleListeningCounters / CounterSimEtaMinutes in generate_seed_data.py).
+            // Null CounterSimEta (no Active counter serves the lane) is omitted -> NaN in the sidecar.
+            ["IdleListeningCounters"] = f.IdleListeningCounters,
+            ["CounterSimEtaMinutes"] = f.CounterSimEtaMinutes,
             // Time
             ["HourOfDay"] = f.HourOfDay,
             ["DayOfWeek"] = f.DayOfWeek,
