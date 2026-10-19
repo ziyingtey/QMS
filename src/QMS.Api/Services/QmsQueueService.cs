@@ -528,9 +528,9 @@ public sealed class QmsQueueService(
         var nowUtc = DateTimeOffset.UtcNow;
         var earlyMinutes = entry.Branch.OnlineEarlyCallMinutes;
 
-        // People Ahead: cross-lane Call Next order (shared helper, same definition as the ML feature
-        // PeopleAheadCallNext). Counts eligible tickets in every lane heard by the counters that serve my lane
-        // (today's ServiceDay) that Call Next would pick before me. "You are next" follows from it.
+        // People Ahead: Call Next order (shared helper, same definition as the ML feature PeopleAheadCallNext).
+        // For each Active counter that serves my lane, counts eligible tickets of today's ServiceDay in that
+        // counter's services that Call Next would pick before me; takes the minimum. "You are next" follows from it.
         var totalAhead = await CallNextQueueMath.CountPeopleAheadAsync(db, entry, entry.Branch, nowUtc, cancellationToken);
 
         // ── ETA: ML → Counter Simulation → Formula (shared with Staff/Manager) ──

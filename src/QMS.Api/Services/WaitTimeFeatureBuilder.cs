@@ -59,11 +59,12 @@ public sealed class WaitTimeFeatureBuilder(QmsDbContext db)
             .CountAsync(q => q.EntryType == QueueEntryType.OnlineBooked, ct);
         var walkInQueueLength = queueLength - onlineQueueLength;
 
-        // People ahead (PeopleAhead / PeopleAheadCallNext): CROSS-LANE, i.e. eligible tickets in every lane of S
-        // that Call Next would pick before me (CreatedAt, then Id). Same helper as the customer queue status and
-        // the same definition as people_ahead in the training simulation. Previously same-service only.
+        // People ahead (PeopleAhead / PeopleAheadCallNext): per listening counter, eligible tickets in THAT
+        // counter's services that Call Next would pick before me (CreatedAt, then Id); minimum over the counters
+        // (same-service only if no Active counter serves my lane). Same helper as the customer queue status and
+        // the same definition as people_ahead in the training simulation.
         var peopleAhead = await CallNextQueueMath.CountPeopleAheadAsync(
-            db, entry, lanes.HeardServiceIds, snapshotDay, snapshotAt, earlyCallMinutes, ct);
+            db, entry, lanes, snapshotDay, snapshotAt, earlyCallMinutes, ct);
 
         var isOnline = entry.EntryType == QueueEntryType.OnlineBooked;
 
@@ -99,8 +100,8 @@ public sealed class WaitTimeFeatureBuilder(QmsDbContext db)
 
         // CrossLaneQueueLength: queue-eligible, not-yet-called tickets in all lanes of S (training: heard_prefixes).
         // Example: counter 1 serves {DEPOSIT, WITHDRAW}; 3 eligible DEPOSIT + 4 eligible WITHDRAW -> 7.
-        // If no Active counter serves my lane, S = {my lane} (same fallback as People Ahead, so
-        // PeopleAheadCallNext <= CrossLaneQueueLength always holds).
+        // If no Active counter serves my lane, S = {my lane} (same fallback as People Ahead). Every listening
+        // counter's service set is a subset of S, so PeopleAheadCallNext <= CrossLaneQueueLength always holds.
         var heardServiceIds = lanes.HeardServiceIds.ToList();
         var crossLaneQueueLength = await eligibleWaiting.CountAsync(q => heardServiceIds.Contains(q.ServiceTypeId), ct);
 
