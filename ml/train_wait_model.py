@@ -3,8 +3,8 @@ Wait-time regression pipeline for QMS (v2).
 
 Lifecycle: Ingestion → Cleaning → Feature Engineering → Modeling → Evaluation
 
-Predicts WaitingMinutes (QueueEligibleAt → ServingStartedAt) using all 24
-features aligned with MlHttpWaitTimeEstimator.BuildPayload.
+Predicts WaitingMinutes (QueueEligibleAt → CalledAt, i.e. until a counter calls the ticket)
+using all 26 features aligned with MlHttpWaitTimeEstimator.BuildPayload / WaitTimeFeatureBuilder.
 
 Data sources (first match wins):
   1. --csv path (synthetic from generate_seed_data.py or real export)
@@ -87,7 +87,10 @@ FEATURE_CATEGORICAL = ["ServiceCode", "TicketPrefix"]
 ALL_FEATURES = FEATURE_NUMERIC + FEATURE_CATEGORICAL
 TARGET = "WaitingMinutes"
 
-# ── SQL export query (matches MlTrainingObservation schema, uses QueueEligibleAt) ──
+# ── SQL export query (ML_TRAINING_DATA v3; every model feature is stored, nothing reconstructed) ──
+# Only FeatureSchemaVersion = 'v3' rows: older 'v2' rows used Sun=0 DayOfWeek, snapshotted online
+# tickets at SlotStart (even if never checked in), stored CrossLane == QueueLength and ended the
+# target at ServingStartedAt. Target = CalledAt - QueueEligibleAt (same as the simulation).
 EXPORT_QUERY = """
 SELECT
     o.QueueEntryId AS TicketId,
@@ -95,20 +98,23 @@ SELECT
     o.BranchCode,
     o.ServiceTypeId,
     o.ServiceCode,
+    o.TicketPrefix,
     o.DefaultAvgServiceMinutes,
     o.RollingAvgServiceMinutes,
     o.EntryType,
     o.EnqueueSequence,
-    o.CheckedIn,
+    CAST(o.CheckedIn AS INT) AS CheckedIn,
     o.QueueLength,
+    o.CrossLaneQueueLength,
     o.PeopleAhead AS PeopleAheadCallNext,
-    o.OnlineQueueLength + o.WalkInQueueLength AS CrossLaneQueueLength,
     o.NowServing,
     o.ActiveCounters,
     o.ServiceEligibleActiveCounters AS ListeningCounters,
     o.HourOfDay,
     o.DayOfWeek,
-    o.IsPeakHour,
+    CAST(o.IsPeakHour AS INT) AS IsPeakHour,
+    o.SlotActive,
+    o.CallNextPriority,
     o.SlotDurationMinutes,
     o.EarlyCallMinutes,
     o.MinutesUntilSlotEnd,
@@ -117,9 +123,11 @@ SELECT
     o.OnlineBookedInSlot,
     o.WalkInInSlot,
     o.ActualWaitingMinutes AS WaitingMinutes,
-    o.SnapshotAt
+    o.SnapshotAt,
+    o.CalledAt
 FROM dbo.ML_TRAINING_DATA AS o
-WHERE o.ActualWaitingMinutes IS NOT NULL
+WHERE o.FeatureSchemaVersion = 'v3'
+  AND o.ActualWaitingMinutes IS NOT NULL
   AND o.ActualWaitingMinutes >= 0
 ORDER BY o.SnapshotAt
 """

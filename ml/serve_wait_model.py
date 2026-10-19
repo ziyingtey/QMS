@@ -22,6 +22,14 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parent
 DEFAULT_MODEL = ROOT / "wait_model.joblib"
 
+# Ticket prefix per production service code (same map as SERVICES in generate_seed_data.py / notebook
+# and ServiceQueueProvisioning.SeedPrefixByCode). Only used when a request omits TicketPrefix.
+SERVICE_PREFIX = {
+    "ACC_OPEN": "A", "DEPOSIT": "D", "WITHDRAW": "W", "LOAN": "L", "CCARD": "C", "FDEP": "F",
+    "INVUT": "I", "BANCA": "B", "ATMCDM": "T", "ONLBANK": "O", "BIZBANK": "S", "REMIT": "R",
+    "CUSTSVC": "Q",
+}
+
 
 def load_bundle(path: Path):
     bundle = joblib.load(path)
@@ -102,7 +110,10 @@ class Handler(BaseHTTPRequestHandler):
                 "ListeningCounters": row.get("ActiveCounters", 1) or 1,
                 "SlotActive": 0,
                 "CallNextPriority": 1,
-                "TicketPrefix": str(row.get("ServiceCode", "X"))[:1].upper(),
+                # Production prefix per service code (database/insert-service-queues-all-branches.sql);
+                # first letter is wrong for e.g. CUSTSVC (Q) or ATMCDM (T).
+                "TicketPrefix": SERVICE_PREFIX.get(str(row.get("ServiceCode", "")).upper(),
+                                                   str(row.get("ServiceCode", "X"))[:1].upper()),
                 "EntryType": 0,
                 "CheckedIn": 0,
                 "EnqueueSequence": 1,

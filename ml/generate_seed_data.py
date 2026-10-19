@@ -2,13 +2,23 @@
 Generate synthetic seed data for QMS wait-time model training.
 
 Discrete-event simulation of Malaysian bank branches matching production logic:
+  - Production service codes / names / ticket prefixes / default minutes
+    (database/insert-service-types-all-branches.sql + insert-service-queues-all-branches.sql;
+    1 service = 1 queue = 1 prefix, e.g. A = Account Opening, D = Deposit, W = Withdraw)
+  - Production branch codes and branch settings (60-min slots aligned to opening time,
+    Mon-Fri 09:30-16:00; OnlineSlotsPerSlot = manager setting per service, drawn per branch-day from 2..8)
   - CreatedAt FIFO call ordering (matches QueueCallNextSelector)
   - Multi-counter drain with per-counter service assignments (matches CounterSimulationEstimator)
   - Online bookings with slot features + walk-ins
-  - All 24 features aligned with MlHttpWaitTimeEstimator.BuildPayload
+  - All 26 features aligned with MlHttpWaitTimeEstimator.BuildPayload / WaitTimeFeatureBuilder
   - Check-in time for online bookings: 80% arrive 0-20 min early, 20% arrive 0-15 min late;
     QueueEligibleAt = max(CheckInAt, SlotStart - EarlyCall)
-  - Target = ServingStartedAt - QueueEligibleAt (matches MlTrainingObservation; never negative)
+  - EnqueueSequence = per branch-day rank by CreatedAt across all services
+  - Target = CalledAt - QueueEligibleAt, where CalledAt is the moment a counter picks the ticket
+    (matches MlTrainingObservation.ActualWaitingMinutes; never negative)
+
+The regions between "# >>> NB-CELL <name>" and "# <<< NB-CELL" are copied verbatim into
+ml/QMS_WaitTime_ML_Pipeline.ipynb; edit both together.
 
 Output: ml/data/wait_training.csv
 
@@ -20,7 +30,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -29,46 +39,69 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parent
 OUTPUT = ROOT / "data" / "wait_training.csv"
 
-# ── Branch configs ──
+# >>> NB-CELL config
+# ── Branch & Service configs (matching the production seed scripts in database/) ──
+
+# Real production BranchCodes (insert-branches-from-paste.sql: BranchCode = 101000 + row).
+# Production branch settings: SlotDurationMinutes = 60, OnlineEarlyCallMinutes = 10 (the simulator
+# draws early call per branch-day from EARLY_CALL_CHOICES instead), Mon-Fri 09:30-16:00.
 BRANCHES = [
-    {"BranchCode": 101033, "name": "Bandar Sri Permaisuri", "base_traffic": 1.0,
-     "slot_duration": 30, "early_call": 15, "tz_offset": 480},
-    {"BranchCode": 101045, "name": "Taman Midah", "base_traffic": 0.8,
-     "slot_duration": 30, "early_call": 15, "tz_offset": 480},
-    {"BranchCode": 101012, "name": "Bangsar", "base_traffic": 1.3,
-     "slot_duration": 30, "early_call": 10, "tz_offset": 480},
-    {"BranchCode": 101078, "name": "Cheras Selatan", "base_traffic": 0.9,
-     "slot_duration": 30, "early_call": 15, "tz_offset": 480},
-    {"BranchCode": 101056, "name": "Wangsa Maju", "base_traffic": 1.1,
-     "slot_duration": 30, "early_call": 15, "tz_offset": 480},
+    {"BranchCode": 101033, "name": "Bandar Sri Permaisuri", "base_traffic": 1.0, "slot_duration": 60, "early_call": 10},
+    {"BranchCode": 101038, "name": "Taman Midah",           "base_traffic": 0.8, "slot_duration": 60, "early_call": 10},
+    {"BranchCode": 101008, "name": "Bangsar",               "base_traffic": 1.3, "slot_duration": 60, "early_call": 10},
+    {"BranchCode": 101039, "name": "Taman Connaught",       "base_traffic": 0.9, "slot_duration": 60, "early_call": 10},
+    {"BranchCode": 101036, "name": "Wangsa Maju",           "base_traffic": 1.1, "slot_duration": 60, "early_call": 10},
 ]
 
+# Branch service window (BRANCH_OPERATING_HOURS seed / BranchOperatingHoursBackfill): 09:30-16:00.
+# Slots are aligned to opening time (QmsQueueService.AlignSlot anchor), so 60-min slots are
+# 09:30, 10:30, ... 14:30; a slot must end by closing time, so 14:30-15:30 is the last bookable slot.
+OPEN_MIN = 9 * 60 + 30    # 570
+CLOSE_MIN = 16 * 60       # 960
+DRAIN_END_MIN = CLOSE_MIN + 90  # counters keep calling the remaining queue until 17:30
+
+# Production services: code, name, prefix (SERVICE_QUEUES.TicketPrefix) and DefaultAvgServiceMinutes.
+# "weight" = share of arrivals (sim only). OnlineSlotsPerSlot is not fixed here: it is a manager setting
+# per service (ServiceType.OnlineSlotsPerSlot), so it is drawn per branch-day below.
 SERVICES = [
-    {"code": "DEPOSIT",    "prefix": "A", "avg_min": 6,  "online_slots": 4, "weight": 0.16},
-    {"code": "WITHDRAW",   "prefix": "A", "avg_min": 5,  "online_slots": 4, "weight": 0.06},
-    {"code": "LOAN",       "prefix": "B", "avg_min": 30, "online_slots": 2, "weight": 0.08},
-    {"code": "CREDIT_CARD","prefix": "C", "avg_min": 12, "online_slots": 3, "weight": 0.10},
-    {"code": "ACC_OPEN",   "prefix": "D", "avg_min": 25, "online_slots": 2, "weight": 0.08},
-    {"code": "CUST_SVC",   "prefix": "E", "avg_min": 10, "online_slots": 5, "weight": 0.14},
-    {"code": "ATM_CDM",    "prefix": "F", "avg_min": 8,  "online_slots": 3, "weight": 0.10},
-    {"code": "FIXED_DEP",  "prefix": "G", "avg_min": 15, "online_slots": 2, "weight": 0.06},
-    {"code": "INSURANCE",  "prefix": "H", "avg_min": 20, "online_slots": 2, "weight": 0.06},
-    {"code": "BIZ_BANK",   "prefix": "I", "avg_min": 18, "online_slots": 2, "weight": 0.06},
-    {"code": "ONLINE_SUP", "prefix": "J", "avg_min": 12, "online_slots": 3, "weight": 0.05},
-    {"code": "REMITTANCE", "prefix": "K", "avg_min": 10, "online_slots": 3, "weight": 0.05},
+    {"code": "ACC_OPEN", "name": "Account Opening",           "prefix": "A", "avg_min": 15, "weight": 0.08},
+    {"code": "DEPOSIT",  "name": "Deposit Services",          "prefix": "D", "avg_min": 3,  "weight": 0.16},
+    {"code": "WITHDRAW", "name": "Withdrawal Services",       "prefix": "W", "avg_min": 4,  "weight": 0.06},
+    {"code": "LOAN",     "name": "Loan / Financing",          "prefix": "L", "avg_min": 30, "weight": 0.08},
+    {"code": "CCARD",    "name": "Credit Card Services",      "prefix": "C", "avg_min": 10, "weight": 0.10},
+    {"code": "FDEP",     "name": "Fixed Deposit",             "prefix": "F", "avg_min": 15, "weight": 0.06},
+    {"code": "INVUT",    "name": "Investment / Unit Trust",   "prefix": "I", "avg_min": 30, "weight": 0.04},
+    {"code": "BANCA",    "name": "Insurance / Bancassurance", "prefix": "B", "avg_min": 25, "weight": 0.06},
+    {"code": "ATMCDM",   "name": "ATM / CDM Services",        "prefix": "T", "avg_min": 5,  "weight": 0.10},
+    {"code": "ONLBANK",  "name": "Online Banking Support",    "prefix": "O", "avg_min": 5,  "weight": 0.05},
+    {"code": "BIZBANK",  "name": "Business Banking",          "prefix": "S", "avg_min": 20, "weight": 0.06},
+    {"code": "REMIT",    "name": "Remittance / Transfer",     "prefix": "R", "avg_min": 15, "weight": 0.05},
+    {"code": "CUSTSVC",  "name": "Queue / Customer Service",  "prefix": "Q", "avg_min": 10, "weight": 0.14},
 ]
 
-# Counter profiles: which prefixes a counter listens to
+# Counter profiles: which prefixes (= services) a counter listens to (COUNTER_ALLOWED_SERVICES).
+# The production seed creates counters with no allowed services (the manager assigns them), so these
+# are realistic teller groupings; every prefix is covered by at least one profile.
 PROFILES = [
-    ["A", "E"],
-    ["A", "F"],
-    ["B", "C"],
-    ["D", "G", "H"],
-    ["I", "J", "K"],
-    ["A", "B", "C", "E"],
+    ["D", "W", "Q"],            # cash teller: deposit, withdraw, customer service
+    ["D", "W", "T"],            # cash teller: deposit, withdraw, ATM/CDM
+    ["L", "C"],                 # credit: loan, credit card
+    ["A", "F", "I", "B"],       # sales: account opening, fixed deposit, investment, bancassurance
+    ["S", "O", "R"],            # business banking, online banking, remittance
+    ["D", "W", "L", "C", "Q"],  # multi-skill
 ]
 
+# Realistic manager settings for Branch.OnlineEarlyCallMinutes (drawn per branch-day)
+EARLY_CALL_CHOICES = [0, 5, 10, 15, 20, 30]
 
+# Manager setting ServiceType.OnlineSlotsPerSlot (max online bookings per slot for one service; the same
+# value applies to every slot of that service). Drawn per branch-day per service, uniform integer 2..8.
+ONLINE_SLOTS_MIN = 2
+ONLINE_SLOTS_MAX = 8
+# <<< NB-CELL
+
+
+# >>> NB-CELL classes
 @dataclass
 class Ticket:
     """A simulated queue ticket."""
@@ -80,14 +113,14 @@ class Ticket:
     online_slots_per_slot: int
     entry_type: int  # 0=OnlineBooked, 1=WalkIn
     checked_in: bool
-    created_at: float  # minutes from day start (e.g., 540 = 9:00)
+    created_at: float  # minutes from midnight (online = booking time, may be hours earlier)
     slot_start: float | None = None  # for online bookings
     slot_end: float | None = None
     queue_eligible_at: float = 0.0  # walk-in=created_at, online=max(checkin_at, slot_start - early_call)
-    serving_started_at: float | None = None
+    serving_started_at: float | None = None  # = CalledAt: the moment a counter picks the ticket
     service_end_at: float | None = None  # actual end time (observable: counter becomes free)
     abandoned: bool = False
-    enqueue_seq: int = 0
+    enqueue_seq: int = 0  # per branch-day rank by (created_at, ticket_id), across all services
     checkin_at: float | None = None  # physical check-in time (online) / created_at (walk-in)
 
 
@@ -100,19 +133,17 @@ class Counter:
     currently_serving: Ticket | None = None
 
 
-# Realistic manager settings for Branch.OnlineEarlyCallMinutes (drawn per branch-day)
-EARLY_CALL_CHOICES = [0, 5, 10, 15, 20, 30]
-
-
 def hour_traffic(hour: int) -> float:
     return {9: 1.4, 10: 1.6, 11: 1.3, 12: 0.7, 13: 0.8, 14: 1.3, 15: 1.5, 16: 1.2}.get(hour, 0.5)
 
 
 def day_traffic(dow: int) -> float:
-    # 0=Mon..4=Fri, 5=Sat, 6=Sun (python weekday)
+    # 0=Mon..4=Fri, 5=Sat, 6=Sun (python weekday; live WaitTimeFeatureBuilder uses the same encoding)
     return {0: 1.4, 1: 1.1, 2: 1.0, 3: 1.0, 4: 1.3}.get(dow, 0.0)
+# <<< NB-CELL
 
 
+# >>> NB-CELL simulate
 def simulate_day(
     rng: np.random.Generator,
     branch: dict,
@@ -127,9 +158,16 @@ def simulate_day(
     svc_by_code = {s["code"]: s for s in SERVICES}
 
     slot_dur = branch["slot_duration"]
+    # Last bookable slot must end by closing time (QmsQueueService rejects slotEnd > window end)
+    last_slot_idx = (CLOSE_MIN - OPEN_MIN) // slot_dur - 1
     # Manager-configurable Branch.OnlineEarlyCallMinutes: draw per branch-day so the
     # model sees the full realistic range (0..30) instead of a fixed per-branch value.
     early_call = int(rng.choice(EARLY_CALL_CHOICES))
+    # Manager-configurable ServiceType.OnlineSlotsPerSlot: one value per service for this branch-day.
+    online_cap = {
+        s["code"]: int(rng.integers(ONLINE_SLOTS_MIN, ONLINE_SLOTS_MAX + 1))
+        for s in SERVICES
+    }
 
     # Set up counters
     profile_indices = rng.choice(len(PROFILES), size=n_profiles, replace=False)
@@ -138,40 +176,40 @@ def simulate_day(
         for i, idx in enumerate(profile_indices)
     ]
 
-    # Generate arrivals for the day (9:00=540 to 16:30=990)
     day_mult = day_traffic(day_of_week)
     if day_mult == 0:
         return []
 
     tickets: list[Ticket] = []
     ticket_id = 0
+    online_used: dict[tuple[str, int], int] = {}  # (service_code, slot_idx) -> online bookings
 
     # Seeded before arrivals so the RNG draw order matches the notebook.
-    # Track rolling avg service times per prefix (simulated from completed services)
-    # Each entry is (completion_time, duration) so snapshots can filter by time
+    # Rolling avg service times per prefix (each production service has its own prefix/queue).
+    # Each entry is (completion_time, duration) so snapshots can filter by time.
     # Seed with 10 baseline durations per prefix (time=0 = before day starts).
-    # Dict comprehension (same as notebook): services sharing a prefix (DEPOSIT/WITHDRAW -> "A")
-    # each draw 10 values, but the later service's seed overwrites the earlier one.
     completed_durations: dict[str, list[tuple[float, float]]] = {
         s["prefix"]: [(0.0, s["avg_min"] * rng.uniform(0.6, 1.4)) for _ in range(10)]
         for s in SERVICES
     }
 
-
-    for hour in range(9, 17):
+    # Generate arrivals inside the service window 09:30-16:00 (first/last hour are partial)
+    for hour in range(OPEN_MIN // 60, (CLOSE_MIN + 59) // 60):
+        lo = max(hour * 60, OPEN_MIN)
+        hi = min(hour * 60 + 60, CLOSE_MIN)
+        if hi <= lo:
+            continue
         h_mult = hour_traffic(hour)
-        # ~arrivals this hour based on traffic
-        lam = branch["base_traffic"] * h_mult * day_mult * 8  # ~8 per base hour
+        lam = branch["base_traffic"] * h_mult * day_mult * 8 * (hi - lo) / 60  # ~8 per base hour
         n_arrivals = max(0, rng.poisson(lam))
 
         for _ in range(n_arrivals):
-            minute_in_hour = rng.uniform(0, 60)
-            created_at = hour * 60 + minute_in_hour
+            created_at = rng.uniform(lo, hi)
 
             svc_code = str(rng.choice(svc_codes, p=svc_weights))
             svc = svc_by_code[svc_code]
 
-            # 35% online, 65% walk-in
+            # 35% try to book online, 65% walk-in
             entry_type = 0 if rng.random() < 0.35 else 1
 
             slot_start = None
@@ -179,14 +217,20 @@ def simulate_day(
             queue_eligible_at = created_at
             checkin_at = created_at  # walk-in: check-in = ticket creation
 
+            if entry_type == 0:
+                # Slot aligned to opening time; clamp to the last bookable slot
+                slot_idx = min(int((created_at - OPEN_MIN) // slot_dur), last_slot_idx)
+                # Online capacity: OnlineSlotsPerSlot per service per slot; when full, the customer walks in
+                if online_used.get((svc_code, slot_idx), 0) >= online_cap[svc_code]:
+                    entry_type = 1
+                else:
+                    online_used[(svc_code, slot_idx)] = online_used.get((svc_code, slot_idx), 0) + 1
+
             if entry_type == 0:  # OnlineBooked
-                # Online booking: created_at = booking time (could be earlier)
-                # Simulate booking 1-72 hours before slot
+                # Online booking: created_at = booking time (hours earlier) -> CreatedAt FIFO priority
                 booking_hours_before = rng.exponential(4)
                 actual_created = created_at - booking_hours_before * 60
-                # Slot aligned to slot_dur boundaries
-                slot_idx = int(created_at) // slot_dur
-                slot_start = slot_idx * slot_dur
+                slot_start = OPEN_MIN + slot_idx * slot_dur
                 slot_end = slot_start + slot_dur
                 created_at = actual_created  # booking time
 
@@ -213,7 +257,7 @@ def simulate_day(
                 service_code=svc_code,
                 prefix=svc["prefix"],
                 default_avg_min=svc["avg_min"],
-                online_slots_per_slot=svc["online_slots"],
+                online_slots_per_slot=online_cap[svc_code],  # = capacity actually enforced above
                 entry_type=entry_type,
                 checked_in=checked_in,
                 created_at=created_at,
@@ -221,12 +265,17 @@ def simulate_day(
                 slot_end=slot_end,
                 queue_eligible_at=queue_eligible_at,
                 abandoned=abandoned,
-                enqueue_seq=ticket_id,
+                enqueue_seq=0,
                 checkin_at=checkin_at,
             ))
 
     if not tickets:
         return []
+
+    # EnqueueSequence: per branch-day across all services, ranked by CreatedAt (booking time for online,
+    # take-number time for walk-in), ticket_id tiebreak. Same definition as live WaitTimeFeatureBuilder.
+    for rank, t in enumerate(sorted(tickets, key=lambda x: (x.created_at, x.ticket_id)), start=1):
+        t.enqueue_seq = rank
 
     # ── Discrete-event Call Next drain ──
     # Simulate counters pulling tickets in CreatedAt FIFO order (matching QueueCallNextSelector)
@@ -257,10 +306,9 @@ def simulate_day(
     def get_eligible_pool(now: float) -> list[Ticket]:
         return [t for t in waiting if is_eligible(t, now) and t.serving_started_at is None]
 
-    # Process time from 9:00 to 17:30 in small steps
-    # Actually, let's do event-driven: find next counter free time, pull ticket
-    current_time = 540.0  # 9:00
-    end_time = 1050.0  # 17:30
+    # Event-driven: find next counter free time, pull ticket
+    current_time = float(OPEN_MIN)
+    end_time = float(DRAIN_END_MIN)
 
     for c in counters:
         c.free_at = current_time
@@ -283,7 +331,7 @@ def simulate_day(
                 if t.prefix in earliest_counter.allowed_prefixes]
 
         if not pool:
-            # No eligible tickets — advance time a bit to check for new eligibility
+            # No eligible tickets — advance time to the next moment something can become eligible
             next_eligible_time = end_time
             for t in waiting:
                 if t.serving_started_at is not None or t.abandoned:
@@ -315,7 +363,7 @@ def simulate_day(
         if rng.random() < 0.03:
             service_duration *= rng.uniform(2.0, 4.0)
 
-        ticket.serving_started_at = now
+        ticket.serving_started_at = now  # counter picks the ticket = CalledAt (target end point)
         ticket.service_end_at = now + service_duration  # record actual end time
         earliest_counter.free_at = now + service_duration
         earliest_counter.currently_serving = ticket
@@ -354,10 +402,6 @@ def simulate_day(
                  or (o.created_at == t.created_at and o.ticket_id < t.ticket_id))
         ]
         people_ahead = len(eligible_at_snap)
-
-        # Online / walk-in queue lengths
-        online_q = sum(1 for o in same_svc_waiting if o.entry_type == 0)
-        walkin_q = sum(1 for o in same_svc_waiting if o.entry_type == 1)
 
         # NowServing: tickets being served at snapshot time for this service.
         # Uses actual service_end_at (observable: counter is busy) instead of
@@ -425,7 +469,7 @@ def simulate_day(
             and (o.serving_started_at is None or o.serving_started_at > snap_time)
         )
 
-        # Target: actual waiting minutes
+        # Target: CalledAt (counter pick) - QueueEligibleAt
         wait_min = t.serving_started_at - t.queue_eligible_at
 
         rows.append({
@@ -500,6 +544,7 @@ def simulate_day(
             })
 
     return rows
+# <<< NB-CELL
 
 
 def generate(n_rows: int = 30000, seed: int = 42) -> pd.DataFrame:
@@ -530,7 +575,7 @@ def generate(n_rows: int = 30000, seed: int = 42) -> pd.DataFrame:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Generate synthetic QMS seed data (v2)")
+    parser = argparse.ArgumentParser(description="Generate synthetic QMS seed data (v3)")
     parser.add_argument("--rows", type=int, default=30000)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--output", type=Path, default=OUTPUT)
