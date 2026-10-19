@@ -45,9 +45,10 @@ public class QueueEntry
     // ── Queue Timeline ──
 
     /// <summary>
-    /// The time this entry first became eligible for service. Immutable after initial set.
-    /// Online: AssignedSlotStart - Branch.OnlineEarlyCallMinutes. Walk-in: CreatedAt.
-    /// ML training target = ServingStartedAt - QueueEligibleAt.
+    /// The time this entry became eligible for Call Next.
+    /// Online: SlotStart until check-in (provisional), then max(CheckedInAt, SlotStart - Branch.OnlineEarlyCallMinutes).
+    /// Walk-in: CreatedAt. Transfer to another queue restarts it.
+    /// ML training target = CalledAt - QueueEligibleAt.
     /// </summary>
     public DateTimeOffset? QueueEligibleAt { get; set; }
 

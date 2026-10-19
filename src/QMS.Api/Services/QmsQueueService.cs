@@ -312,7 +312,16 @@ public sealed class QmsQueueService(
         booking.CheckedInAt = DateTimeOffset.UtcNow;
         booking.Status = BookingStatus.CheckedIn;
         if (booking.QueueEntry is not null)
+        {
             booking.QueueEntry.CheckedIn = true;
+            // ML/analytics wait start: an online ticket only becomes Call Next eligible once it is checked in
+            // AND the early-call window has opened, so QueueEligibleAt = max(CheckedInAt, SlotStart - EarlyCall)
+            // (same as queue_eligible_at in the training simulation). Call Next eligibility itself is unchanged
+            // (it still checks CheckedIn + AssignedSlotStart - OnlineEarlyCallMinutes <= now).
+            if (booking.QueueEntry.EntryType == QueueEntryType.OnlineBooked && booking.QueueEntry.AssignedSlotStart is { } slotStart)
+                booking.QueueEntry.QueueEligibleAt = OnlineQueueEligibleAt(
+                    slotStart, booking.Branch.OnlineEarlyCallMinutes, booking.CheckedInAt);
+        }
 
         await db.SaveChangesAsync(cancellationToken);
         await hubContext.Clients.Group(QueueHub.BranchGroup(booking.BranchId)).SendAsync("QueueUpdated", booking.BranchId, cancellationToken);
@@ -418,7 +427,10 @@ public sealed class QmsQueueService(
             qe.ServiceDay = newSvcDay;
             qe.AssignedSlotStart = newSlotStart;
             qe.AssignedSlotEnd = newSlotEnd;
-            qe.QueueEligibleAt = newSlotStart;
+            // Before check-in this is provisional (= SlotStart); if already checked in, keep the
+            // max(CheckedInAt, SlotStart - EarlyCall) rule used at check-in.
+            qe.QueueEligibleAt = OnlineQueueEligibleAt(
+                newSlotStart, booking.Branch.OnlineEarlyCallMinutes, qe.CheckedIn ? booking.CheckedInAt : null);
         }
 
         await db.SaveChangesAsync(cancellationToken);
@@ -531,11 +543,18 @@ public sealed class QmsQueueService(
                 || (q.CreatedAt == entry.CreatedAt && q.Id.CompareTo(entry.Id) < 0), cancellationToken);
 
         // ── ETA: ML → Counter Simulation → Formula (shared with Staff/Manager) ──
+        // Online booking not yet checked in: not in the call-next pool, so any ETA would be
+        // misleading. Return null (shown as slot info on Track) and skip ML/prediction logging.
         double eta;
-        var etaNullable = await ResolveDisplayEtaMinutesAsync(
-            entry, entry.Branch, entry.ServiceType, earlyMinutes, nowUtc, cancellationToken,
-            recordPredictions: true);
-        if (etaNullable is { } resolved)
+        var awaitingCheckIn = entry.EntryType == QueueEntryType.OnlineBooked && !entry.CheckedIn;
+        var etaNullable = awaitingCheckIn
+            ? null
+            : await ResolveDisplayEtaMinutesAsync(
+                entry, entry.Branch, entry.ServiceType, earlyMinutes, nowUtc, cancellationToken,
+                recordPredictions: true);
+        if (awaitingCheckIn)
+            eta = double.PositiveInfinity;
+        else if (etaNullable is { } resolved)
             eta = resolved;
         else
         {
@@ -646,6 +665,10 @@ public sealed class QmsQueueService(
 
         if (claimed is null)
             return new CallNextDto(null, null, "No eligible waiting customers.");
+
+        // ML target = CalledAt - QueueEligibleAt (the training simulation's target ends when a counter picks
+        // the ticket). Best-effort, after the claim transaction has committed.
+        await AttachWaitTargetsOnCallAsync(claimed, cancellationToken);
 
         var staff = await db.StaffMembers.AsNoTracking().FirstOrDefaultAsync(u => u.Id == staffId, cancellationToken);
         await bds.OnTicketCalledAsync(
@@ -832,20 +855,26 @@ public sealed class QmsQueueService(
         entry.State = QueueEntryState.Serving;
         entry.ServingStartedAt = DateTimeOffset.UtcNow;
 
-        // ML target attachment: fill ActualWaitingMinutes on training observations for this ticket
+        // The ML target is attached at Call Next (CalledAt - QueueEligibleAt). Here we only record
+        // ServingStartedAt for reference, and fall back to CalledAt (or ServingStartedAt if CalledAt is
+        // missing) for any row whose target was not attached at call time.
         try
         {
+            var targetEnd = entry.CalledAt ?? entry.ServingStartedAt.Value;
             var observations = await db.MlTrainingObservations
-                .Where(o => o.QueueEntryId == entry.Id && o.ActualWaitingMinutes == null)
+                .Where(o => o.QueueEntryId == entry.Id && (o.ServingStartedAt == null || o.ActualWaitingMinutes == null))
                 .ToListAsync(cancellationToken);
             foreach (var obs in observations)
             {
-                obs.ServingStartedAt = entry.ServingStartedAt;
-                if (obs.QueueEligibleAt.HasValue)
-                    obs.ActualWaitingMinutes = (entry.ServingStartedAt.Value - obs.QueueEligibleAt.Value).TotalMinutes;
+                obs.ServingStartedAt ??= entry.ServingStartedAt;
+                if (obs.ActualWaitingMinutes is null && obs.QueueEligibleAt.HasValue)
+                {
+                    obs.CalledAt ??= entry.CalledAt;
+                    obs.ActualWaitingMinutes = (targetEnd - obs.QueueEligibleAt.Value).TotalMinutes;
+                }
             }
 
-            // Also fill WaitPrediction audit records
+            // Also fill WaitPrediction audit records not yet resolved at call time
             var predictions = await db.WaitPredictions
                 .Where(p => p.QueueEntryId == entry.Id && p.ActualWaitingMinutes == null)
                 .ToListAsync(cancellationToken);
@@ -853,7 +882,7 @@ public sealed class QmsQueueService(
             {
                 if (entry.QueueEligibleAt.HasValue)
                 {
-                    pred.ActualWaitingMinutes = (entry.ServingStartedAt.Value - entry.QueueEligibleAt.Value).TotalMinutes;
+                    pred.ActualWaitingMinutes = (targetEnd - entry.QueueEligibleAt.Value).TotalMinutes;
                     pred.PredictionError = pred.ActualWaitingMinutes - pred.PredictedWaitMinutes;
                 }
             }
@@ -2038,6 +2067,58 @@ public sealed class QmsQueueService(
     // ─────────────────────────────────────────────────────────────────────
     // PRIVATE HELPERS
     // ─────────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Online queue-eligible moment = max(CheckedInAt, SlotStart - OnlineEarlyCallMinutes), matching the
+    /// training simulation. Before check-in (checkedInAt null) the provisional value is SlotStart.
+    /// </summary>
+    private static DateTimeOffset OnlineQueueEligibleAt(DateTimeOffset slotStart, int earlyCallMinutes, DateTimeOffset? checkedInAt)
+    {
+        if (checkedInAt is not { } ci) return slotStart;
+        var earlyOpen = slotStart.AddMinutes(-earlyCallMinutes);
+        return ci > earlyOpen ? ci : earlyOpen;
+    }
+
+    /// <summary>
+    /// Attach the wait target when a ticket is CALLED: ActualWaitingMinutes = CalledAt - QueueEligibleAt on
+    /// ML_TRAINING_DATA observations (their own QueueEligibleAt) and WaitPrediction audit rows (the entry's).
+    /// Only rows without a target are touched, so a re-call keeps the first call. Never throws.
+    /// </summary>
+    private async Task AttachWaitTargetsOnCallAsync(QueueEntry entry, CancellationToken ct)
+    {
+        if (entry.CalledAt is not { } calledAt) return;
+        try
+        {
+            var observations = await db.MlTrainingObservations
+                .Where(o => o.QueueEntryId == entry.Id && o.ActualWaitingMinutes == null)
+                .ToListAsync(ct);
+            foreach (var obs in observations)
+            {
+                obs.CalledAt = calledAt;
+                if (obs.QueueEligibleAt.HasValue)
+                    obs.ActualWaitingMinutes = (calledAt - obs.QueueEligibleAt.Value).TotalMinutes;
+            }
+
+            var predictions = await db.WaitPredictions
+                .Where(p => p.QueueEntryId == entry.Id && p.ActualWaitingMinutes == null)
+                .ToListAsync(ct);
+            foreach (var pred in predictions)
+            {
+                if (entry.QueueEligibleAt.HasValue)
+                {
+                    pred.ActualWaitingMinutes = (calledAt - entry.QueueEligibleAt.Value).TotalMinutes;
+                    pred.PredictionError = pred.ActualWaitingMinutes - pred.PredictedWaitMinutes;
+                }
+            }
+
+            if (observations.Count > 0 || predictions.Count > 0)
+                await db.SaveChangesAsync(ct);
+        }
+        catch (Exception)
+        {
+            // Target attachment failure must never block Call Next
+        }
+    }
 
     public async Task<int> CountActiveLaneCountersAsync(Guid branchId, Guid laneServiceTypeId, CancellationToken cancellationToken)
     {

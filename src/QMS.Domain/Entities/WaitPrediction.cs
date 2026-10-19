@@ -17,7 +17,7 @@ public class WaitPrediction
     public string? ModelVersion { get; set; }
     public string? FeatureSchemaVersion { get; set; }
 
-    /// <summary>Filled when ServingStartedAt becomes known. NULL until then.</summary>
+    /// <summary>CalledAt - QueueEntry.QueueEligibleAt, filled when the ticket is called (Call Next). NULL until then.</summary>
     public double? ActualWaitingMinutes { get; set; }
     /// <summary>ActualWaitingMinutes - PredictedWaitMinutes. NULL until actual is known.</summary>
     public double? PredictionError { get; set; }
