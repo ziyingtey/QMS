@@ -39,11 +39,16 @@ Shared by Track, Staff and Manager (`QmsQueueService`):
 
 Priority: if ML answers, its value is used after a **sanity clamp** (between 0.5× formula and 1.5× simulation, or 2.5× formula if no simulation); otherwise the simulation value; otherwise the formula. Set `MlWait:Enabled=false` to disable ML.
 
+## Manager queue-pressure alert
+
+Manager dashboard → Alerts (`GET` manager insights → `ManagerQueuePressure`). Same rule as the simulator's reactive manager: a lane alerts when queue-eligible waiting tickets per Active counter serving it ≥ `ManagerAlerts:QueuePerCounterThreshold` (default 4), or the longest current wait ≥ `ManagerAlerts:LongestWaitMinutesThreshold` (default 25 min). The alert suggests a Closed counter to open, or the idle/least-busy Active counter to add the service to. Nothing is changed automatically.
+
 ## Database
 
 - `ConnectionStrings:Default` set → **SQL Server**; schema created with `EnsureCreated()` on startup (no migrations applied automatically).
 - Connection string **empty** → **EF InMemory** database (demo, data lost on restart).
 - **Breaking schema change:** `QueueEntries.ServiceDay` was added (unique index on `BranchId, ServiceDay, TicketNumber`). `EnsureCreated` does not alter an existing DB — **drop and recreate** the database (then reload seed data from `database/`), or add the column/index with a manual migration.
+- **ML training schema v4:** `ML_TRAINING_DATA.IdleListeningCounters` / `CounterSimEtaMinutes` (27-feature model; `BranchCode` is stored but not a feature). Existing DBs: run `database/migrations/005_ml_training_v4_features.sql` (after 004); the API also adds the two nullable columns at startup if they are missing (`MlTrainingSchemaEnsure`). Training reads `FeatureSchemaVersion = 'v4'` rows only.
 - No demo data is inserted on startup. Load branches/services/counters/staff via `database/*.sql`; customers register through the app (`POST /api/auth/register`).
 
 ## Run locally
