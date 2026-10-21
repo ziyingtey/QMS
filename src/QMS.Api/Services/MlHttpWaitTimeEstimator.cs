@@ -132,7 +132,8 @@ public sealed class MlHttpWaitTimeEstimator : IWaitTimeEstimator
             ["OnlineSlotsPerSlot"] = f.OnlineSlotsPerSlot,
             ["OnlineBookedInSlot"] = f.OnlineBookedInSlot,
             ["WalkInInSlot"] = f.WalkInInSlot,
-            // Identity
+            // Identity. BranchCode is not a model feature (v4 bundles: 27 features); it is still sent for
+            // logging / older bundles and the sidecar ignores keys the bundle does not list.
             ["BranchCode"] = f.BranchCode,
             ["ServiceCode"] = f.ServiceCode,
             ["TicketPrefix"] = prefix,

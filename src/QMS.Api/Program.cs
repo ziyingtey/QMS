@@ -157,6 +157,7 @@ using (var scope = app.Services.CreateScope())
     await db.Database.EnsureCreatedAsync();
     await BranchOperatingHoursBackfill.EnsureDefaultsAsync(db);
     await ServiceQueueProvisioning.EnsureAsync(db, startupLogger);
+    await MlTrainingSchemaEnsure.EnsureAsync(db, startupLogger);
     await BranchAfterHoursCounterSweep.RunAsync(db, hub, startupLogger, CancellationToken.None);
 }
 

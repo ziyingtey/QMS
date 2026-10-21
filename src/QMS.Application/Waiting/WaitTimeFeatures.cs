@@ -47,6 +47,7 @@ public sealed record WaitTimeFeatures
     public int WalkInInSlot { get; init; }
 
     // ── Identity ──
+    /// <summary>Stored in ML_TRAINING_DATA and sent to the sidecar, but not a model feature (acts like a day ID in the simulation).</summary>
     public int BranchCode { get; init; }
     public string ServiceCode { get; init; } = string.Empty;
     /// <summary>First letter of ticket number (A/B/…); used by Tier-B ML model.</summary>

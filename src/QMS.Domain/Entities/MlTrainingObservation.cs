@@ -50,6 +50,12 @@ public class MlTrainingObservation
     public int ServiceEligibleActiveCounters { get; set; }
     public int NowServing { get; set; }
 
+    // ── Counter state at SnapshotAt (schema v4, migration 005) ──
+    /// <summary>Listening counters (Active, serve this service) not holding a Called/Serving ticket (ML feature).</summary>
+    public int? IdleListeningCounters { get; set; }
+    /// <summary>Deterministic Call Next drain ETA (CounterSimulationEstimator); NULL when no Active counter serves the lane (ML feature).</summary>
+    public double? CounterSimEtaMinutes { get; set; }
+
     // ── Historical Service Duration (from SERVICE_LOGS before SnapshotAt) ──
     public double? RollingAvgServiceMinutes { get; set; }
     public int DefaultAvgServiceMinutes { get; set; }
@@ -74,6 +80,7 @@ public class MlTrainingObservation
     public int CallNextPriority { get; set; }
 
     // ── Branch / Service Identity ──
+    /// <summary>Stored for reference / CV ordering; not a model feature since v4.</summary>
     public int BranchCode { get; set; }
     public string ServiceCode { get; set; } = string.Empty;
     /// <summary>First letter of the ticket number (queue prefix), ML categorical feature.</summary>
@@ -82,8 +89,9 @@ public class MlTrainingObservation
     // ── Model Metadata ──
     /// <summary>
     /// "v2" = legacy rows (Sun=0 DayOfWeek, online snapshot at SlotStart, CrossLane == QueueLength,
-    /// target ending at ServingStartedAt). "v3" = rows aligned with the training simulation
-    /// (see WaitTimeFeatureBuilder.FeatureSchemaVersion). Train only on v3.
+    /// target ending at ServingStartedAt). "v3" = rows aligned with the training simulation but without the
+    /// counter-state columns. "v4" = v3 + IdleListeningCounters / CounterSimEtaMinutes
+    /// (see WaitTimeFeatureBuilder.FeatureSchemaVersion). Train only on v4.
     /// </summary>
-    public string FeatureSchemaVersion { get; set; } = "v2";
+    public string FeatureSchemaVersion { get; set; } = "v4";
 }

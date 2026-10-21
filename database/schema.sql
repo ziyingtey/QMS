@@ -182,6 +182,8 @@ CREATE TABLE dbo.ML_TRAINING_DATA (
     ActiveCounters INT NOT NULL,
     ServiceEligibleActiveCounters INT NOT NULL,
     NowServing INT NOT NULL,
+    IdleListeningCounters INT NULL,
+    CounterSimEtaMinutes FLOAT NULL,
     RollingAvgServiceMinutes FLOAT NULL,
     DefaultAvgServiceMinutes INT NOT NULL,
     HourOfDay INT NOT NULL,

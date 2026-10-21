@@ -8,6 +8,10 @@
   Existing rows keep FeatureSchemaVersion = 'v2' (old DayOfWeek Sun=0, online snapshot at SlotStart,
   CrossLane == QueueLength, target ending at ServingStartedAt). The training export filters on 'v3'.
 
+  Superseded for training by v4 (005_ml_training_v4_features.sql): the model now has 27 features
+  (BranchCode dropped, IdleListeningCounters / CounterSimEtaMinutes added) and the export filters on 'v4'.
+  Run 004 and then 005 on an existing database.
+
   Rollback:
     ALTER TABLE dbo.ML_TRAINING_DATA DROP CONSTRAINT IF EXISTS DF_ML_TEMP_CrossLaneQueueLength, DF_ML_TEMP_TicketPrefix,
         DF_ML_TEMP_SlotActive, DF_ML_TEMP_CallNextPriority;

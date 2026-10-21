@@ -18,8 +18,10 @@ public sealed class WaitTimeFeatureBuilder(QmsDbContext db)
     /// ml/generate_seed_data.py + notebook (Mon=0 DayOfWeek, queue-eligible counts, cross-lane, per-branch-day
     /// EnqueueSequence, online snapshot at max(CheckedInAt, SlotStart - EarlyCall), target = CalledAt - QueueEligibleAt).
     /// Older rows keep the column default "v2" and must not be used for training.
+    /// "v4" = v3 + IdleListeningCounters and CounterSimEtaMinutes stored in the row (migration 005), so SQL
+    /// retraining gets every model feature; train_wait_model.py reads only v4 rows.
     /// </summary>
-    public const string FeatureSchemaVersion = "v3";
+    public const string FeatureSchemaVersion = "v4";
 
     /// <summary>
     /// Build features for a specific queue entry at a given moment in time.
@@ -242,6 +244,8 @@ public sealed class WaitTimeFeatureBuilder(QmsDbContext db)
             ActiveCounters = f.ActiveCounters,
             ServiceEligibleActiveCounters = f.ServiceEligibleActiveCounters,
             NowServing = f.NowServing,
+            IdleListeningCounters = f.IdleListeningCounters,
+            CounterSimEtaMinutes = f.CounterSimEtaMinutes,
             RollingAvgServiceMinutes = f.RollingAvgServiceMinutes,
             DefaultAvgServiceMinutes = f.DefaultAvgServiceMinutes,
             HourOfDay = f.HourOfDay,
