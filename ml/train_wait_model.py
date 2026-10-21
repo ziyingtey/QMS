@@ -4,7 +4,8 @@ Wait-time regression pipeline for QMS (v4).
 Lifecycle: Ingestion → Cleaning → Feature Engineering → Modeling → Evaluation
 
 Predicts WaitingMinutes (QueueEligibleAt → CalledAt, i.e. until a counter calls the ticket)
-using all 28 features aligned with MlHttpWaitTimeEstimator.BuildPayload / WaitTimeFeatureBuilder.
+using all 27 features aligned with MlHttpWaitTimeEstimator.BuildPayload / WaitTimeFeatureBuilder
+(BranchCode is sent by the API but is not a model feature: in the simulation it acts like a day ID).
 
 Data sources (first match wins):
   1. --csv path (synthetic from generate_seed_data.py or real export)
@@ -58,7 +59,7 @@ FEATURE_NUMERIC = [
     "ActiveCounters",
     "ListeningCounters",
     # Counter state: listening counters with no Called/Serving ticket, and the deterministic Call Next drain ETA
-    # (CounterSimulationEstimator / counter_sim_eta). Not stored in ML_TRAINING_DATA yet -> NaN for SQL rows.
+    # (CounterSimulationEstimator / counter_sim_eta). Stored in ML_TRAINING_DATA from schema v4 (migration 005).
     "IdleListeningCounters",
     "CounterSimEtaMinutes",
     # Time
@@ -82,8 +83,9 @@ FEATURE_NUMERIC = [
     "OnlineSlotsPerSlot",
     "OnlineBookedInSlot",
     "WalkInInSlot",
-    # Identity (numeric)
-    "BranchCode",
+    # BranchCode is intentionally NOT a feature: each simulated branch-day draws a random code, so it acts like
+    # a day ID the model can memorize, and live branches unseen in training would get arbitrary splits.
+    # The column stays in the data (CV sort order below) and the API still sends it; the sidecar ignores it.
 ]
 
 FEATURE_CATEGORICAL = ["ServiceCode", "TicketPrefix"]
@@ -102,10 +104,14 @@ MONOTONIC = {
     "ListeningCounters": -1,
 }
 
-# ── SQL export query (ML_TRAINING_DATA v3; every model feature is stored, nothing reconstructed) ──
-# Only FeatureSchemaVersion = 'v3' rows: older 'v2' rows used Sun=0 DayOfWeek, snapshotted online
-# tickets at SlotStart (even if never checked in), stored CrossLane == QueueLength and ended the
-# target at ServingStartedAt. Target = CalledAt - QueueEligibleAt (same as the simulation).
+# ── SQL export query (ML_TRAINING_DATA v4; every model feature is stored, nothing reconstructed) ──
+# Only FeatureSchemaVersion = 'v4' rows (migration 005 / WaitTimeFeatureBuilder.FeatureSchemaVersion):
+#  - 'v3' rows have the same definitions but no IdleListeningCounters / CounterSimEtaMinutes (NULL). Mixing
+#    them in would teach the model a "counter state unknown" NaN branch that never happens live (the API
+#    always sends both) and dilute CounterSimEtaMinutes, the strongest feature, so they are excluded.
+#  - older 'v2' rows used Sun=0 DayOfWeek, snapshotted online tickets at SlotStart (even if never checked
+#    in), stored CrossLane == QueueLength and ended the target at ServingStartedAt.
+# Target = CalledAt - QueueEligibleAt (same as the simulation).
 EXPORT_QUERY = """
 SELECT
     o.QueueEntryId AS TicketId,
@@ -125,6 +131,8 @@ SELECT
     o.NowServing,
     o.ActiveCounters,
     o.ServiceEligibleActiveCounters AS ListeningCounters,
+    o.IdleListeningCounters,
+    o.CounterSimEtaMinutes,
     o.HourOfDay,
     o.DayOfWeek,
     CAST(o.IsPeakHour AS INT) AS IsPeakHour,
@@ -141,7 +149,7 @@ SELECT
     o.SnapshotAt,
     o.CalledAt
 FROM dbo.ML_TRAINING_DATA AS o
-WHERE o.FeatureSchemaVersion = 'v3'
+WHERE o.FeatureSchemaVersion = 'v4'
   AND o.ActualWaitingMinutes IS NOT NULL
   AND o.ActualWaitingMinutes >= 0
 ORDER BY o.SnapshotAt

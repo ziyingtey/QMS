@@ -18,7 +18,7 @@ API config (`MlWait` in appsettings):
 
 Customer Track ETA order: **ML → CounterSimulation → Formula**.
 
-## Training data contract (v3)
+## Training data contract (v4)
 
 - **Target** `WaitingMinutes` = `CalledAt - QueueEligibleAt` (until a counter calls the ticket, not until service starts).
   Live: `ML_TRAINING_DATA.ActualWaitingMinutes` is filled at Call Next; `ServingStartedAt` is kept for reference only.
@@ -31,14 +31,19 @@ Customer Track ETA order: **ML → CounterSimulation → Formula**.
   `ServiceType.OnlineSlotsPerSlot`.
 - The simulation cells in `QMS_WaitTime_ML_Pipeline.ipynb` are verbatim copies of the `# >>> NB-CELL` regions in
   `generate_seed_data.py`; edit both together.
-- SQL training (`train_wait_model.py --connection-string ...`) only uses rows with `FeatureSchemaVersion = 'v3'`.
-  Existing databases need `database/migrations/004_ml_training_v3_features.sql`.
+- **27 model features**. `BranchCode` is still sent by the API and stored, but is not a model feature (in the
+  simulation each branch-day draws a random code, so it acts like a day ID); the sidecar ignores extra payload keys.
+- The simulation opens counters reactively (manager rule) and drains the queue for 30-60 min after closing; the same
+  queue-pressure rule drives the manager dashboard alert (`ManagerAlertOptions` in appsettings).
+- SQL training (`train_wait_model.py --connection-string ...`) only uses rows with `FeatureSchemaVersion = 'v4'`
+  (v3 rows lack `IdleListeningCounters` / `CounterSimEtaMinutes`). Existing databases need
+  `database/migrations/004_ml_training_v3_features.sql` and `005_ml_training_v4_features.sql`.
 
 Retrain:
 
 ```bash
 .venv/bin/python generate_seed_data.py
-.venv/bin/python train_wait_model.py --csv data/wait_training.csv
+.venv/bin/python train_wait_model.py --csv data/wait_training.csv --no-external   # same as the notebook
 # or run QMS_WaitTime_ML_Pipeline.ipynb in Colab and copy wait_model.joblib here
 # then restart the sidecar (or the API, which auto-starts it)
 ```

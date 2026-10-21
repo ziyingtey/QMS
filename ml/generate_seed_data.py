@@ -8,9 +8,13 @@ Discrete-event simulation of Malaysian bank branches matching production logic:
   - Production branch setup: 8 counters per branch (insert-counters-8-closed-per-branch.sql, the manager
     opens counters and assigns their services), 60-min slots aligned to opening time, Mon-Fri 09:30-16:00
     (sometimes other opening hours), OnlineSlotsPerSlot drawn per branch-day per service from 2..8
-  - Per branch-day randomized coverage: 1..8 Active counters (1-2 counters often), each counter with a
-    realistic grouping, a random subset, a single service or all services; counters may open late, close
-    early or take a break; load from very quiet to over capacity
+  - Per branch-day randomized coverage: 1..8 counters open AT OPENING (1-2 counters often), each counter with a
+    realistic grouping, a random subset, a single service or all services; counters may close early or take
+    a break; customer demand from well below to far above the opening staff's capacity
+  - Reactive manager: when the queue builds the manager opens more Closed counters (up to 8) and ticks a
+    backlogged service on a less busy counter (mid-day service reassignment), like the Manager UI does live
+  - Closing: no ticket is issued at/after closing time; the open counters keep calling the tickets already
+    queued for a randomized 30-60 min drain per branch-day
   - CreatedAt FIFO call ordering (matches QueueCallNextSelector), walk-ins + online bookings (early check-in
     before the early-call window, on time, late), walk-ins that left still get called (then missed)
   - Features at snapshot time exactly as live WaitTimeFeatureBuilder + MlHttpWaitTimeEstimator.BuildPayload
@@ -47,8 +51,9 @@ OUTPUT = ROOT / "data" / "wait_training.csv"
 # ── Branch & Service configs (matching the production seed scripts in database/) ──
 
 # Real production BranchCodes: insert-branches-from-paste.sql gives 251 branches, BranchCode = 101000 + row.
-# Each simulated branch-day draws a random code, so BranchCode carries no simulated signal (live branches
-# the simulation never named would otherwise get arbitrary tree splits).
+# Each simulated branch-day draws a random code, so BranchCode carries no simulated signal. It is NOT a model
+# feature (with ~1 code per simulated day it acts like a day ID the model could memorize); the column is kept
+# in the CSV only as an identity column (CV sort order in the notebook / train_wait_model.py).
 BRANCH_CODE_MIN = 101001
 BRANCH_CODE_MAX = 101251
 
@@ -65,7 +70,10 @@ HOURS_CHOICES = [  # (open, close) in minutes from midnight, probability
     ((570, 1050), 0.03),  # 09:30-17:30
     ((600, 1080), 0.02),  # 10:00-18:00
 ]
-DRAIN_AFTER_CLOSE_MIN = 90  # open counters keep calling the remaining queue for up to 90 min after closing
+# Closing: real branches stop issuing tickets at closing time (no walk-in arrives at/after closing, a booked slot
+# ends by closing) and serve the customers already queued. The counters still open keep calling that queue for a
+# randomized 30-60 min per branch-day; whoever is still waiting after the drain is not served (no target).
+DRAIN_AFTER_CLOSE_RANGE = (30, 60)  # minutes after closing, drawn uniformly per branch-day
 SLOT_DURATION = 60          # Branch.SlotDurationMinutes
 
 # Production services: code, name, prefix (SERVICE_QUEUES.TicketPrefix) and DefaultAvgServiceMinutes.
@@ -91,7 +99,10 @@ ALL_PREFIXES = [s["prefix"] for s in SERVICES]
 # and ticks their services (COUNTER_ALLOWED_SERVICES). The real groupings are unknown, so each counter gets
 # one of: a realistic teller grouping, a random subset, a single service, or all services.
 MAX_COUNTERS = 8
-N_COUNTER_WEIGHTS = [0.16, 0.16, 0.15, 0.14, 0.12, 0.10, 0.09, 0.08]  # P(1..8 Active counters)
+# N_COUNTER_WEIGHTS = P(1..8 counters OPEN AT OPENING TIME). It is NOT the day's counter count: the manager opens
+# more of the 8 counters during the day when the queue builds (REACTIVE_* below), so a branch-day that starts
+# with 1-2 counters often has 3-5 Active counters by the peak.
+N_COUNTER_WEIGHTS = [0.16, 0.16, 0.15, 0.14, 0.12, 0.10, 0.09, 0.08]  # P(1..8 counters open at opening)
 PROFILES = [
     ["D", "W", "Q"],                 # cash teller: deposit, withdraw, customer service
     ["D", "W", "T"],                 # cash teller: deposit, withdraw, ATM/CDM
@@ -107,12 +118,47 @@ PROFILES = [
 ]
 COUNTER_MODE_WEIGHTS = {"profile": 0.40, "random": 0.30, "single": 0.15, "all": 0.15}
 
-# Counter availability changes during the day (manager opens a counter late, closes it early, or a break).
-P_COUNTER_LATE_OPEN = 0.20
+# Counter availability changes during the day (a counter closes early or takes a break). Every counter in
+# N_COUNTER_WEIGHTS opens with the branch; counters opened later are the reactive ones (REACTIVE_* below).
 P_COUNTER_EARLY_CLOSE = 0.12
 P_COUNTER_BREAK = 0.25
 
-# Load = arrival rate relative to the open counters' capacity (rho), from very quiet to over capacity.
+# Day demand in "counters' worth of work", relative to the counters open at opening: demand_counters =
+# opening counters x factor (capped at MAX_COUNTERS). Factor > 1 = the opening staff is too small for the day's
+# traffic, the queue builds and the manager has to react. 1-2 counter openings are the typical under-staffed
+# case, so they draw from a heavier table.
+DEMAND_VS_OPENING = [  # (factor_low, factor_high, probability)
+    (0.6, 1.0, 0.45),   # opening staff is enough
+    (1.0, 2.0, 0.35),   # under-staffed: one or two more counters needed
+    (2.0, 3.0, 0.20),   # badly under-staffed
+]
+DEMAND_VS_OPENING_SMALL = [  # used when only 1-2 counters open at opening
+    (0.6, 1.0, 0.25),
+    (1.0, 2.0, 0.40),
+    (2.0, 4.0, 0.35),
+]
+
+# Reactive manager (Manager UI: open a Closed counter, tick more services on a counter), checked every
+# REACTIVE_CHECK_MIN while the branch is open. How quickly a manager reacts differs, so the two trigger
+# thresholds are drawn per branch-day from the ranges below (low = attentive manager, high = slow to react):
+#  - open one more Closed counter (up to MAX_COUNTERS) when the waiting queue per Active counter reaches the
+#    day's queue threshold, or when someone has waited longer than the day's wait threshold and no
+#    reassignment can help; it takes REACTIVE_OPEN_DELAY_MIN to staff it, at most one opening per
+#    REACTIVE_COOLDOWN_MIN, and the new counter serves the most backlogged services
+#  - mid-day service reassignment: a backlogged service (>= REASSIGN_MIN_WAITING waiting, longest wait
+#    >= REASSIGN_MAX_WAIT_MIN) is ticked on the least busy Active counter that does not serve it yet
+#    (takes effect after REASSIGN_DELAY_MIN; one change per check)
+REACTIVE_CHECK_MIN = 15
+REACTIVE_OPEN_QUEUE_PER_COUNTER = (3, 6)  # waiting tickets per Active counter (range, drawn per branch-day)
+REACTIVE_OPEN_MAX_WAIT_MIN = (20, 40)     # longest current wait in minutes (range, drawn per branch-day)
+REACTIVE_OPEN_DELAY_MIN = (3, 10)
+REACTIVE_COOLDOWN_MIN = 20
+REACTIVE_NEW_COUNTER_SERVICES = 3
+REASSIGN_MIN_WAITING = 3
+REASSIGN_MAX_WAIT_MIN = 20
+REASSIGN_DELAY_MIN = (1, 5)
+
+# Load = arrival rate relative to the demand capacity (rho x demand_counters), from very quiet to over capacity.
 LOAD_LEVELS = [  # (rho_low, rho_high, probability)
     (0.02, 0.15, 0.18),   # very quiet
     (0.15, 0.45, 0.24),   # quiet
@@ -171,15 +217,29 @@ class Ticket:
 
 @dataclass
 class Counter:
-    """A simulated service counter (Active while inside one of its intervals)."""
+    """A simulated service counter (Active while inside one of its intervals).
+
+    allowed_prefixes = services ticked when the counter opens; service_changes = mid-day reassignments
+    (effective time, new prefix list) in time order, so the services a counter calls depend on the time.
+    """
     counter_id: int
     allowed_prefixes: list[str]
     intervals: list[tuple[float, float]] = field(default_factory=list)
+    service_changes: list[tuple[float, list[str]]] = field(default_factory=list)
+    opened_reactively: bool = False  # opened by the manager during the day (not one of the opening counters)
     next_free: float = 0.0
+    busy_until: float = 0.0
     retired: bool = False
 
     def is_active(self, t: float) -> bool:
         return any(a <= t < b for a, b in self.intervals)
+
+    def prefixes_at(self, t: float) -> list[str]:
+        current = self.allowed_prefixes
+        for at, prefixes in self.service_changes:
+            if at <= t:
+                current = prefixes
+        return current
 
 
 def hour_traffic(hour: int) -> float:
@@ -217,13 +277,13 @@ def is_waiting(o: Ticket, snap: float) -> bool:
             and (o.called_at is None or o.called_at > snap))
 
 
-def heard_lanes(prefix: str, active: list[Counter]) -> tuple[list[set[str]], set[str]]:
+def heard_lanes(prefix: str, active: list[Counter], snap: float) -> tuple[list[set[str]], set[str]]:
     """Listening counters' prefix sets and the heard lane set S (live CallNextQueueMath.ResolveHeardLanesAsync).
 
-    Only Active counters count. A counter listens to my prefix if its allowed_prefixes contain it.
+    Only Active counters count. A counter listens to my prefix if its services at snap contain it.
     S = union of the listening counters' prefixes (includes mine); S = {my prefix} if no counter serves it.
     """
-    listening = [set(c.allowed_prefixes) for c in active if prefix in c.allowed_prefixes]
+    listening = [set(c.prefixes_at(snap)) for c in active if prefix in c.prefixes_at(snap)]
     heard = set().union(*listening) if listening else {prefix}
     return listening, heard
 
@@ -254,7 +314,7 @@ def counter_sim_eta(t: Ticket, tickets: list[Ticket], active: list[Counter], sna
     Result = max(time my ticket is taken, minutes until my own eligibility), avg = RollingAvg rule.
     Only tickets ahead of me matter: a counter whose next ticket is after me never takes one ahead of me.
     """
-    all_prefixes = set().union(*[set(c.allowed_prefixes) for c in active]) if active else set()
+    all_prefixes = set().union(*[set(c.prefixes_at(snap)) for c in active]) if active else set()
     if t.prefix not in all_prefixes:
         return None
     free_at: dict[int, float] = {}
@@ -269,7 +329,7 @@ def counter_sim_eta(t: Ticket, tickets: list[Ticket], active: list[Counter], sna
                    key=lambda o: (o.created_at, o.ticket_id))
     queue.append(t)
     taken: set[int] = set()
-    lanes = {c.counter_id: set(c.allowed_prefixes) for c in active}
+    lanes = {c.counter_id: set(c.prefixes_at(snap)) for c in active}
     result = None
     for _ in range(2000):
         best_c, best_ticket, best_free = None, None, float("inf")
@@ -294,12 +354,14 @@ def counter_sim_eta(t: Ticket, tickets: list[Ticket], active: list[Counter], sna
     return max(result, my_eligible - snap)
 
 
-def build_counters(rng: np.random.Generator, open_min: int, close_min: int) -> list[Counter]:
-    """1..8 Active counters with randomized services and availability intervals."""
+def build_counters(rng: np.random.Generator, open_min: int, close_min: int, end_all: float) -> list[Counter]:
+    """The counters open AT OPENING: 1..8 (N_COUNTER_WEIGHTS) with randomized services, early close / break.
+
+    More counters are opened later by the reactive manager (simulate_day), never here.
+    """
     n = int(rng.choice(np.arange(1, MAX_COUNTERS + 1), p=np.array(N_COUNTER_WEIGHTS) / sum(N_COUNTER_WEIGHTS)))
     modes = list(COUNTER_MODE_WEIGHTS)
     mode_p = np.array([COUNTER_MODE_WEIGHTS[m] for m in modes])
-    end_all = close_min + DRAIN_AFTER_CLOSE_MIN
     counters = []
     for i in range(n):
         mode = str(rng.choice(modes, p=mode_p / mode_p.sum()))
@@ -312,9 +374,7 @@ def build_counters(rng: np.random.Generator, open_min: int, close_min: int) -> l
             allowed = [str(rng.choice(ALL_PREFIXES))]
         else:
             allowed = list(ALL_PREFIXES)
-        start, end = float(open_min), float(end_all)
-        if i > 0 and rng.random() < P_COUNTER_LATE_OPEN:  # counter 0 opens with the branch
-            start = open_min + rng.uniform(15, 180)
+        start, end = float(open_min), float(end_all)  # every opening counter opens with the branch
         if rng.random() < P_COUNTER_EARLY_CLOSE:
             end = rng.uniform(max(start + 60, open_min + 120), close_min)
         intervals = [(start, end)]
@@ -330,8 +390,8 @@ def snapshot_row(t: Ticket, snap: float, tickets: list[Ticket], counters: list[C
     """Features of ticket t at snap, computed exactly like live WaitTimeFeatureBuilder + BuildPayload."""
     hour = max(0, min(23, int(snap // 60)))
     active = [c for c in counters if c.is_active(snap)]
-    listening, heard = heard_lanes(t.prefix, active)
-    listening_counters = [c for c in active if t.prefix in c.allowed_prefixes]
+    listening, heard = heard_lanes(t.prefix, active, snap)
+    listening_counters = [c for c in active if t.prefix in c.prefixes_at(snap)]
     waiting = [o for o in tickets if is_waiting(o, snap)]
     in_service = [o for o in tickets if o.called_at is not None and o.called_at <= snap < o.service_end_at]
     busy_counter_ids = {o.counter_id for o in in_service}
@@ -390,7 +450,7 @@ def snapshot_row(t: Ticket, snap: float, tickets: list[Ticket], counters: list[C
         "OnlineSlotsPerSlot": t.online_slots_per_slot,
         "OnlineBookedInSlot": online_booked_in_slot,
         "WalkInInSlot": walkin_in_slot,
-        # Identity
+        # Identity (BranchCode: CSV identity / CV sort column only, not a model feature)
         "BranchCode": t.branch_code,
         "ServiceCode": t.service_code,
         "TicketPrefix": t.prefix,
@@ -399,8 +459,12 @@ def snapshot_row(t: Ticket, snap: float, tickets: list[Ticket], counters: list[C
     }
 
 
-def simulate_day(rng: np.random.Generator, day_of_week: int) -> list[dict]:
-    """Simulate one branch-day (randomized setup) with a discrete-event Call Next drain."""
+def simulate_day(rng: np.random.Generator, day_of_week: int, day_log: list | None = None) -> list[dict]:
+    """Simulate one branch-day (randomized setup) with a discrete-event Call Next drain and a reactive manager.
+
+    day_log (optional) receives one summary dict per simulated branch-day (opening / max counters, openings,
+    reassignments, drain minutes, tickets left unserved after the drain).
+    """
     day_mult = day_traffic(day_of_week)
     if day_mult == 0:
         return []
@@ -408,12 +472,18 @@ def simulate_day(rng: np.random.Generator, day_of_week: int) -> list[dict]:
     branch_code = int(rng.integers(BRANCH_CODE_MIN, BRANCH_CODE_MAX + 1))
     hours_p = np.array([p for _, p in HOURS_CHOICES])
     open_min, close_min = HOURS_CHOICES[int(rng.choice(len(HOURS_CHOICES), p=hours_p / hours_p.sum()))][0]
-    end_time = float(close_min + DRAIN_AFTER_CLOSE_MIN)
+    drain_min = float(rng.uniform(*DRAIN_AFTER_CLOSE_RANGE))  # post-closing drain of this branch-day
+    end_time = float(close_min) + drain_min
     n_slots = (close_min - open_min) // SLOT_DURATION  # a slot must end by closing time
     early_call = int(rng.choice(EARLY_CALL_CHOICES))
     online_cap = {s["code"]: int(rng.integers(ONLINE_SLOTS_MIN, ONLINE_SLOTS_MAX + 1)) for s in SERVICES}
-    counters = build_counters(rng, open_min, close_min)
+    counters = build_counters(rng, open_min, close_min, end_time)  # counters open at opening
+    n_opening = len(counters)
     covered = sorted(set().union(*[set(c.allowed_prefixes) for c in counters]))
+    demand_table = DEMAND_VS_OPENING_SMALL if n_opening <= 2 else DEMAND_VS_OPENING
+    dm_p = np.array([p for _, _, p in demand_table])
+    f_lo, f_hi, _ = demand_table[int(rng.choice(len(demand_table), p=dm_p / dm_p.sum()))]
+    demand_counters = min(float(MAX_COUNTERS), n_opening * rng.uniform(f_lo, f_hi))
 
     # Branch-day service speed (true mean = default x speed) and arrival mix over the covered services
     speed = {p: float(rng.lognormal(0.0, 0.2)) for p in ALL_PREFIXES}
@@ -442,18 +512,21 @@ def simulate_day(rng: np.random.Generator, day_of_week: int) -> list[dict]:
         history[s["prefix"]] = entries
 
     def serves_at(prefix: str, t: float) -> bool:
-        return any(prefix in c.allowed_prefixes and c.is_active(t) for c in counters)
+        # Opening setup only: reactive changes reuse the covered services, so they never add a new service
+        return any(prefix in c.prefixes_at(t) and c.is_active(t) for c in counters)
 
     tickets: list[Ticket] = []
     online_used: dict[tuple[str, int], int] = {}
     for hour in hours:
-        lo, hi = max(hour * 60, open_min), min(hour * 60 + 60, close_min)
+        lo, hi = max(hour * 60, open_min), min(hour * 60 + 60, close_min)  # no arrivals at/after closing
         if hi <= lo:
             continue
-        n_open = max(0.5, sum(1 for c in counters if c.is_active((lo + hi) / 2)))
-        lam = rho * hour_traffic(hour) / h_norm * day_mult * n_open * (hi - lo) / svc_mean
+        # Demand is the day's traffic, independent of how many counters happen to be open
+        lam = rho * hour_traffic(hour) / h_norm * day_mult * demand_counters * (hi - lo) / svc_mean
         for _ in range(int(rng.poisson(lam))):
             arrive = rng.uniform(lo, hi)
+            if arrive >= close_min:
+                continue  # the branch stops issuing tickets at closing time
             prefix = str(rng.choice(covered, p=w))
             svc = svc_by_prefix[prefix]
             code = svc["code"]
@@ -478,6 +551,9 @@ def simulate_day(rng: np.random.Generator, day_of_week: int) -> list[dict]:
                     else:           # late
                         offset = rng.uniform(0, 40)
                     checkin_at = max(open_min - 30.0, slot_start + offset)
+                    if checkin_at >= close_min:  # cannot check in once the branch has closed
+                        checked_in, checkin_at = False, None
+                if checked_in:
                     eligible = max(checkin_at, slot_start - early_call)
                 tickets.append(Ticket(0, branch_code, code, prefix, svc["avg_min"], online_cap[code], 0,
                                       checked_in, created, slot_start, slot_start + SLOT_DURATION,
@@ -497,15 +573,72 @@ def simulate_day(rng: np.random.Generator, day_of_week: int) -> list[dict]:
     for rank, t in enumerate(sorted(tickets, key=lambda x: (x.created_at, x.ticket_id)), start=1):
         t.enqueue_seq = rank
 
-    # ── Discrete-event Call Next drain ──
+    # ── Discrete-event Call Next drain + reactive manager ──
     callable_tickets = [t for t in tickets if t.queue_eligible_at is not None]
     for c in counters:
-        c.next_free = c.intervals[0][0]
+        c.next_free = c.busy_until = c.intervals[0][0]
+    open_queue_thr = float(rng.uniform(*REACTIVE_OPEN_QUEUE_PER_COUNTER))  # this manager's reaction thresholds
+    open_wait_thr = float(rng.uniform(*REACTIVE_OPEN_MAX_WAIT_MIN))
+    checks = [float(x) for x in np.arange(open_min + REACTIVE_CHECK_MIN, close_min, REACTIVE_CHECK_MIN)]
+    last_open = -1e9
+    n_reassign = 0
+
+    def wake(c: Counter, at: float) -> None:
+        """An idle counter re-checks the queue at `at` (a busy one keeps serving until busy_until)."""
+        if c.retired or c.next_free > at:
+            c.next_free = max(c.busy_until, at)
+            c.retired = False
+
+    def manager_check(now: float) -> None:
+        nonlocal last_open, n_reassign
+        waiting = [t for t in callable_tickets if t.called_at is None and t.queue_eligible_at <= now]
+        if not waiting:
+            return
+        active = [c for c in counters if c.is_active(now)]
+        per_counter = len(waiting) / max(1, len(active))
+        longest = max(now - t.queue_eligible_at for t in waiting)
+        count: dict[str, int] = {}
+        oldest: dict[str, float] = {}
+        for t in waiting:
+            count[t.prefix] = count.get(t.prefix, 0) + 1
+            oldest[t.prefix] = max(oldest.get(t.prefix, 0.0), now - t.queue_eligible_at)
+        # Mid-day service reassignment candidates: backlogged services + a less busy counter without them
+        reassign = None
+        if per_counter < open_queue_thr:
+            for p in sorted(count, key=lambda x: -count[x]):
+                if count[p] < REASSIGN_MIN_WAITING or oldest[p] < REASSIGN_MAX_WAIT_MIN:
+                    continue
+                options = [c for c in active if p not in c.prefixes_at(now)]
+                if options:
+                    load = {c.counter_id: sum(count.get(q, 0) for q in c.prefixes_at(now)) for c in options}
+                    reassign = (p, min(options, key=lambda c: (load[c.counter_id], c.counter_id)))
+                    break
+        want_open = per_counter >= open_queue_thr or (longest >= open_wait_thr and reassign is None)
+        if (want_open and len(counters) < MAX_COUNTERS and now - last_open >= REACTIVE_COOLDOWN_MIN):
+            start = now + float(rng.uniform(*REACTIVE_OPEN_DELAY_MIN))
+            if start < close_min:
+                top = sorted(count, key=lambda x: -count[x])[:REACTIVE_NEW_COUNTER_SERVICES]
+                c = Counter(counter_id=len(counters), allowed_prefixes=sorted(top),
+                            intervals=[(start, end_time)], opened_reactively=True)
+                c.next_free = c.busy_until = start
+                counters.append(c)
+                last_open = now
+                return
+        if reassign is not None:
+            p, c = reassign
+            at = now + float(rng.uniform(*REASSIGN_DELAY_MIN))
+            c.service_changes.append((at, sorted(set(c.prefixes_at(now)) | {p})))
+            n_reassign += 1
+            wake(c, at)
+
     while True:
         live = [c for c in counters if not c.retired]
-        if not live:
+        c = min(live, key=lambda x: x.next_free) if live else None
+        if checks and (c is None or checks[0] <= c.next_free):
+            manager_check(checks.pop(0))  # manager looks at the queue before the counters act at that time
+            continue
+        if c is None:
             break
-        c = min(live, key=lambda x: x.next_free)
         now = c.next_free
         if now > end_time:
             c.retired = True
@@ -517,13 +650,17 @@ def simulate_day(rng: np.random.Generator, day_of_week: int) -> list[dict]:
             else:
                 c.retired = True
             continue
+        lanes_now = c.prefixes_at(now)
         pool = [t for t in callable_tickets
-                if t.called_at is None and t.queue_eligible_at <= now and t.prefix in c.allowed_prefixes]
+                if t.called_at is None and t.queue_eligible_at <= now and t.prefix in lanes_now]
         if not pool:
             future = [t.queue_eligible_at for t in callable_tickets
-                      if t.called_at is None and t.queue_eligible_at > now and t.prefix in c.allowed_prefixes]
-            if future:
-                c.next_free = min(future)
+                      if t.called_at is None and t.queue_eligible_at > now and t.prefix in lanes_now]
+            # Idle: wake at the next eligible ticket or the next manager check (services may be added)
+            changes = [at for at, _ in c.service_changes if at > now]
+            wake_at = ([min(future)] if future else []) + checks[:1] + changes[:1]
+            if wake_at:
+                c.next_free = min(wake_at)
             else:
                 c.retired = True
             continue
@@ -538,9 +675,24 @@ def simulate_day(rng: np.random.Generator, day_of_week: int) -> list[dict]:
         t.called_at = called
         t.service_end_at = called + duration
         t.counter_id = c.counter_id
-        c.next_free = called + duration
+        c.next_free = c.busy_until = called + duration
         if not t.left:
             history[t.prefix].append((called + duration, duration))
+
+    if day_log is not None:
+        peak = max(sum(1 for c in counters if c.is_active(x)) for x in np.arange(open_min, close_min, 5.0))
+        day_log.append({
+            "opening_counters": n_opening,
+            "max_active_counters": int(peak),
+            "reactive_openings": sum(1 for c in counters if c.opened_reactively),
+            "reassignments": n_reassign,
+            "open_queue_thr": round(open_queue_thr, 1),
+            "open_wait_thr": round(open_wait_thr, 1),
+            "demand_counters": round(demand_counters, 2),
+            "drain_min": round(drain_min, 1),
+            "tickets": len(callable_tickets),
+            "unserved_after_drain": sum(1 for t in callable_tickets if t.called_at is None),
+        })
 
     # ── Snapshot rows ──
     ctx = {"dow": day_of_week, "early_call": early_call}
@@ -559,20 +711,20 @@ def simulate_day(rng: np.random.Generator, day_of_week: int) -> list[dict]:
     return rows
 
 
-def generate_rows(rng: np.random.Generator, n_rows: int) -> list[dict]:
+def generate_rows(rng: np.random.Generator, n_rows: int, day_log: list | None = None) -> list[dict]:
     """Simulate branch-days (Mon-Fri cycle) until n_rows rows exist."""
     all_rows: list[dict] = []
     day_count = 0
     while len(all_rows) < n_rows:
-        all_rows.extend(simulate_day(rng, day_count % 5))
+        all_rows.extend(simulate_day(rng, day_count % 5, day_log))
         day_count += 1
     return all_rows
 # <<< NB-CELL
 
 
-def generate(n_rows: int = 30000, seed: int = 42) -> pd.DataFrame:
+def generate(n_rows: int = 30000, seed: int = 42, day_log: list | None = None) -> pd.DataFrame:
     rng = np.random.default_rng(seed)
-    df = pd.DataFrame(generate_rows(rng, n_rows))
+    df = pd.DataFrame(generate_rows(rng, n_rows, day_log))
 
     # Winsorize extreme wait times at 99th percentile (instead of hard cap)
     served = df["WaitingMinutes"].notna()
@@ -590,7 +742,8 @@ def main():
     parser.add_argument("--output", type=Path, default=OUTPUT)
     args = parser.parse_args()
 
-    df = generate(n_rows=args.rows, seed=args.seed)
+    day_log: list[dict] = []
+    df = generate(n_rows=args.rows, seed=args.seed, day_log=day_log)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(args.output, index=False)
 
@@ -608,6 +761,14 @@ def main():
         print(f"  Wait (served): mean={w.mean():.1f} median={w.median():.1f} "
               f"p95={w.quantile(0.95):.1f} max={w.max():.1f} min")
     print(f"  Features: {len(df.columns)} columns")
+    days = pd.DataFrame(day_log)
+    if len(days) > 0:
+        small = days[days["opening_counters"] <= 2]
+        print(f"  Branch-days: {len(days)}; opened >=1 counter reactively: {(days['reactive_openings'] > 0).mean():.1%}"
+              f" (1-2 at opening: {(small['reactive_openings'] > 0).mean():.1%}); "
+              f"with a service reassignment: {(days['reassignments'] > 0).mean():.1%}")
+        print(f"  Drain after closing: {days['drain_min'].min():.0f}-{days['drain_min'].max():.0f} min; "
+              f"unserved after drain: {days['unserved_after_drain'].sum()} of {days['tickets'].sum()} tickets")
 
 
 if __name__ == "__main__":

@@ -92,6 +92,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send(400, {"error": "features must be object"})
             return
 
+        # Only the bundle's feature columns are used; extra payload keys (e.g. BranchCode, which the API
+        # still sends but v4 models no longer use) are ignored.
         numeric = Handler.bundle.get("feature_numeric") or []
         categorical = Handler.bundle.get("feature_categorical") or []
         cols = list(numeric) + list(categorical)
@@ -120,7 +122,6 @@ class Handler(BaseHTTPRequestHandler):
                 "EntryType": 0,
                 "CheckedIn": 0,
                 "EnqueueSequence": 1,
-                "BranchCode": 0,
                 "IsPeakHour": 0,
                 "RollingAvgServiceMinutes": None,  # NaN — HistGBR handles natively
                 # v2 slot features — NaN is correct for walk-ins (HistGBR native)

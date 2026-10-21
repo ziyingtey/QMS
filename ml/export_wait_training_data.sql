@@ -1,61 +1,60 @@
 /*
-  Export wait-time training rows from operational QMS tables.
+  Export wait-time training rows (schema v4) from dbo.ML_TRAINING_DATA.
 
-  Label (y): WaitingMinutes = time from enqueue (CreatedAt) to start of service (ServingStartedAt).
-  Features (X): reconstructed at enqueue time where possible.
+  Same query as EXPORT_QUERY in train_wait_model.py (keep the two in sync). Each row is a snapshot the API
+  wrote at QueueEligibleAt (WaitTimeFeatureBuilder.ToObservation), so all 27 model features are the live
+  values at that moment; label WaitingMinutes = CalledAt - QueueEligibleAt (ActualWaitingMinutes).
 
-  Run in SSMS → Results → Save as CSV → ml/data/wait_training.csv
-  Or let train_wait_model.py load via pyodbc using the same query.
+  Only FeatureSchemaVersion = 'v4' rows are exported: v3 rows lack IdleListeningCounters /
+  CounterSimEtaMinutes (NULL) and v2 rows use older definitions. Requires migrations 004 + 005.
+  BranchCode is exported as an identity / CV sort column only; it is not a model feature.
 
-  Requires completed tickets (State = 3) with ServingStartedAt set.
+  Run in SSMS -> Results -> Save as CSV -> ml/data/wait_training.csv, then
+    python train_wait_model.py --csv data/wait_training.csv --no-external
+  or let train_wait_model.py run it directly via pyodbc (--connection-string or env QMS_SQL_CONNECTION).
 */
 
 USE QMS;
 GO
 
 SELECT
-    q.Id AS TicketId,
-    q.BranchId,
-    b.BranchCode,
-    q.ServiceTypeId,
-    s.Code AS ServiceCode,
-    s.DefaultAvgServiceMinutes,
-    q.EntryType,
-    q.EnqueueSequence,
-    q.CheckedIn,
-    /* Queue length at enqueue: tickets same lane created before this one not yet serving */
-    (
-        SELECT COUNT(*)
-        FROM dbo.QUEUE_TICKETS AS q2
-        WHERE q2.BranchId = q.BranchId
-          AND q2.ServiceTypeId = q.ServiceTypeId
-          AND q2.Id <> q.Id
-          AND q2.CreatedAt < q.CreatedAt
-          AND (q2.ServingStartedAt IS NULL OR q2.ServingStartedAt > q.CreatedAt)
-    ) AS QueueLength,
-    /* Snapshot proxy: active counters on this lane today (not true historical state — document in FYP) */
-    (
-        SELECT COUNT(*)
-        FROM dbo.COUNTERS AS co
-        INNER JOIN dbo.COUNTER_ALLOWED_SERVICES AS cas ON cas.CounterId = co.Id
-        WHERE co.BranchId = q.BranchId
-          AND cas.ServiceTypeId = q.ServiceTypeId
-          AND co.Mode = 0
-    ) AS ActiveCounters,
-  DATEPART(hour, DATEADD(minute, b.ServiceZoneOffsetMinutes, q.CreatedAt)) AS HourOfDay,
-    DATEPART(weekday, DATEADD(minute, b.ServiceZoneOffsetMinutes, q.CreatedAt)) AS DayOfWeek,
-    CASE
-        WHEN DATEPART(hour, DATEADD(minute, b.ServiceZoneOffsetMinutes, q.CreatedAt)) BETWEEN 9 AND 11
-          OR DATEPART(hour, DATEADD(minute, b.ServiceZoneOffsetMinutes, q.CreatedAt)) BETWEEN 14 AND 16
-        THEN 1 ELSE 0
-    END AS IsPeakHour,
-    DATEDIFF(second, q.CreatedAt, q.ServingStartedAt) / 60.0 AS WaitingMinutes,
-    q.CreatedAt,
-    q.ServingStartedAt
-FROM dbo.QUEUE_TICKETS AS q
-INNER JOIN dbo.BRANCHES AS b ON b.Id = q.BranchId
-INNER JOIN dbo.SERVICES AS s ON s.Id = q.ServiceTypeId
-WHERE q.State = 3
-  AND q.ServingStartedAt IS NOT NULL
-  AND q.ServingStartedAt > q.CreatedAt
-ORDER BY q.CreatedAt;
+    o.QueueEntryId AS TicketId,
+    o.BranchId,
+    o.BranchCode,
+    o.ServiceTypeId,
+    o.ServiceCode,
+    o.TicketPrefix,
+    o.DefaultAvgServiceMinutes,
+    o.RollingAvgServiceMinutes,
+    o.EntryType,
+    o.EnqueueSequence,
+    CAST(o.CheckedIn AS INT) AS CheckedIn,
+    o.QueueLength,
+    o.CrossLaneQueueLength,
+    o.PeopleAhead AS PeopleAheadCallNext,
+    o.NowServing,
+    o.ActiveCounters,
+    o.ServiceEligibleActiveCounters AS ListeningCounters,
+    o.IdleListeningCounters,
+    o.CounterSimEtaMinutes,
+    o.HourOfDay,
+    o.DayOfWeek,
+    CAST(o.IsPeakHour AS INT) AS IsPeakHour,
+    o.SlotActive,
+    o.CallNextPriority,
+    o.SlotDurationMinutes,
+    o.EarlyCallMinutes,
+    o.MinutesUntilSlotEnd,
+    o.MinutesSinceSlotStart,
+    o.OnlineSlotsPerSlot,
+    o.OnlineBookedInSlot,
+    o.WalkInInSlot,
+    o.ActualWaitingMinutes AS WaitingMinutes,
+    o.SnapshotAt,
+    o.CalledAt
+FROM dbo.ML_TRAINING_DATA AS o
+WHERE o.FeatureSchemaVersion = 'v4'
+  AND o.ActualWaitingMinutes IS NOT NULL
+  AND o.ActualWaitingMinutes >= 0
+ORDER BY o.SnapshotAt;
+GO
