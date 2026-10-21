@@ -236,7 +236,16 @@ export type BranchOperationalSettings = {
 
 export type AssignableStaffDto = { id: string; email: string; name: string; role: string };
 
-export type ManagerInsightAlert = { severity: string; message: string };
+export type ManagerInsightAlert = {
+  severity: string;
+  message: string;
+  /** "queue_pressure" for the lane pressure alert (ManagerAlerts thresholds in appsettings). */
+  kind?: string | null;
+  serviceTypeId?: string | null;
+  /** "open_counter" | "add_service" — a suggestion only; counters are never opened automatically. */
+  suggestedAction?: string | null;
+  suggestedCounterNumber?: number | null;
+};
 
 export type ManagerLaneAnalytics = {
   serviceTypeId: string;

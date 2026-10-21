@@ -1,6 +1,7 @@
 using System.Globalization;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using QMS.Api.Hubs;
 using QMS.Api.Dtos;
 using QMS.Application.Geo;
@@ -19,7 +20,8 @@ public sealed class QmsQueueService(
     CustomerNotificationService notifications,
     IWaitTimeEstimator waitTimeEstimator,
     WaitTimeFeatureBuilder featureBuilder,
-    CounterSimulationEstimator simulationEstimator)
+    CounterSimulationEstimator simulationEstimator,
+    IOptions<ManagerAlertOptions> managerAlertOptions)
 {
     // ─────────────────────────────────────────────────────────────────────
     // GET SLOTS (customer booking grid)
@@ -1601,7 +1603,34 @@ public sealed class QmsQueueService(
             alerts.Add(new ManagerInsightAlertDto("warning", "Possible understaffing: very high wait-to-counter ratio."));
 
         var services = await db.ServiceTypes.AsNoTracking()
+            .Include(s => s.Queue)
             .Where(s => s.BranchId == branchId).OrderBy(s => s.Name).ToListAsync(cancellationToken);
+
+        // Queue-pressure alert inputs (ManagerQueuePressure; same rule as the simulator's reactive manager):
+        // queue-eligible waiting tickets per lane, the oldest QueueEligibleAt per lane, and busy counters.
+        var pressureOptions = managerAlertOptions.Value;
+        var nowUtc = DateTimeOffset.UtcNow;
+        var waitingRows = await db.QueueEntries.AsNoTracking()
+            .Where(q => q.BranchId == branchId && q.State == QueueEntryState.Waiting && q.CheckedIn
+                        && (q.CreatedAt >= dayStartOffset
+                            || (q.Booking != null && q.Booking.SlotStart >= dayStartOffset)))
+            .Select(q => new { q.ServiceTypeId, EligibleAt = q.QueueEligibleAt ?? q.CreatedAt })
+            .ToListAsync(cancellationToken);
+        var eligibleRows = waitingRows.Where(r => r.EligibleAt <= nowUtc).ToList();
+        var eligibleWaitingByService = eligibleRows.GroupBy(r => r.ServiceTypeId)
+            .ToDictionary(g => g.Key, g => g.Count());
+        var oldestEligibleByService = eligibleRows.GroupBy(r => r.ServiceTypeId)
+            .ToDictionary(g => g.Key, g => g.Min(r => r.EligibleAt));
+        var busyCounterIds = (await db.QueueEntries.AsNoTracking()
+                .Where(q => q.BranchId == branchId && q.CounterId != null
+                            && (q.State == QueueEntryState.Called || q.State == QueueEntryState.Serving))
+                .Select(q => q.CounterId!.Value)
+                .ToListAsync(cancellationToken))
+            .ToHashSet();
+        var pressureCounters = counters
+            .Select(c => new QueuePressureCounter(c.Id, c.Number, c.Mode,
+                c.AllowedServices.Select(a => a.ServiceTypeId).ToList(), busyCounterIds.Contains(c.Id)))
+            .ToList();
 
         var lanes = new List<ManagerLaneAnalyticsDto>();
         foreach (var svc in services)
@@ -1618,7 +1647,23 @@ public sealed class QmsQueueService(
             // Aggregate lane ETA — uses legacy formula (no per-entry features available)
             var eta = WaitTimeEstimator.EstimateMinutes(w + serving, svc.DefaultAvgServiceMinutes, Math.Max(1, ac));
 
-            if (w > 0 && ac == 0)
+            var pressure = ManagerQueuePressure.Evaluate(
+                new QueuePressureLane(svc.Id, svc.Name,
+                    string.IsNullOrWhiteSpace(svc.Queue?.TicketPrefix) ? svc.Name : svc.Queue!.TicketPrefix,
+                    eligibleWaitingByService.GetValueOrDefault(svc.Id),
+                    ac,
+                    oldestEligibleByService.TryGetValue(svc.Id, out var oldest)
+                        ? Math.Max(0, (nowUtc - oldest).TotalMinutes) : 0),
+                pressureCounters, eligibleWaitingByService, pressureOptions);
+            if (pressure != null)
+            {
+                alerts.Add(pressure.Alert);
+                if (pressure.Suggestion is { } ps
+                    && !suggestions.Any(x => x.Kind == ps.Kind && x.RelatedCounterId == ps.RelatedCounterId
+                                             && x.RelatedServiceTypeId == ps.RelatedServiceTypeId))
+                    suggestions.Add(ps);
+            }
+            else if (w > 0 && ac == 0)
                 alerts.Add(new ManagerInsightAlertDto("warning",
                     $"Lane «{svc.Name}» has {w} waiting but no counter open for that lane."));
             if (!double.IsInfinity(eta) && eta > 30)
@@ -1655,7 +1700,7 @@ public sealed class QmsQueueService(
             if (w > 0 && ac == 0)
             {
                 var candidate = counters.FirstOrDefault(c => c.Mode != CounterMode.Active && CounterCanServeLane(c, svc.Id));
-                if (candidate != null)
+                if (candidate != null && !suggestions.Any(x => x.Kind == "open_counter" && x.RelatedCounterId == candidate.Id))
                     suggestions.Add(new ManagerSuggestionDto("open_counter",
                         $"Open counter #{candidate.Number}",
                         $"Lane «{svc.Name}» has {w} waiting. Counter #{candidate.Number} can serve this lane once set to Active.",
@@ -2641,7 +2686,15 @@ public sealed record ManagerAppointmentsTodayDto(
 public sealed record ManagerAppointmentRowDto(
     Guid BookingId, string CustomerName, string ServiceName,
     DateTimeOffset SlotStart, DateTimeOffset SlotEnd, string Status);
-public sealed record ManagerInsightAlertDto(string Severity, string Message);
+/// <summary>Manager alert. Kind/ServiceTypeId/SuggestedAction/SuggestedCounterNumber are set for
+/// queue-pressure alerts (Kind = "queue_pressure", SuggestedAction = "open_counter" | "add_service").</summary>
+public sealed record ManagerInsightAlertDto(
+    string Severity,
+    string Message,
+    string? Kind = null,
+    Guid? ServiceTypeId = null,
+    string? SuggestedAction = null,
+    int? SuggestedCounterNumber = null);
 
 public sealed record ManagerLaneAnalyticsDto(
     Guid ServiceTypeId, string ServiceName, int WaitingCount, int ActiveCountersForLane,

@@ -137,6 +137,7 @@ builder.Services.AddHostedService<MlSidecarHostedService>();
 builder.Services.AddScoped<WaitTimeFeatureBuilder>();
 builder.Services.AddScoped<CounterSimulationEstimator>();
 builder.Services.Configure<MlWaitOptions>(builder.Configuration.GetSection(MlWaitOptions.SectionName));
+builder.Services.Configure<ManagerAlertOptions>(builder.Configuration.GetSection(ManagerAlertOptions.SectionName));
 builder.Services.AddHttpClient("MlWait", (sp, client) =>
 {
     var opts = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<MlWaitOptions>>().Value;
