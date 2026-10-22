@@ -7,6 +7,7 @@ type Props = {
   canCallNext: boolean;
   onCallNext: () => void;
   onComplete: () => void;
+  /** Marks the called ticket Missed (no response). */
   onNoShow: () => void;
   onStart: () => void;
 };
@@ -99,7 +100,7 @@ export function CurrentCustomerPanel({
           </button>
           <div className="current-actions-row">
             <button type="button" className="btn-skip btn-skip--subtle" disabled={busy} onClick={() => void onNoShow()}>
-              No-show
+              Missed
             </button>
             {!servingActive ? (
               <button type="button" className="btn-start-inline" disabled={busy} onClick={() => void onStart()}>

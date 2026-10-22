@@ -84,7 +84,7 @@ export function PreviewStaffPage({ variant = "idle" }: { variant?: Variant }) {
             setServingActive(false);
           }}
           onNoShow={() => {
-            toast("Marked as no-show — ticket cleared", "info");
+            toast("Marked as missed — ticket cleared", "info");
             setTicket("");
             setServingActive(false);
           }}

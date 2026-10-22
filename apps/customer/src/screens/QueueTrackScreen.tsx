@@ -39,7 +39,7 @@ type Phase =
   | "next"          // Status 3: peopleAhead = 0
   | "serving"       // Status 4: called/serving
   | "completed"     // Status 5
-  | "missed"        // Called then timed out / staff no-show
+  | "missed"        // Called then timed out / staff marked missed
   | "noshow"        // Booking never checked in; slot ended
   | "cancelled"     // User cancelled booking
   | "loading";
@@ -541,7 +541,7 @@ export function QueueTrackScreen({ route, navigation }: Props) {
           </View>
         )}
 
-        {/* ═══════ Phase: Missed (called then timed out / staff no-show) ═══════ */}
+        {/* ═══════ Phase: Missed (called then timed out / staff marked missed) ═══════ */}
         {phase === "missed" && (
           <View style={styles.statusCard}>
             <View style={[styles.statusIcon, styles.statusIconRed]}>

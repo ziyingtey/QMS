@@ -304,7 +304,7 @@ export function StaffDeckPage() {
     setBusy(true);
     try {
       await apiMarkMissed(ticket);
-      toast(`Marked ${ticket} as no-show`, "info");
+      toast(`Marked ${ticket} as missed`, "info");
       setTicket("");
       setServingActive(false);
       clearActiveTicketSession();
