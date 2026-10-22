@@ -43,22 +43,29 @@ public sealed class DashboardController(QmsDbContext db, QmsQueueService queue) 
 
         var waitingRows = await db.QueueEntries.AsNoTracking()
             .Where(q => q.BranchId == branchId && q.State == QueueEntryState.Waiting)
-            .Select(q => new
-            {
-                q.EntryType,
-                q.CreatedAt,
-                q.AssignedSlotStart,
-                CheckedInAt = q.Booking != null ? q.Booking.CheckedInAt : null,
-            })
+            .Select(q => new { q.QueueId, q.ServiceTypeId, q.QueueEligibleAt, q.CreatedAt, q.CheckedIn })
             .ToListAsync(cancellationToken);
 
-        var waitingMinutes = waitingRows
-            .Select(q => TicketToCallMetrics.MinutesInQueueNow(
-                now, q.EntryType, q.CreatedAt, q.CheckedInAt, q.AssignedSlotStart))
-            .ToList();
-        const double ticketToCallTargetMinutes = 15;
-        var longestTicketToCallMinutes = waitingMinutes.Count > 0 ? waitingMinutes.Max() : 0.0;
-        var ticketToCallBreaches = waitingMinutes.Count(m => m > ticketToCallTargetMinutes);
+        // "Waiting too long" uses each lane's own ServiceLevelMinutes and the same wait start as
+        // Service Lanes / Analytics (LaneWaitRules), so the counts match across pages.
+        var laneTargets = await db.BranchQueues.AsNoTracking()
+            .Where(bq => bq.BranchId == branchId)
+            .ToDictionaryAsync(bq => bq.Id, bq => bq.ServiceLevelMinutes, cancellationToken);
+        var serviceLaneMap = await db.ServiceTypes.AsNoTracking()
+            .Where(s => s.BranchId == branchId && s.QueueId != null)
+            .ToDictionaryAsync(s => s.Id, s => s.QueueId!.Value, cancellationToken);
+
+        var longestTicketToCallMinutes = 0.0;
+        var ticketToCallBreaches = 0;
+        // Only checked-in tickets are really waiting in the branch (same set as the Live Monitor list).
+        foreach (var q in waitingRows.Where(r => r.CheckedIn))
+        {
+            var minutes = LaneWaitRules.MinutesWaiting(now, q.QueueEligibleAt, q.CreatedAt);
+            // Branch-wide max (not yet eligible online tickets count as 0).
+            longestTicketToCallMinutes = Math.Max(longestTicketToCallMinutes, minutes);
+            var target = LaneWaitRules.TargetMinutes(q.QueueId, q.ServiceTypeId, serviceLaneMap, laneTargets);
+            if (LaneWaitRules.IsTooLong(minutes, target)) ticketToCallBreaches++;
+        }
 
         var activeCounters = await db.Counters.CountAsync(
             c => c.BranchId == branchId && c.Mode == CounterMode.Active,
@@ -70,19 +77,12 @@ public sealed class DashboardController(QmsDbContext db, QmsQueueService queue) 
                         && q.CalledAt != null
                         && q.ServingEndedAt >= dayStartOffset
                         && q.ServingEndedAt < dayEndOffset)
-            .Select(q => new
-            {
-                q.EntryType,
-                q.CreatedAt,
-                q.CalledAt,
-                q.AssignedSlotStart,
-                CheckedInAt = q.Booking != null ? q.Booking.CheckedInAt : null,
-            })
+            .Select(q => new { q.CreatedAt, q.CalledAt, q.QueueEligibleAt })
             .ToListAsync(cancellationToken);
 
+        // Same wait rule as Analytics (LaneWaitRules): wait start to CalledAt.
         var ticketToCallToday = completedToday
-            .Select(q => TicketToCallMetrics.MinutesToCall(
-                q.CalledAt!.Value, q.EntryType, q.CreatedAt, q.CheckedInAt, q.AssignedSlotStart))
+            .Select(q => LaneWaitRules.MinutesToCall(q.CalledAt!.Value, q.QueueEligibleAt, q.CreatedAt))
             .ToList();
         var avgTicketToCallMinutes = ticketToCallToday.Count > 0
             ? Math.Round(ticketToCallToday.Average(), 1)

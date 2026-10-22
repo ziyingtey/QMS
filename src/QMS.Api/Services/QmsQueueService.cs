@@ -1460,6 +1460,14 @@ public sealed class QmsQueueService(
         // Match Call Next: CreatedAt FIFO among eligible
         var sorted = QueueCallNextSelector.OrderByCallNextDrain(eligible, nowUtc);
 
+        // Wait start + lane target per row (LaneWaitRules), so Live Monitor row colours match the breach count.
+        var serviceQueueMap = await db.ServiceTypes.AsNoTracking()
+            .Where(s => s.BranchId == branchId && s.QueueId != null)
+            .ToDictionaryAsync(s => s.Id, s => s.QueueId!.Value, ct);
+        var laneTargets = await db.BranchQueues.AsNoTracking()
+            .Where(bq => bq.BranchId == branchId)
+            .ToDictionaryAsync(bq => bq.Id, bq => bq.ServiceLevelMinutes, ct);
+
         var result = new List<ManagerWaitingTicketDto>();
         for (int i = 0; i < sorted.Count; i++)
         {
@@ -1471,13 +1479,14 @@ public sealed class QmsQueueService(
             }
             catch { /* swallow — ETA is best-effort */ }
 
-            var waitingMin = (nowUtc - q.CreatedAt).TotalMinutes;
             result.Add(new ManagerWaitingTicketDto(
                 q.Id, q.TicketNumber, q.ServiceType.Name,
                 q.EntryType.ToString(), i + 1,
                 q.CreatedAt, q.AssignedSlotStart,
                 q.CheckedIn, eta,
-                q.AssignedSlotEnd, true));
+                q.AssignedSlotEnd, true,
+                LaneWaitRules.WaitStart(q.QueueEligibleAt, q.CreatedAt),
+                LaneWaitRules.TargetMinutes(q.QueueId, q.ServiceTypeId, serviceQueueMap, laneTargets)));
         }
 
         return result;
@@ -1505,12 +1514,14 @@ public sealed class QmsQueueService(
             .OrderBy(b => b.SlotStart)
             .ToListAsync(ct);
 
-        int confirmed = 0, checkedIn = 0, noShow = 0, cancelled = 0, completed = 0;
+        int confirmed = 0, checkedIn = 0, missed = 0, noShow = 0, cancelled = 0, completed = 0;
         foreach (var bk in bookings)
         {
             switch (bk.Status)
             {
                 case BookingStatus.Confirmed: confirmed++; break;
+                // Called but no response (MarkMissed) keeps the booking CheckedIn: count it as Missed, not checked in.
+                case BookingStatus.CheckedIn when bk.QueueEntry is { State: QueueEntryState.Missed }: missed++; break;
                 case BookingStatus.CheckedIn: checkedIn++; break;
                 case BookingStatus.NoShow: noShow++; break;
                 case BookingStatus.Cancelled: cancelled++; break;
@@ -1524,6 +1535,8 @@ public sealed class QmsQueueService(
             var status = bk.Status.ToString();
             if (bk.QueueEntry is { State: QueueEntryState.Serving }) status = "Serving";
             else if (bk.QueueEntry is { State: QueueEntryState.Waiting }) status = "Waiting";
+            // Called but no response (MarkMissed); booking stays CheckedIn. Not a booking no-show.
+            else if (bk.QueueEntry is { State: QueueEntryState.Missed }) status = "Missed";
 
             return new ManagerAppointmentRowDto(
                 bk.Id,
@@ -1535,7 +1548,7 @@ public sealed class QmsQueueService(
         }).ToList();
 
         return new ManagerAppointmentsTodayDto(
-            bookings.Count, checkedIn, confirmed, noShow, cancelled, rows);
+            bookings.Count, checkedIn, confirmed, noShow, cancelled, rows, missed);
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -1731,7 +1744,6 @@ public sealed class QmsQueueService(
     public async Task<BranchAnalyticsTodayDto> GetBranchAnalyticsTodayAsync(
         Guid branchId, CancellationToken cancellationToken = default)
     {
-        const double slaThresholdMinutes = 15;
         var branch = await db.Branches.AsNoTracking()
                            .FirstOrDefaultAsync(b => b.Id == branchId, cancellationToken)
                        ?? throw new InvalidOperationException("Branch not found.");
@@ -1801,16 +1813,29 @@ public sealed class QmsQueueService(
                 q.QueueId,
                 q.CalledAt,
                 q.CreatedAt,
-                q.AssignedSlotStart,
-                CheckedInAt = q.Booking != null ? q.Booking.CheckedInAt : null,
+                q.QueueEligibleAt,
             })
             .ToListAsync(cancellationToken);
 
-        var ticketToCallList = completed
-            .Select(c => TicketToCallMetrics.MinutesToCall(
-                c.CalledAt!.Value, c.EntryType, c.CreatedAt, c.CheckedInAt, c.AssignedSlotStart))
+        // Lane targets: each called ticket is judged against its own lane's ServiceLevelMinutes (LaneWaitRules).
+        var serviceQueueMap = services
+            .Where(s => s.QueueId != null)
+            .ToDictionary(s => s.Id, s => s.QueueId!.Value);
+        var laneTargets = await db.BranchQueues.AsNoTracking()
+            .Where(bq => bq.BranchId == branchId)
+            .ToDictionaryAsync(bq => bq.Id, bq => bq.ServiceLevelMinutes, cancellationToken);
+
+        // Wait of every called ticket (wait start to CalledAt) and whether it was within its lane target.
+        var calledWaits = completed
+            .Select(c =>
+            {
+                var minutes = LaneWaitRules.MinutesToCall(c.CalledAt!.Value, c.QueueEligibleAt, c.CreatedAt);
+                var target = LaneWaitRules.TargetMinutes(c.QueueId, c.ServiceTypeId, serviceQueueMap, laneTargets);
+                return new { c.EntryType, c.ServiceTypeId, Minutes = minutes, Within = !LaneWaitRules.IsTooLong(minutes, target) };
+            })
             .ToList();
-        var slaMet = ticketToCallList.Count(w => w <= slaThresholdMinutes);
+        var ticketToCallList = calledWaits.Select(w => w.Minutes).ToList();
+        var slaMet = calledWaits.Count(w => w.Within);
         var slaPercent = ticketToCallList.Count > 0
             ? Math.Round(slaMet * 100.0 / ticketToCallList.Count, 1)
             : (double?)null;
@@ -1822,23 +1847,23 @@ public sealed class QmsQueueService(
             slaMet,
             ticketToCallList.Count - slaMet);
 
+        // Fixed 5-minute buckets; OverTarget = tickets in the bucket that were over their own lane target.
         var buckets = new int[5];
-        foreach (var w in ticketToCallList)
+        var bucketsOver = new int[5];
+        foreach (var w in calledWaits)
         {
-            if (w < 5) buckets[0]++;
-            else if (w < 10) buckets[1]++;
-            else if (w < 15) buckets[2]++;
-            else if (w < 20) buckets[3]++;
-            else buckets[4]++;
+            var i = w.Minutes switch { < 5 => 0, < 10 => 1, < 15 => 2, < 20 => 3, _ => 4 };
+            buckets[i]++;
+            if (!w.Within) bucketsOver[i]++;
         }
 
         var ticketToCallDistribution = new List<WaitBucketDto>
         {
-            new("0–5 min", buckets[0]),
-            new("5–10 min", buckets[1]),
-            new("10–15 min", buckets[2]),
-            new("15–20 min", buckets[3]),
-            new("20+ min", buckets[4]),
+            new("0–5 min", buckets[0], bucketsOver[0]),
+            new("5–10 min", buckets[1], bucketsOver[1]),
+            new("10–15 min", buckets[2], bucketsOver[2]),
+            new("15–20 min", buckets[3], bucketsOver[3]),
+            new("20+ min", buckets[4], bucketsOver[4]),
         };
 
         var serviceDurationSeconds = await db.ServiceSessionLogs.AsNoTracking()
@@ -1870,9 +1895,11 @@ public sealed class QmsQueueService(
 
         var walkInToday = ticketsTodayRows.Where(t => t.EntryType == QueueEntryType.WalkIn).ToList();
         var onlineToday = ticketsTodayRows.Where(t => t.EntryType == QueueEntryType.OnlineBooked).ToList();
-        var walkInCompleted = completed.Where(c => c.EntryType == QueueEntryType.WalkIn).ToList();
-        var onlineCompleted = completed.Where(c => c.EntryType == QueueEntryType.OnlineBooked).ToList();
+        var walkInWaits = calledWaits.Where(c => c.EntryType == QueueEntryType.WalkIn).Select(c => c.Minutes).ToList();
+        var onlineWaits = calledWaits.Where(c => c.EntryType == QueueEntryType.OnlineBooked).Select(c => c.Minutes).ToList();
 
+        // noShows here = Missed tickets (called, no response; QueueEntryState.Missed). Booking no-shows
+        // (never checked in, BookingStatus.NoShow) are only on the Appointments page.
         ChannelAnalyticsDto ChannelStats(
             int tickets,
             int served,
@@ -1888,35 +1915,30 @@ public sealed class QmsQueueService(
             walkInToday.Count,
             walkInToday.Count(t => t.State == QueueEntryState.Completed),
             walkInToday.Count(t => t.State == QueueEntryState.Missed),
-            walkInCompleted.Select(c => TicketToCallMetrics.MinutesToCall(
-                c.CalledAt!.Value, c.EntryType, c.CreatedAt, c.CheckedInAt, c.AssignedSlotStart)).ToList());
+            walkInWaits);
 
         var onlineChannel = ChannelStats(
             onlineToday.Count,
             onlineToday.Count(t => t.State == QueueEntryState.Completed),
             onlineToday.Count(t => t.State == QueueEntryState.Missed),
-            onlineCompleted.Select(c => TicketToCallMetrics.MinutesToCall(
-                c.CalledAt!.Value, c.EntryType, c.CreatedAt, c.CheckedInAt, c.AssignedSlotStart)).ToList());
+            onlineWaits);
 
         var laneRows = new List<LanePerformanceDto>();
         foreach (var svc in services)
         {
-            var laneCompleted = completed.Where(c => c.ServiceTypeId == svc.Id).ToList();
-            var toCall = laneCompleted
-                .Select(c => TicketToCallMetrics.MinutesToCall(
-                    c.CalledAt!.Value, c.EntryType, c.CreatedAt, c.CheckedInAt, c.AssignedSlotStart))
-                .ToList();
+            var laneWaits = calledWaits.Where(c => c.ServiceTypeId == svc.Id).ToList();
+            var toCall = laneWaits.Select(c => c.Minutes).ToList();
             var avgCall = toCall.Count > 0 ? Math.Round(toCall.Average(), 1) : (double?)null;
             var maxCall = toCall.Count > 0 ? Math.Round(toCall.Max(), 1) : (double?)null;
             var avgSvc = await db.ServiceSessionLogs.AsNoTracking()
                 .Where(l => l.ServiceTypeId == svc.Id && l.EndedAt >= dayStart && l.EndedAt < dayEnd)
                 .AverageAsync(l => (double?)l.DurationSeconds, cancellationToken);
             var avgSvcMin = avgSvc.HasValue ? Math.Round(avgSvc.Value / 60.0, 1) : (double?)null;
-            double? laneSla = toCall.Count > 0
-                ? Math.Round(toCall.Count(w => w <= slaThresholdMinutes) * 100.0 / toCall.Count, 0)
+            double? laneSla = laneWaits.Count > 0
+                ? Math.Round(laneWaits.Count(w => w.Within) * 100.0 / laneWaits.Count, 0)
                 : null;
             laneRows.Add(new LanePerformanceDto(
-                svc.Id, svc.Name, laneCompleted.Count, avgCall, maxCall, avgSvcMin, laneSla));
+                svc.Id, svc.Name, laneWaits.Count, avgCall, maxCall, avgSvcMin, laneSla));
         }
 
         // 档 B: per-queue performance (letter series)
@@ -1927,13 +1949,14 @@ public sealed class QmsQueueService(
         var openNow = await db.QueueEntries.AsNoTracking()
             .Where(e => e.BranchId == branchId
                         && (e.State == QueueEntryState.Waiting || e.State == QueueEntryState.Serving))
-            .Select(e => new { e.QueueId, e.State, e.QueueEligibleAt, e.CreatedAt })
+            .Select(e => new { e.QueueId, e.ServiceTypeId, e.State, e.QueueEligibleAt, e.CreatedAt, e.CheckedIn })
             .ToListAsync(cancellationToken);
         var nowUtc = DateTimeOffset.UtcNow;
         var queueRows = new List<QueuePerformanceDto>();
-        var serviceQueueMap = services
-            .Where(s => s.QueueId != null)
-            .ToDictionary(s => s.Id, s => s.QueueId!.Value);
+        // Open tickets per lane (QueueId, else the service type's lane), same as dashboard/live.
+        var openByLane = openNow
+            .Select(e => new { Lane = LaneWaitRules.ResolveLaneId(e.QueueId, e.ServiceTypeId, serviceQueueMap), e.State, e.QueueEligibleAt, e.CreatedAt, e.CheckedIn })
+            .ToList();
         foreach (var q in branchQueues)
         {
             var qCompleted = completed.Where(c =>
@@ -1941,17 +1964,13 @@ public sealed class QmsQueueService(
                 || (c.QueueId == null && serviceQueueMap.TryGetValue(c.ServiceTypeId, out var mapped) && mapped == q.Id)
             ).ToList();
             var toCall = qCompleted
-                .Select(c => TicketToCallMetrics.MinutesToCall(
-                    c.CalledAt!.Value, c.EntryType, c.CreatedAt, c.CheckedInAt, c.AssignedSlotStart))
+                .Select(c => LaneWaitRules.MinutesToCall(c.CalledAt!.Value, c.QueueEligibleAt, c.CreatedAt))
                 .ToList();
             var avgCall = toCall.Count > 0 ? Math.Round(toCall.Average(), 1) : (double?)null;
-            var waiting = openNow.Where(e => e.QueueId == q.Id && e.State == QueueEntryState.Waiting).ToList();
-            var serving = openNow.Count(e => e.QueueId == q.Id && e.State == QueueEntryState.Serving);
-            var breaches = waiting.Count(e =>
-            {
-                var start = e.QueueEligibleAt ?? e.CreatedAt;
-                return (nowUtc - start).TotalMinutes > q.ServiceLevelMinutes;
-            });
+            var waiting = openByLane.Where(e => e.Lane == q.Id && e.State == QueueEntryState.Waiting).ToList();
+            var serving = openByLane.Count(e => e.Lane == q.Id && e.State == QueueEntryState.Serving);
+            var breaches = waiting.Count(e => e.CheckedIn && LaneWaitRules.IsTooLong(
+                LaneWaitRules.MinutesWaiting(nowUtc, e.QueueEligibleAt, e.CreatedAt), q.ServiceLevelMinutes));
             queueRows.Add(new QueuePerformanceDto(
                 q.Id, q.Name, q.TicketPrefix, waiting.Count, serving, qCompleted.Count,
                 avgCall, breaches, q.ServiceLevelMinutes));
@@ -1964,6 +1983,7 @@ public sealed class QmsQueueService(
                         && q.CalledAt < dayEnd)
             .Select(q => q.CalledAt!.Value)
             .ToListAsync(cancellationToken);
+        // "noShowsByHour" (JSON name kept) = Missed tickets by call hour: called, no response.
         var noShowHourly = new Dictionary<int, int>();
         foreach (var at in missedRows)
         {
@@ -2010,7 +2030,6 @@ public sealed class QmsQueueService(
             ticketToCall,
             serviceDuration,
             slaPercent,
-            slaThresholdMinutes,
             ticketStatus,
             walkInChannel,
             onlineChannel,
@@ -2175,28 +2194,35 @@ public sealed class QmsQueueService(
             .Where(s => s.BranchId == branchId)
             .ToListAsync(cancellationToken);
 
-        var openTickets = await db.QueueEntries.AsNoTracking()
-            .Where(e => e.BranchId == branchId
-                        && (e.State == QueueEntryState.Waiting || e.State == QueueEntryState.Serving))
-            .Select(e => new { e.QueueId, e.State, e.QueueEligibleAt, e.CreatedAt })
-            .ToListAsync(cancellationToken);
+        var serviceQueueMap = services
+            .Where(s => s.QueueId != null)
+            .ToDictionary(s => s.Id, s => s.QueueId!.Value);
+
+        // Open tickets per lane (QueueId, else the service type's lane), same as dashboard/live.
+        var openTickets = (await db.QueueEntries.AsNoTracking()
+                .Where(e => e.BranchId == branchId
+                            && (e.State == QueueEntryState.Waiting || e.State == QueueEntryState.Serving))
+                .Select(e => new { e.QueueId, e.ServiceTypeId, e.State, e.QueueEligibleAt, e.CreatedAt, e.CheckedIn })
+                .ToListAsync(cancellationToken))
+            .Select(e => new { Lane = LaneWaitRules.ResolveLaneId(e.QueueId, e.ServiceTypeId, serviceQueueMap), e.State, e.QueueEligibleAt, e.CreatedAt, e.CheckedIn })
+            .ToList();
 
         var nowUtc = DateTimeOffset.UtcNow;
 
         return queues.Select(q =>
         {
             var svcForQ = services.Where(s => s.QueueId == q.Id).ToList();
-            var tickets = openTickets.Where(e => e.QueueId == q.Id).ToList();
+            var tickets = openTickets.Where(e => e.Lane == q.Id).ToList();
             var waiting = tickets.Where(e => e.State == QueueEntryState.Waiting).ToList();
             var serving = tickets.Count(e => e.State == QueueEntryState.Serving);
             double? longest = null;
             var breaches = 0;
-            foreach (var e in waiting)
+            // Longest / too long only over checked-in tickets (same set as the Live Monitor list).
+            foreach (var e in waiting.Where(e => e.CheckedIn))
             {
-                var start = e.QueueEligibleAt ?? e.CreatedAt;
-                var mins = (nowUtc - start).TotalMinutes;
+                var mins = LaneWaitRules.MinutesWaiting(nowUtc, e.QueueEligibleAt, e.CreatedAt);
                 if (longest is null || mins > longest) longest = mins;
-                if (mins > q.ServiceLevelMinutes) breaches++;
+                if (LaneWaitRules.IsTooLong(mins, q.ServiceLevelMinutes)) breaches++;
             }
             return new BranchQueueDto(
                 q.Id, q.Name, q.TicketPrefix, q.ServiceLevelMinutes, q.IsActive,
@@ -2677,11 +2703,17 @@ public sealed record ManagerWaitingTicketDto(
     Guid Id, string TicketNumber, string ServiceName, string EntryType,
     int Position, DateTimeOffset CreatedAt, DateTimeOffset? AssignedSlotStart,
     bool CheckedIn, double? EstimatedWaitMinutes,
-    DateTimeOffset? AssignedSlotEnd = null, bool IsEligible = true);
+    DateTimeOffset? AssignedSlotEnd = null, bool IsEligible = true,
+    /// <summary>LaneWaitRules wait start (QueueEligibleAt ?? CreatedAt).</summary>
+    DateTimeOffset? WaitStartAt = null,
+    /// <summary>The ticket's lane ServiceLevelMinutes (default 15): "too long" when the wait is above it.</summary>
+    int? ServiceLevelMinutes = null);
 
 public sealed record ManagerAppointmentsTodayDto(
     int TotalBookings, int CheckedIn, int Confirmed, int NoShow, int Cancelled,
-    IReadOnlyList<ManagerAppointmentRowDto> Appointments);
+    IReadOnlyList<ManagerAppointmentRowDto> Appointments,
+    /// <summary>Checked in, called, no response (QueueEntryState.Missed). Not included in CheckedIn.</summary>
+    int Missed = 0);
 
 public sealed record ManagerAppointmentRowDto(
     Guid BookingId, string CustomerName, string ServiceName,
@@ -2712,7 +2744,8 @@ public sealed record ManagerInsightsDto(
     int MissedToday);
 
 public sealed record HourlyCountDto(string HourLabel, int Count);
-public sealed record WaitBucketDto(string Label, int Count);
+/// <param name="OverTarget">Tickets in this bucket whose wait was over their own lane's ServiceLevelMinutes.</param>
+public sealed record WaitBucketDto(string Label, int Count, int OverTarget);
 public sealed record TimingSummaryDto(
     double AvgMinutes,
     double? MedianMinutes,
@@ -2724,8 +2757,11 @@ public sealed record TicketStatusSummaryDto(
     int Served,
     int Waiting,
     int Serving,
+    /// <summary>Missed tickets (QueueEntryState.Missed: called, no response). JSON name kept for compatibility.</summary>
     int NoShow,
     int Cancelled);
+/// <param name="NoShows">Missed tickets (called, no response). JSON name kept for compatibility.</param>
+/// <param name="NoShowRatePercent">Missed / tickets, in percent.</param>
 public sealed record ChannelAnalyticsDto(
     int Tickets,
     int Served,
@@ -2771,8 +2807,8 @@ public sealed record BranchAnalyticsTodayDto(
     int CustomersServed,
     TimingSummaryDto TicketToCall,
     TimingSummaryDto ServiceDuration,
+    /// <summary>Share of called tickets within their own lane's ServiceLevelMinutes (LaneWaitRules).</summary>
     double? TicketToCallSlaPercent,
-    double SlaTargetMinutes,
     TicketStatusSummaryDto TicketStatus,
     ChannelAnalyticsDto WalkIn,
     ChannelAnalyticsDto Online,
@@ -2781,6 +2817,7 @@ public sealed record BranchAnalyticsTodayDto(
     IReadOnlyList<WaitBucketDto> TicketToCallDistribution,
     IReadOnlyList<LanePerformanceDto> LanePerformance,
     IReadOnlyList<CounterUtilizationRowDto> CounterUtilization,
+    /// <summary>Missed tickets by call hour (called, no response). JSON name kept for compatibility.</summary>
     IReadOnlyList<HourlyCountDto> NoShowsByHour,
     IReadOnlyList<QueuePerformanceDto> QueuePerformance);
 
