@@ -2,6 +2,8 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import "./index.css";
 import "./styles/staff-pro.css";
+import "./styles/manager-tokens.css";
+import "./styles/manager-ds.css";
 import App from "./App.tsx";
 
 if (import.meta.env.DEV) {

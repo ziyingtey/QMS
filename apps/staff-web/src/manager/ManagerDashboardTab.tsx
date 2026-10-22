@@ -1,171 +1,272 @@
-import { Users, Timer, MonitorCheck } from "lucide-react";
-import type { AssignableStaffDto, BranchDto, LiveDashboard, ManagerCounterRowDto, ManagerInsights } from "../api";
-import { KpiTile } from "../components/KpiTile";
-import { EmptyState } from "../components/EmptyState";
-import { ManagerAlertsPanel } from "./ManagerAlertsPanel";
-import { ManagerCounterBoard } from "./ManagerCounterBoard";
-import { MGR_SVC_COLORS, counterStats, crowdFromQueue } from "./managerUtils";
+import { useState } from "react";
+import { ArrowRight, Clock3, Hourglass, Monitor, QrCode, Ticket, Users } from "lucide-react";
+import type {
+  AssignableStaffDto,
+  BranchAnalyticsToday,
+  BranchDto,
+  BranchQueueDto,
+  LiveDashboard,
+  ManagerCounterRowDto,
+  ManagerInsights,
+} from "../api";
+import { AlertList, CounterTiles, LaneList } from "./ManagerBlocks";
+import { QueueTodayChart } from "./ManagerAnalyticsCharts";
+import { CHART, alignHours, formatHourLabel, peakIndex } from "./chartTheme";
+import { counterStats } from "./managerUtils";
+import { Badge, Card, EmptyBlock, PageHeader, PageSkeleton, Segmented, StatCard, TooLongBadge } from "./ui";
+import type { ManagerTab } from "./managerNav";
+import { lanesFrom } from "./uiTones";
 
 type Props = {
   live: LiveDashboard | null;
   insights: ManagerInsights | null;
+  analytics: BranchAnalyticsToday | null;
   rows: ManagerCounterRowDto[];
+  queues: BranchQueueDto[];
   branch: BranchDto | undefined;
   staffPickList: AssignableStaffDto[];
-  branchOpenForOperations: boolean;
+  branchOpenForOperations?: boolean;
+  busy?: boolean;
   onGoToCounter: (counterId: string) => void;
-  onGoToCounters: () => void;
+  onGoToTab: (tab: ManagerTab) => void;
+  onSetMode: (counterId: string, mode: "Active" | "Break" | "Closed") => void | Promise<void>;
+  onAllowedLaneToggle: (counterId: string, laneId: string, checked: boolean) => void | Promise<void>;
 };
 
+type Series = "tickets" | "missed";
+
+/** Dashboard: "Is the branch keeping up right now, and what needs my attention?" */
 export function ManagerDashboardTab({
   live,
   insights,
+  analytics,
   rows,
+  queues,
   branch,
   staffPickList,
-  branchOpenForOperations,
+  branchOpenForOperations = true,
+  busy = false,
   onGoToCounter,
-  onGoToCounters,
+  onGoToTab,
+  onSetMode,
+  onAllowedLaneToggle,
 }: Props) {
-  const stats = counterStats(rows);
-  const crowd = live ? crowdFromQueue(live.queueLength) : null;
-  const laneRows = live?.byService ?? [];
-  const maxQueue = Math.max(1, ...laneRows.map((r) => r.queueLength));
+  const [series, setSeries] = useState<Series>("tickets");
 
-  const now = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  if (!live) {
+    return (
+      <>
+        <PageHeader title="Dashboard" description="Loading today's branch activity…" />
+        <PageSkeleton />
+      </>
+    );
+  }
+
+  const stats = counterStats(rows);
+  const unstaffedOpen = rows.filter((r) => r.mode.toLowerCase() === "active" && !r.assignedStaffEmail).length;
+  const noneOpen = branchOpenForOperations && stats.total > 0 && stats.open === 0 && stats.break === 0;
+  const alertCount = (insights?.alerts.length ?? 0) + unstaffedOpen + (noneOpen ? 1 : 0);
+  const lanes = lanesFrom(queues, insights);
+  const breaches = live.ticketToCallBreaches ?? 0;
+  // The live average only means something once visits have completed.
+  const noWaitData = live.customersServedToday === 0 && live.avgTicketToCallMinutes === 0;
+  const noActivity = live.queueLength === 0 && live.servingCount === 0 && live.customersServedToday === 0;
+
+  // Headline status: one badge that answers "are we keeping up?"
+  const health =
+    breaches > 0 || (live.queueLength > 0 && stats.open === 0)
+      ? { tone: "danger" as const, text: "Needs action" }
+      : noneOpen
+        ? { tone: "warning" as const, text: "No counters open" }
+        : alertCount > 0
+          ? { tone: "warning" as const, text: `${alertCount} to check` }
+        : { tone: "success" as const, text: "On track" };
+
+  const crowd =
+    live.queueLength > 15
+      ? { tone: "danger" as const, text: "High" }
+      : live.queueLength > 5
+        ? { tone: "warning" as const, text: "Busy" }
+        : { tone: "success" as const, text: live.queueLength === 0 ? "Empty" : "Light" };
+
+  // Queue today: tickets by hour, or missed tickets (called, no response; API name noShowsByHour).
+  const hourRows = analytics?.ticketsByHour ?? [];
+  const missedRows = analytics ? alignHours(hourRows.map((r) => r.hourLabel), analytics.noShowsByHour) : [];
+  const chartRows = series === "tickets" ? hourRows : missedRows;
+  const pi = peakIndex(hourRows);
+  const peak = pi >= 0 && hourRows[pi].count > 0 ? formatHourLabel(hourRows[pi].hourLabel) : null;
+  const ticketsToday = analytics?.ticketsToday ?? live.walkInsToday + live.appointmentsToday;
+  const missedTotal = missedRows.reduce((s, r) => s + r.count, 0);
 
   return (
-    <div className="qgo-mgr-dashboard">
-      {/* Toolbar */}
-      <header className="qgo-mgr-toolbar">
-        <div>
-          <h1>Branch overview</h1>
-          <p className="qgo-muted">Real-time snapshot of queue and counter status</p>
-        </div>
-        <div className="qgo-mgr-toolbar__right">
-          <span className="qgo-live-pill">
-            <span className="qgo-live-dot" /> Live · {now}
+    <>
+      <PageHeader
+        title={
+          <span className="m-row">
+            Dashboard <Badge tone={health.tone} dot>{health.text}</Badge>
           </span>
-          {!branchOpenForOperations ? (
-            <span className="qgo-mgr-toolbar__chip qgo-mgr-toolbar__chip--warn">Outside operating hours</span>
-          ) : null}
-        </div>
-      </header>
+        }
+        description={
+          noActivity ? "No customers yet" : (
+            <>
+              <strong>{live.queueLength}</strong> waiting, <strong>{live.servingCount}</strong> serving
+            </>
+          )
+        }
+        actions={
+          <>
+            <button type="button" className="m-btn m-btn--secondary" onClick={() => onGoToTab("analytics")}>
+              Analytics
+            </button>
+            <button type="button" className="m-btn m-btn--primary" onClick={() => onGoToTab("queue")}>
+              Live Monitor <ArrowRight size={15} aria-hidden />
+            </button>
+          </>
+        }
+      />
 
-      {/* Hero KPIs - the 3 most important numbers big */}
-      {live ? (
-        <>
-          <div className="qgo-mgr-hero-row">
-            <div className={`qgo-mgr-hero-card qgo-mgr-hero-card--${crowd?.level ?? "low"}`}>
-              <Users size={22} strokeWidth={2} />
-              <div className="qgo-mgr-hero-card__num">{live.queueLength}</div>
-              <div className="qgo-mgr-hero-card__label">Waiting in queue</div>
-            </div>
-            <div className="qgo-mgr-hero-card qgo-mgr-hero-card--amber">
-              <Timer size={22} strokeWidth={2} />
-              <div className="qgo-mgr-hero-card__num">{live.avgTicketToCallMinutes}m</div>
-              <div className="qgo-mgr-hero-card__label">Avg. Wait Time</div>
-            </div>
-            <div className="qgo-mgr-hero-card qgo-mgr-hero-card--blue">
-              <MonitorCheck size={22} strokeWidth={2} />
-              <div className="qgo-mgr-hero-card__num">{live.servingCount}</div>
-              <div className="qgo-mgr-hero-card__label">Now serving</div>
-            </div>
-          </div>
-
-          {/* Secondary KPIs */}
-          <div className="qgo-mgr-kpi-grid qgo-mgr-kpi-grid--secondary">
-            <KpiTile variant="manager" label="Served today" value={live.customersServedToday} foot="Completed" accent="green" />
-            <KpiTile variant="manager" label="Open counters" value={`${stats.open} / ${stats.total}`} foot={`${stats.break} on break`} accent="green" />
-            <KpiTile variant="manager" label="Crowd level" value={crowd?.label ?? "—"} foot="Based on queue depth" accent="amber" />
-            <KpiTile variant="manager" label="Online check-ins" value={live.onlineCheckInsWaiting} foot="Waiting to be called" accent="navy" />
-          </div>
-        </>
-      ) : (
-        <div className="qgo-mgr-loading-placeholder">
-          <div className="qgo-mgr-loading-pulse" />
-          <p className="qgo-muted">Loading live snapshot...</p>
-        </div>
-      )}
-
-      {/* Main content grid */}
-      <div className="qgo-mgr-dashboard__grid">
-        {/* Left column */}
-        <div className="qgo-mgr-dashboard__main">
-          {/* Live queue by lane */}
-          <section className="qgo-mgr-panel">
-            <header className="qgo-mgr-panel__head qgo-mgr-panel__head--row">
-              <div>
-                <h2>Queue by service lane</h2>
-                <p className="qgo-muted">Where is demand concentrated?</p>
-              </div>
-              <span className="qgo-mgr-panel__meta">
-                <strong>{live?.queueLength ?? 0}</strong> total waiting
-              </span>
-            </header>
-
-            {laneRows.length === 0 ? (
-              <div style={{ padding: "24px 20px" }}>
-                <EmptyState icon="check" title="All clear" body="No customers waiting right now." />
-              </div>
+      <div className="m-stats">
+        <StatCard
+          label="Waiting now"
+          icon={Users}
+          value={live.queueLength}
+          badge={<Badge tone={crowd.tone} dot>{crowd.text}</Badge>}
+          context={live.queueLength === 0 ? "No one waiting" : `${live.walkInsWaiting} walk-in, ${live.onlineWaiting} online`}
+        />
+        <StatCard
+          label="Avg. wait"
+          icon={Hourglass}
+          value={noWaitData ? "—" : Math.round(live.avgTicketToCallMinutes)}
+          unit="min"
+          empty={noWaitData}
+          badge={
+            breaches > 0 ? (
+              <TooLongBadge count={breaches} />
+            ) : live.queueLength > 0 && !noWaitData ? (
+              <Badge tone="success" dot>OK</Badge>
+            ) : undefined
+          }
+          context={
+            live.longestTicketToCallMinutes > 0
+              ? `Longest ${Math.round(live.longestTicketToCallMinutes)} min`
+              : noWaitData
+                ? "No visits yet"
+                : "No long waits"
+          }
+        />
+        <StatCard
+          label="Served today"
+          icon={Clock3}
+          value={live.customersServedToday}
+          empty={false}
+          badge={live.servingCount > 0 ? <Badge tone="info" dot>{live.servingCount} serving</Badge> : undefined}
+          context={live.customersServedToday === 0 ? "None yet" : `${live.walkInsToday} walk-in, ${live.appointmentsToday} booked`}
+        />
+        <StatCard
+          label="Counters open"
+          icon={Monitor}
+          value={stats.open}
+          unit={`/ ${stats.total}`}
+          badge={
+            unstaffedOpen > 0 ? (
+              <Badge tone="warning" dot>No teller</Badge>
+            ) : stats.break > 0 ? (
+              <Badge tone="warning" dot>{stats.break} on break</Badge>
+            ) : stats.open > 0 ? (
+              <Badge tone="success" dot>Staffed</Badge>
             ) : (
-              <div className="qgo-mgr-lane-section">
-                <div className="qgo-mgr-lane-bars">
-                  {laneRows.map((row, i) => {
-                    const name = branch?.services.find((s) => s.id === row.serviceTypeId)?.name ?? row.serviceTypeId;
-                    const pct = (row.queueLength / maxQueue) * 100;
-                    return (
-                      <div key={row.serviceTypeId} className="qgo-mgr-lane-bar">
-                        <span className="qgo-mgr-lane-bar__name">{name}</span>
-                        <div className="qgo-mgr-lane-bar__track">
-                          <div
-                            className="qgo-mgr-lane-bar__fill"
-                            style={{ width: `${pct}%`, background: MGR_SVC_COLORS[i % MGR_SVC_COLORS.length] }}
-                          />
-                        </div>
-                        <span className="qgo-mgr-lane-bar__val">
-                          {row.queueLength}
-                          {row.estimatedWaitMinutes != null ? ` · ~${row.estimatedWaitMinutes}m` : ""}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-          </section>
-
-          {/* Alerts & Recommendations */}
-          <section className="qgo-mgr-panel">
-            <header className="qgo-mgr-panel__head qgo-mgr-panel__head--row">
-              <div>
-                <h2>Alerts & recommendations</h2>
-                <p className="qgo-muted">Issues and suggested actions</p>
-              </div>
-              {(insights?.alerts.length ?? 0) > 0 ? (
-                <span className="qgo-mgr-badge-count">{insights!.alerts.length}</span>
-              ) : null}
-            </header>
-            <ManagerAlertsPanel insights={insights} onGoToCounter={onGoToCounter} compact={false} />
-          </section>
-        </div>
-
-        {/* Right column */}
-        <div className="qgo-mgr-dashboard__side">
-          <section className="qgo-mgr-panel">
-            <header className="qgo-mgr-panel__head qgo-mgr-panel__head--row">
-              <div>
-                <h2>Floor status</h2>
-                <p className="qgo-muted">{stats.open} active · {stats.break} break · {stats.closed} closed</p>
-              </div>
-              <button type="button" className="qgo-link-btn qgo-mgr-link-action" onClick={onGoToCounters}>
-                Manage
-              </button>
-            </header>
-            <ManagerCounterBoard rows={rows} staffPickList={staffPickList} onSelect={onGoToCounter} />
-          </section>
-        </div>
+              <Badge tone="neutral" dot>All closed</Badge>
+            )
+          }
+          context={branchOpenForOperations ? `${stats.closed} closed` : "Branch closed"}
+        />
       </div>
-    </div>
+
+      <div className="m-grid">
+        <Card
+          className="m-col-8"
+          title="Tickets today"
+          description={ticketsToday > 0 && series === "tickets" && peak ? `Busiest ${peak}` : undefined}
+          action={
+            ticketsToday > 0 ? (
+              <Segmented<Series>
+                label="Chart series"
+                size="sm"
+                value={series}
+                onChange={setSeries}
+                options={[
+                  { value: "tickets", label: "Tickets", count: ticketsToday },
+                  { value: "missed", label: "Missed", count: missedTotal },
+                ]}
+              />
+            ) : undefined
+          }
+          center={ticketsToday === 0}
+        >
+          {ticketsToday === 0 ? (
+            <EmptyBlock
+              icon={Ticket}
+              title="No tickets yet"
+              body="They show here by hour."
+              action={
+                <button type="button" className="m-btn m-btn--secondary m-btn--sm" onClick={() => onGoToTab("qr")}>
+                  <QrCode size={14} aria-hidden /> Show QR
+                </button>
+              }
+            />
+          ) : (
+            <QueueTodayChart
+              rows={chartRows}
+              unit={series === "tickets" ? " tickets" : " missed"}
+              color={series === "tickets" ? CHART.accent : CHART.status.warn}
+            />
+          )}
+        </Card>
+
+        <Card
+          className="m-col-4"
+          title="Needs attention"
+          action={alertCount > 0 ? <Badge tone="warning">{alertCount}</Badge> : undefined}
+          flush
+        >
+          <AlertList
+            insights={insights}
+            rows={rows}
+            branch={branch}
+            busy={busy}
+            branchOpen={branchOpenForOperations}
+            onGoToCounter={onGoToCounter}
+            onGoToLive={() => onGoToTab("queue")}
+            onSetMode={onSetMode}
+            onAllowedLaneToggle={onAllowedLaneToggle}
+          />
+        </Card>
+
+        <Card
+          className="m-col-8"
+          title="Counters"
+          action={
+            <button type="button" className="m-btn m-btn--ghost m-btn--sm" onClick={() => onGoToTab("counters")}>
+              Manage <ArrowRight size={14} aria-hidden />
+            </button>
+          }
+        >
+          <CounterTiles rows={rows} branch={branch} staffPickList={staffPickList} onOpen={onGoToCounter} />
+        </Card>
+
+        <Card
+          className="m-col-4"
+          title="Lanes"
+          action={
+            <button type="button" className="m-btn m-btn--ghost m-btn--sm" onClick={() => onGoToTab("queues")}>
+              All <ArrowRight size={14} aria-hidden />
+            </button>
+          }
+          flush
+        >
+          <LaneList lanes={lanes} onShowAll={() => onGoToTab("queues")} />
+        </Card>
+      </div>
+    </>
   );
 }

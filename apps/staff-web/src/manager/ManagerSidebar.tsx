@@ -1,94 +1,96 @@
-import { Link } from "react-router-dom";
-import { QrCode, LayoutDashboard, Monitor, Clock, BarChart3, ListOrdered, CalendarCheck, Layers } from "lucide-react";
-
-export type ManagerTab = "dashboard" | "counters" | "queue" | "queues" | "appointments" | "capacity" | "analytics";
-
-type NavItem = { id: ManagerTab; label: string; Icon: typeof LayoutDashboard };
-
-type NavGroup = { id: string; label: string; items: NavItem[]; indent?: boolean };
+import { useEffect, useRef } from "react";
+import type { BranchDto } from "../api";
+import { NAV_GROUPS, type ManagerTab } from "./managerNav";
 
 type Props = {
   active: ManagerTab;
   onChange: (tab: ManagerTab) => void;
-  branchName?: string;
+  branches: BranchDto[];
+  branchId: string;
+  onBranchChange?: (id: string) => void;
   branchOpen: boolean;
   alertCount: number;
-  waitingCount?: number;
+  waitingCount: number;
 };
 
-const NAV_GROUPS: NavGroup[] = [
-  {
-    id: "daily-ops",
-    label: "Daily ops",
-    items: [
-      { id: "dashboard", label: "Dashboard", Icon: LayoutDashboard },
-      { id: "queue", label: "Live Monitor", Icon: ListOrdered },
-      { id: "appointments", label: "Appointments", Icon: CalendarCheck },
-      { id: "analytics", label: "Analytics", Icon: BarChart3 },
-    ],
-  },
-  {
-    id: "settings",
-    label: "Settings",
-    indent: true,
-    items: [
-      { id: "counters", label: "Counters", Icon: Monitor },
-      { id: "queues", label: "Service Lanes", Icon: Layers },
-      { id: "capacity", label: "Schedule & Capacity", Icon: Clock },
-    ],
-  },
-];
+/**
+ * Manager sidebar — the original QGo look, kept as-is on purpose:
+ * dark navy, green "Q" wordmark + MANAGER pill, branch card, DAILY OPS / SETTINGS / TOOLS groups,
+ * active item = lighter navy pill with a blue left bar.
+ */
+export function ManagerSidebar({ active, onChange, branches, branchId, onBranchChange, branchOpen, alertCount, waitingCount }: Props) {
+  const asideRef = useRef<HTMLElement>(null);
+  const branch = branches.find((b) => b.id === branchId);
 
-export function ManagerSidebar({ active, onChange, branchName, branchOpen, alertCount, waitingCount = 0 }: Props) {
+  // On narrow screens the sidebar is a horizontal tab strip: keep the active tab in view.
+  useEffect(() => {
+    const aside = asideRef.current;
+    if (!aside || aside.scrollWidth <= aside.clientWidth) return;
+    const el = aside.querySelector<HTMLElement>('[aria-current="page"]');
+    if (!el) return;
+    const delta = el.getBoundingClientRect().left - aside.getBoundingClientRect().left;
+    aside.scrollTo({ left: aside.scrollLeft + delta - 16, behavior: "smooth" });
+  }, [active]);
+
   return (
-    <aside className="qgo-mgr-sidebar" aria-label="Branch manager navigation">
+    <aside ref={asideRef} className="qgo-mgr-sidebar" aria-label="Branch manager navigation">
+      <div className="qgo-mgr-sidebar__brand">
+        <span className="qgo-mgr-sidebar__wordmark" aria-label="QGo">
+          <span className="qgo-mgr-sidebar__wordmark-q">Q</span>Go
+        </span>
+        <span className="qgo-mgr-sidebar__product">Manager</span>
+      </div>
+
       <div className="qgo-mgr-sidebar__branch">
         <span className="qgo-mgr-sidebar__branch-label">Branch</span>
-        <strong className="qgo-mgr-sidebar__branch-name" title={branchName}>
-          {branchName ?? "—"}
+        <strong className="qgo-mgr-sidebar__branch-name" title={branch?.name}>
+          {branch?.name ?? "—"}
         </strong>
         <span className={`qgo-mgr-sidebar__status${branchOpen ? " is-open" : ""}`}>
-          <span className="qgo-live-dot" aria-hidden />
+          <span className="qgo-mgr-sidebar__status-dot" aria-hidden />
           {branchOpen ? "Open for operations" : "Outside hours"}
         </span>
+        {/* Branch switching: an invisible native select over the card (only with several branches). */}
+        {branches.length > 1 && onBranchChange ? (
+          <select className="qgo-mgr-sidebar__branch-select" value={branchId} onChange={(e) => onBranchChange(e.target.value)} aria-label="Switch branch">
+            {branches.map((b) => (
+              <option key={b.id} value={b.id}>{b.name}</option>
+            ))}
+          </select>
+        ) : null}
       </div>
 
       <nav className="qgo-mgr-sidebar__nav">
         {NAV_GROUPS.map((group) => (
-          <div
-            key={group.id}
-            className={`qgo-mgr-sidebar__group${group.indent ? " qgo-mgr-sidebar__group--settings" : ""}`}
-          >
-            <div className="qgo-mgr-sidebar__section-label">{group.label}</div>
-            {group.items.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                className={`qgo-mgr-sidebar__link${active === item.id ? " is-active" : ""}${
-                  group.indent ? " qgo-mgr-sidebar__link--indent" : ""
-                }`}
-                onClick={() => onChange(item.id)}
-              >
-                <item.Icon size={18} strokeWidth={2.2} className="qgo-mgr-sidebar__icon" aria-hidden />
-                <span>{item.label}</span>
-                {item.id === "analytics" && alertCount > 0 ? (
-                  <span className="qgo-mgr-sidebar__badge">{alertCount}</span>
-                ) : null}
-                {item.id === "queue" && waitingCount > 0 ? (
-                  <span className="qgo-mgr-sidebar__badge">{waitingCount}</span>
-                ) : null}
-              </button>
-            ))}
+          <div key={group.id} className="qgo-mgr-sidebar__group" role="group" aria-labelledby={`mgr-nav-${group.id}`}>
+            <div className="qgo-mgr-sidebar__section-label" id={`mgr-nav-${group.id}`}>
+              {group.label}
+            </div>
+            {group.items.map((item) => {
+              const isActive = active === item.id;
+              const badge =
+                item.id === "dashboard" && alertCount > 0
+                  ? alertCount
+                  : item.id === "queue" && waitingCount > 0
+                    ? waitingCount
+                    : null;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={`qgo-mgr-sidebar__link${isActive ? " is-active" : ""}`}
+                  aria-current={isActive ? "page" : undefined}
+                  onClick={() => onChange(item.id)}
+                >
+                  <item.Icon size={16} strokeWidth={2} className="qgo-mgr-sidebar__icon" aria-hidden />
+                  <span className="qgo-mgr-sidebar__label">{item.label}</span>
+                  {badge != null ? <span className="qgo-mgr-sidebar__badge">{badge}</span> : null}
+                </button>
+              );
+            })}
           </div>
         ))}
       </nav>
-
-      <Link to="/walk-in-qr" className="qgo-mgr-sidebar__link" style={{ textDecoration: "none" }}>
-        <QrCode size={18} strokeWidth={2.2} className="qgo-mgr-sidebar__icon" aria-hidden />
-        <span>Walk-in QR</span>
-      </Link>
-
-      <p className="qgo-mgr-sidebar__foot">Branch operations & decision support</p>
     </aside>
   );
 }

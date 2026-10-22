@@ -77,7 +77,12 @@ export type LiveDashboard = {
 };
 
 export type HourlyCount = { hourLabel: string; count: number };
-export type WaitBucket = { label: string; count: number };
+export type WaitBucket = {
+  label: string;
+  count: number;
+  /** Tickets in this bucket over their own lane target (older APIs omit it). */
+  overTarget?: number;
+};
 export type TimingSummary = {
   avgMinutes: number;
   medianMinutes: number | null;
@@ -90,13 +95,16 @@ export type TicketStatusSummary = {
   served: number;
   waiting: number;
   serving: number;
+  /** Missed tickets: called, no response (not booking no-shows). */
   noShow: number;
   cancelled: number;
 };
 export type ChannelAnalytics = {
   tickets: number;
   served: number;
+  /** Missed tickets: called, no response (not booking no-shows). */
   noShows: number;
+  /** Missed / tickets, in percent. */
   noShowRatePercent: number | null;
   avgTicketToCallMinutes: number | null;
 };
@@ -143,8 +151,8 @@ export type BranchAnalyticsToday = {
   customersServed: number;
   ticketToCall: TimingSummary;
   serviceDuration: TimingSummary;
+  /** Share of called tickets within their own lane target. */
   ticketToCallSlaPercent: number | null;
-  slaTargetMinutes: number;
   ticketStatus: TicketStatusSummary;
   walkIn: ChannelAnalytics;
   online: ChannelAnalytics;
@@ -153,6 +161,7 @@ export type BranchAnalyticsToday = {
   ticketToCallDistribution: WaitBucket[];
   lanePerformance: LanePerformance[];
   counterUtilization: CounterUtilizationRow[];
+  /** Missed tickets by call hour (called, no response). */
   noShowsByHour: HourlyCount[];
   queuePerformance?: QueuePerformance[];
 };
@@ -169,14 +178,21 @@ export type ManagerWaitingTicket = {
   estimatedWaitMinutes: number | null;
   assignedSlotEnd?: string | null;
   isEligible?: boolean;
+  /** Wait start (QueueEligibleAt ?? CreatedAt), same rule as the breach count. Older APIs omit it. */
+  waitStartAt?: string | null;
+  /** The ticket's lane target in minutes. Older APIs omit it. */
+  serviceLevelMinutes?: number | null;
 };
 
 export type ManagerAppointmentsToday = {
   totalBookings: number;
   checkedIn: number;
   confirmed: number;
+  /** Booking never checked in before its slot ended. */
   noShow: number;
   cancelled: number;
+  /** Checked in, called, no response. Not part of checkedIn. Older APIs omit it. */
+  missed?: number;
   appointments: {
     bookingId: string;
     customerName: string;
@@ -227,7 +243,7 @@ export type BranchOperationalSettings = {
   maxSlotTotalCapacity: number | null;
   /** Minutes before booking SlotStart that an unchecked online may enter the call pool (0 = at slot start only). */
   onlineEarlyCallMinutes: number;
-  /** After Call next, if service is not started within this many minutes, mark absent / no-show. */
+  /** After Call next, if service is not started within this many minutes, mark the ticket Missed. */
   calledAbsentGraceMinutes: number;
   /** Day of week (0=Sun..6=Sat) when next-week booking window opens. */
   nextWeekBookingOpensOnDay: number;

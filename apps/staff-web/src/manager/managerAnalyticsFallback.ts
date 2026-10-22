@@ -29,7 +29,6 @@ export function buildAnalyticsFallback(
       slaExceededCount: null,
     },
     ticketToCallSlaPercent: null,
-    slaTargetMinutes: 15,
     ticketStatus: {
       ticketsToday: tickets,
       served,

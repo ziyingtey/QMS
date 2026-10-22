@@ -1,6 +1,7 @@
-import { Save, Copy, Plus, Trash2 } from "lucide-react";
+import { CalendarX, Copy, Plus, Save, Trash2 } from "lucide-react";
 import type { Dispatch, SetStateAction } from "react";
 import type { BranchClosure, BranchDto, BranchOperatingHourRow, BranchOperationalSettings } from "../api";
+import { Badge, Card, EmptyBlock, PageHeader } from "./ui";
 import { minsToClock, minsToTimeInput, timeInputToMins } from "./managerUtils";
 
 const DAY_LABELS: Record<number, string> = {
@@ -71,212 +72,255 @@ export function ManagerScheduleTab(props: Props) {
     );
   };
 
+  const setDayOpen = (idx: number, open: boolean) =>
+    setFormWeekly((prev) =>
+      prev.map((x, i) =>
+        i === idx
+          ? {
+              ...x,
+              isClosed: !open,
+              openMinutesFromMidnight: open ? (x.openMinutesFromMidnight ?? 9 * 60) : null,
+              closeMinutesFromMidnight: open ? (x.closeMinutesFromMidnight ?? 17 * 60) : null,
+            }
+          : x,
+      ),
+    );
+
+  // Unsaved-changes detection against the last loaded settings (booking rules + hours).
+  const dirty =
+    settings != null &&
+    (formSlot !== settings.slotDurationMinutes ||
+      formEarlyCallMinutes !== (settings.onlineEarlyCallMinutes ?? 10) ||
+      formCalledGraceMinutes !== (settings.calledAbsentGraceMinutes ?? 5) ||
+      formNextWeekOpensDay !== (settings.nextWeekBookingOpensOnDay ?? 6) ||
+      formMaxSlotTotal !== (settings.maxSlotTotalCapacity != null ? String(settings.maxSlotTotalCapacity) : "") ||
+      JSON.stringify(formWeekly) !== JSON.stringify(settings.weeklyOperatingHours ?? formWeekly));
+
+  const todayName = new Date().toLocaleDateString("en-US", { weekday: "long" });
+  const today = formWeekly.find((r) => r.dayOfWeek === todayName);
+  const todayLabel =
+    !today || today.isClosed || today.openMinutesFromMidnight == null || today.closeMinutesFromMidnight == null
+      ? "closed today"
+      : `open today ${minsToClock(today.openMinutesFromMidnight)} – ${minsToClock(today.closeMinutesFromMidnight)}`;
+  const openDays = formWeekly.filter((r) => !r.isClosed).length;
+  const upcoming = [...closures].sort((a, b) => a.closedFrom.localeCompare(b.closedFrom));
+
   return (
-    <div className="qgo-mgr-schedule">
-      <header className="qgo-mgr-toolbar qgo-mgr-toolbar--inset">
-        <div>
-          <h1>Schedule & Capacity</h1>
-          <p className="qgo-muted">Booking rules, slot limits, and branch hours.</p>
-        </div>
-      </header>
+    <>
+      <PageHeader
+        title="Schedule & Capacity"
+        description={
+          <>
+            Branch is <strong>{todayLabel}</strong>
+          </>
+        }
+        actions={
+          <>
+            {settings ? (
+              <Badge tone="outline">
+                UTC{settings.serviceZoneOffsetMinutes >= 0 ? "+" : ""}
+                {settings.serviceZoneOffsetMinutes / 60}
+              </Badge>
+            ) : null}
+            {dirty ? <Badge tone="warning" dot>Not saved</Badge> : null}
+            <button type="button" className="m-btn m-btn--primary" disabled={busy} onClick={() => void onSave()}>
+              <Save size={15} aria-hidden /> Save
+            </button>
+          </>
+        }
+      />
 
-      {settings ? (
-        <div className="qgo-mgr-settings-meta qgo-mgr-settings-meta--top">
-          <span>
-            Time zone <strong>UTC+{settings.serviceZoneOffsetMinutes / 60}</strong>
-          </span>
-        </div>
-      ) : null}
-
-      {/* ── Booking rules ── */}
-      <section className="qgo-mgr-panel">
-        <header className="qgo-mgr-panel__head">
-          <h2>Booking rules</h2>
-          <p className="qgo-muted">Slot timing and queue behaviour.</p>
-        </header>
-        <div className="qgo-mgr-form-grid-2col">
-          <label className="qgo-field">
-            <span>Slot duration (minutes)</span>
-            <input type="number" min={5} max={180} value={formSlot} onChange={(e) => setFormSlot(Number(e.target.value))} />
-          </label>
-          <label className="qgo-field">
-            <span>Online early call (min before slot)</span>
-            <input type="number" min={0} max={120} value={formEarlyCallMinutes} onChange={(e) => setFormEarlyCallMinutes(Number(e.target.value))} />
-          </label>
-          <label className="qgo-field">
-            <span>No-show grace after call (minutes)</span>
-            <input type="number" min={1} max={60} value={formCalledGraceMinutes} onChange={(e) => setFormCalledGraceMinutes(Number(e.target.value))} />
-          </label>
-          <label className="qgo-field">
-            <span>Max customers per slot (optional)</span>
-            <input type="number" min={1} placeholder="None" value={formMaxSlotTotal} onChange={(e) => setFormMaxSlotTotal(e.target.value)} />
-          </label>
-          <label className="qgo-field">
-            <span>Next-week booking opens on</span>
-            <select value={formNextWeekOpensDay} onChange={(e) => setFormNextWeekOpensDay(Number(e.target.value))}>
-              {Object.entries(DAY_LABELS).map(([val, label]) => (
-                <option key={val} value={val}>{label}</option>
-              ))}
-            </select>
-          </label>
-        </div>
-      </section>
-
-      {/* ── Per-service online booking quotas ── */}
-      {branch && branch.services.length > 0 ? (
-        <section className="qgo-mgr-panel">
-          <header className="qgo-mgr-panel__head">
-            <h2>Online booking quota per service</h2>
-            <p className="qgo-muted">Max online bookings per slot for each service (0 = disabled).</p>
-          </header>
-          <div className="qgo-mgr-form-body">
-            <div className="qgo-mgr-form-grid-2col">
-              {branch.services.map((s) => (
-                <label key={s.id} className="qgo-field">
-                  <span>{s.name}</span>
-                  <input
-                    type="number"
-                    min={0}
-                    max={100}
-                    value={serviceOnlineSlots[s.id] ?? 4}
-                    disabled={busy}
-                    onChange={(e) => onServiceOnlineSlotsChange(s.id, Number(e.target.value))}
-                  />
-                </label>
-              ))}
+      <div className="m-grid m-grid--top">
+        <div className="m-col-7 m-stack">
+          <Card
+            title="Opening hours"
+            description={`Open ${openDays} days a week`}
+            action={
+              <button type="button" className="m-btn m-btn--secondary m-btn--sm" onClick={copyMondayToAll} title="Copy Monday to Tue–Fri">
+                <Copy size={14} aria-hidden /> Copy Monday
+              </button>
+            }
+            flush
+          >
+            <div className="m-table-wrap m-table-wrap--bordered">
+              <table className="m-table m-table--compact">
+                <thead>
+                  <tr>
+                    <th>Day</th>
+                    <th>Open</th>
+                    <th>Opens</th>
+                    <th>Closes</th>
+                    <th className="m-num">Hours</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {formWeekly.map((r, idx) => {
+                    const mins =
+                      r.isClosed || r.openMinutesFromMidnight == null || r.closeMinutesFromMidnight == null
+                        ? null
+                        : r.closeMinutesFromMidnight - r.openMinutesFromMidnight;
+                    return (
+                      <tr key={r.dayOfWeek} className={r.isClosed ? "is-muted" : undefined}>
+                        <td>
+                          <span className="m-cell-main">{r.dayOfWeek}</span>
+                          {r.dayOfWeek === todayName ? <> <Badge tone="info" size="sm">Today</Badge></> : null}
+                        </td>
+                        <td>
+                          <label className="m-switch">
+                            <input type="checkbox" checked={!r.isClosed} onChange={(e) => setDayOpen(idx, e.target.checked)} aria-label={`${r.dayOfWeek} open`} />
+                            <span className="m-muted">{r.isClosed ? "Closed" : "Open"}</span>
+                          </label>
+                        </td>
+                        <td>
+                          <input
+                            type="time"
+                            className="m-input m-input--sm"
+                            aria-label={`${r.dayOfWeek} opens`}
+                            disabled={r.isClosed}
+                            value={minsToTimeInput(r.openMinutesFromMidnight)}
+                            onChange={(e) => {
+                              const v = timeInputToMins(e.target.value);
+                              setFormWeekly((prev) => prev.map((x, i) => (i === idx ? { ...x, openMinutesFromMidnight: v } : x)));
+                            }}
+                          />
+                        </td>
+                        <td>
+                          <input
+                            type="time"
+                            className="m-input m-input--sm"
+                            aria-label={`${r.dayOfWeek} closes`}
+                            disabled={r.isClosed}
+                            value={minsToTimeInput(r.closeMinutesFromMidnight)}
+                            onChange={(e) => {
+                              const v = timeInputToMins(e.target.value);
+                              setFormWeekly((prev) => prev.map((x, i) => (i === idx ? { ...x, closeMinutesFromMidnight: v } : x)));
+                            }}
+                          />
+                        </td>
+                        <td className="m-num m-muted">{mins == null ? "—" : `${Math.floor(mins / 60)}h${mins % 60 ? ` ${mins % 60}m` : ""}`}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
-          </div>
-        </section>
-      ) : null}
-
-      {/* ── Operating hours ── */}
-      <section className="qgo-mgr-panel">
-        <header className="qgo-mgr-panel__head qgo-mgr-panel__head--row">
-          <div>
-            <h2>Operating hours</h2>
-            <p className="qgo-muted">Branch open and close times for each day.</p>
-          </div>
-          <button type="button" className="qgo-btn-secondary qgo-btn-sm" onClick={copyMondayToAll} title="Copy Monday hours to all weekdays">
-            <Copy size={14} /> Copy Mon → weekdays
-          </button>
-        </header>
-        <div className="qgo-table-wrap qgo-table-wrap--card">
-          <table className="qgo-table qgo-table--mgr qgo-table--hours">
-            <thead>
-              <tr>
-                <th>Day</th>
-                <th>Closed</th>
-                <th>Opens</th>
-                <th>Closes</th>
-                <th>Preview</th>
-              </tr>
-            </thead>
-            <tbody>
-              {formWeekly.map((r, idx) => (
-                <tr key={r.dayOfWeek} className={r.isClosed ? "qgo-table__row--muted" : undefined}>
-                  <td>
-                    <strong>{r.dayOfWeek}</strong>
-                  </td>
-                  <td>
-                    <input
-                      type="checkbox"
-                      checked={r.isClosed}
-                      onChange={(e) => {
-                        const closed = e.target.checked;
-                        setFormWeekly((prev) =>
-                          prev.map((x, i) =>
-                            i === idx
-                              ? {
-                                  ...x,
-                                  isClosed: closed,
-                                  openMinutesFromMidnight: closed ? null : (x.openMinutesFromMidnight ?? 9 * 60),
-                                  closeMinutesFromMidnight: closed ? null : (x.closeMinutesFromMidnight ?? 17 * 60),
-                                }
-                              : x,
-                          ),
-                        );
-                      }}
-                    />
-                  </td>
-                  <td>
-                    <input
-                      type="time"
-                      disabled={r.isClosed}
-                      value={minsToTimeInput(r.openMinutesFromMidnight)}
-                      onChange={(e) => {
-                        const v = timeInputToMins(e.target.value);
-                        setFormWeekly((prev) => prev.map((x, i) => (i === idx ? { ...x, openMinutesFromMidnight: v } : x)));
-                      }}
-                    />
-                  </td>
-                  <td>
-                    <input
-                      type="time"
-                      disabled={r.isClosed}
-                      value={minsToTimeInput(r.closeMinutesFromMidnight)}
-                      onChange={(e) => {
-                        const v = timeInputToMins(e.target.value);
-                        setFormWeekly((prev) => prev.map((x, i) => (i === idx ? { ...x, closeMinutesFromMidnight: v } : x)));
-                      }}
-                    />
-                  </td>
-                  <td className="qgo-muted">
-                    {r.isClosed || r.openMinutesFromMidnight == null || r.closeMinutesFromMidnight == null
-                      ? "Closed"
-                      : `${minsToClock(r.openMinutesFromMidnight)} – ${minsToClock(r.closeMinutesFromMidnight)}`}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          </Card>
+  
+          <Card
+            title="Online bookings per slot"
+            description="Set 0 to turn off"
+          >
+            {branch && branch.services.length > 0 ? (
+              <div className="m-quota-grid">
+                {branch.services.map((s) => {
+                  const v = serviceOnlineSlots[s.id] ?? 4;
+                  return (
+                    <label key={s.id} className={`m-quota${v === 0 ? " is-off" : ""}`}>
+                      <span className="m-quota__name">{s.name}</span>
+                      <input
+                        className="m-input m-input--sm m-input--num"
+                        type="number"
+                        min={0}
+                        max={100}
+                        value={v}
+                        disabled={busy}
+                        onChange={(e) => onServiceOnlineSlotsChange(s.id, Number(e.target.value))}
+                        aria-label={`${s.name} online quota`}
+                      />
+                    </label>
+                  );
+                })}
+              </div>
+            ) : (
+              <EmptyBlock title="No services yet" />
+            )}
+          </Card>
+  
         </div>
-      </section>
-
-      {/* ── Branch closures ── */}
-      <section className="qgo-mgr-panel">
-        <header className="qgo-mgr-panel__head qgo-mgr-panel__head--row">
-          <div>
-            <h2>Branch closures</h2>
-            <p className="qgo-muted">Ad-hoc closure dates (e.g. public holidays, maintenance).</p>
-          </div>
-        </header>
-        <div className="qgo-mgr-form-body">
-          <ClosureForm busy={busy} onAdd={onAddClosure} />
-          {closures.length === 0 ? (
-            <p className="qgo-muted" style={{ padding: "8px 0" }}>No closures configured.</p>
-          ) : (
-            <ul className="qgo-mgr-closure-list">
-              {closures.map((c) => (
-                <li key={c.id} className="qgo-mgr-closure-row">
-                  <div>
-                    <strong>{new Date(c.closedFrom).toLocaleDateString()}</strong>
-                    {" → "}
-                    <strong>{new Date(c.closedTo).toLocaleDateString()}</strong>
-                    {c.reason ? <span className="qgo-muted"> — {c.reason}</span> : null}
-                  </div>
-                  <button
-                    type="button"
-                    className="qgo-btn-secondary qgo-btn-sm qgo-btn--danger"
-                    disabled={busy}
-                    onClick={() => onDeleteClosure(c.id)}
-                    title="Remove closure"
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
+        <div className="m-col-5 m-stack">
+          <Card title="Booking rules">
+            <div className="m-form-grid m-form-grid--2">
+              <label className="m-field">
+                <span className="m-field__label">Slot length</span>
+                <span className="m-input-group">
+                  <input className="m-input" type="number" min={5} max={180} value={formSlot} onChange={(e) => setFormSlot(Number(e.target.value))} />
+                  <span>min</span>
+                </span>
+              </label>
+              <label className="m-field">
+                <span className="m-field__label">Max per slot</span>
+                <input className="m-input" type="number" min={1} placeholder="No limit" value={formMaxSlotTotal} onChange={(e) => setFormMaxSlotTotal(e.target.value)} />
+              </label>
+              <label className="m-field">
+                <span className="m-field__label">Early call</span>
+                <span className="m-input-group">
+                  <input className="m-input" type="number" min={0} max={120} value={formEarlyCallMinutes} onChange={(e) => setFormEarlyCallMinutes(Number(e.target.value))} />
+                  <span>min</span>
+                </span>
+                <span className="m-field__hint">Call before the slot</span>
+              </label>
+              <label className="m-field">
+                <span className="m-field__label">Missed after</span>
+                <span className="m-input-group">
+                  <input className="m-input" type="number" min={1} max={60} value={formCalledGraceMinutes} onChange={(e) => setFormCalledGraceMinutes(Number(e.target.value))} />
+                  <span>min</span>
+                </span>
+                <span className="m-field__hint">No reply after a call</span>
+              </label>
+              <label className="m-field m-field--span">
+                <span className="m-field__label">Next week opens on</span>
+                <select className="m-select" value={formNextWeekOpensDay} onChange={(e) => setFormNextWeekOpensDay(Number(e.target.value))}>
+                  {Object.entries(DAY_LABELS).map(([val, label]) => (
+                    <option key={val} value={val}>{label}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          </Card>
+  
+          <Card
+            title="Closures"
+            description="Holidays and days off"
+          >
+            <div className="m-stack">
+              <ClosureForm busy={busy} onAdd={onAddClosure} />
+              {upcoming.length === 0 ? (
+                <EmptyBlock inline icon={CalendarX} title="No closures" body="Normal hours apply." />
+              ) : (
+                <ul className="m-closures">
+                  {upcoming.map((c) => (
+                    <li key={c.id}>
+                      <span className="m-closures__date">
+                        <b>{new Date(c.closedFrom).toLocaleDateString([], { day: "numeric" })}</b>
+                        {new Date(c.closedFrom).toLocaleDateString([], { month: "short" })}
+                      </span>
+                      <span className="m-list__main">
+                        <span className="m-list__title">{c.reason || "Branch closed"}</span>
+                        <span className="m-list__sub">
+                          {new Date(c.closedFrom).toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" })} to{" "}
+                          {new Date(c.closedTo).toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" })}
+                        </span>
+                      </span>
+                      <button
+                        type="button"
+                        className="m-btn m-btn--ghost m-btn--icon m-btn--sm"
+                        disabled={busy}
+                        onClick={() => onDeleteClosure(c.id)}
+                        title="Remove closure"
+                        aria-label="Remove closure"
+                      >
+                        <Trash2 size={15} aria-hidden />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </Card>
+  
         </div>
-      </section>
-
-      <div className="qgo-mgr-save-bar qgo-mgr-save-bar--sticky">
-        <p className="qgo-muted">Changes apply to new bookings and queue rules immediately after save.</p>
-        <button type="button" className="qgo-btn-primary qgo-btn-primary--lg" disabled={busy} onClick={() => void onSave()}>
-          <Save size={16} /> Save schedule & capacity
-        </button>
       </div>
-    </div>
+    </>
   );
 }
 
@@ -284,7 +328,7 @@ function ClosureForm({ busy, onAdd }: { busy: boolean; onAdd: (from: string, to:
   const today = new Date().toISOString().slice(0, 10);
   return (
     <form
-      className="qgo-mgr-closure-form"
+      className="m-closure-form"
       onSubmit={(e) => {
         e.preventDefault();
         const fd = new FormData(e.currentTarget);
@@ -296,20 +340,20 @@ function ClosureForm({ busy, onAdd }: { busy: boolean; onAdd: (from: string, to:
         e.currentTarget.reset();
       }}
     >
-      <label className="qgo-field">
-        <span>From</span>
-        <input type="date" name="from" required min={today} disabled={busy} />
+      <label className="m-field">
+        <span className="m-field__label">From</span>
+        <input className="m-input m-input--sm" type="date" name="from" required min={today} disabled={busy} />
       </label>
-      <label className="qgo-field">
-        <span>To</span>
-        <input type="date" name="to" required min={today} disabled={busy} />
+      <label className="m-field">
+        <span className="m-field__label">To</span>
+        <input className="m-input m-input--sm" type="date" name="to" required min={today} disabled={busy} />
       </label>
-      <label className="qgo-field qgo-field--wide">
-        <span>Reason (optional)</span>
-        <input type="text" name="reason" placeholder="e.g. Public holiday" disabled={busy} />
+      <label className="m-field m-field--span">
+        <span className="m-field__label">Reason</span>
+        <input className="m-input m-input--sm" type="text" name="reason" placeholder="e.g. Public holiday" disabled={busy} />
       </label>
-      <button type="submit" className="qgo-btn-secondary qgo-btn-sm" disabled={busy}>
-        <Plus size={14} /> Add
+      <button type="submit" className="m-btn m-btn--secondary m-btn--sm" disabled={busy}>
+        <Plus size={14} aria-hidden /> Add
       </button>
     </form>
   );

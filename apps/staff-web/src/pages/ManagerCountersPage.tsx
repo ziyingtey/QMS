@@ -43,7 +43,7 @@ import {
   type BranchQueueDto,
   type ManagerWaitingTicket,
 } from "../api";
-import { AppTopBar } from "../components/AppTopBar";
+import type { LiveStatus } from "../components/AppTopBar";
 import { useToast } from "../context/ToastContext";
 import { API_BASE } from "../config";
 import { useStaffLogout } from "../hooks/useStaffLogout";
@@ -56,7 +56,10 @@ import { ManagerFloorTab } from "../manager/ManagerFloorTab";
 import { ManagerLiveQueueTab } from "../manager/ManagerLiveQueueTab";
 import { ManagerQueuesTab } from "../manager/ManagerQueuesTab";
 import { ManagerScheduleTab } from "../manager/ManagerScheduleTab";
-import { ManagerSidebar, type ManagerTab } from "../manager/ManagerSidebar";
+import { ManagerShell } from "../manager/ManagerShell";
+import { ManagerWalkInQrTab } from "../manager/ManagerWalkInQrTab";
+import type { ManagerTab } from "../manager/managerNav";
+import { apiWalkInLink } from "../walkInApi";
 import { defaultWeeklyHours } from "../manager/managerUtils";
 
 export function ManagerCountersPage() {
@@ -90,6 +93,8 @@ export function ManagerCountersPage() {
   const [busy, setBusy] = useState(false);
   const [managerTab, setManagerTab] = useState<ManagerTab>("dashboard");
   const [expandedCounterId, setExpandedCounterId] = useState<string | null>(null);
+  /** UI-only: SignalR connection state for the top-bar Live badge. */
+  const [liveStatus, setLiveStatus] = useState<LiveStatus>("connecting");
 
   const [formSlot, setFormSlot] = useState(30);
   const [formWeekly, setFormWeekly] = useState<BranchOperatingHourRow[]>(defaultWeeklyHours);
@@ -320,14 +325,31 @@ export function ManagerCountersPage() {
     });
 
     const watch = () => void conn.invoke("WatchBranch", branchId).catch(() => {});
+    let disposed = false;
+    const showStatus = (st: LiveStatus) => {
+      if (!disposed) setLiveStatus(st);
+    };
 
-    void conn.start().then(watch).catch(() => toast("Live updates disconnected.", "error"));
+    void conn
+      .start()
+      .then(() => {
+        showStatus("live");
+        watch();
+      })
+      .catch(() => {
+        showStatus("offline");
+        toast("Live updates disconnected.", "error");
+      });
+    conn.onreconnecting(() => showStatus("connecting"));
+    conn.onclose(() => showStatus("offline"));
     conn.onreconnected(() => {
+      showStatus("live");
       watch();
       bump();
     });
 
     return () => {
+      disposed = true;
       void conn.stop();
     };
   }, [hubToken, branchId, load, refreshLive, loadInsights, loadSettings, loadAnalytics, loadWaiting, loadAppointments, toast]);
@@ -493,120 +515,112 @@ export function ManagerCountersPage() {
     }, 80);
   };
 
-  const branchSelect = (
-    <label className="qgo-branch-select">
-      <span className="qgo-muted">Branch</span>
-      <select value={branchId} onChange={(e) => onBranchChange(e.target.value)}>
-        {branches.map((b) => (
-          <option key={b.id} value={b.id}>
-            {b.name}
-          </option>
-        ))}
-      </select>
-    </label>
-  );
-
   return (
-    <div className="qgo-shell qgo-shell--manager">
-      <AppTopBar variant="manager" email={email} role="Manager" onLogout={logout} extra={branchSelect} />
-
-      <div className="qgo-mgr-layout">
-        <ManagerSidebar
-          active={managerTab}
-          onChange={setManagerTab}
-          branchName={branch?.name}
-          branchOpen={branchOpenForOperations}
-          alertCount={alertCount}
-          waitingCount={waiting.length}
+    <ManagerShell
+      tab={managerTab}
+      onTabChange={setManagerTab}
+      branches={branches}
+      branchId={branchId}
+      onBranchChange={onBranchChange}
+      branchOpen={branchOpenForOperations}
+      alertCount={alertCount}
+      waitingCount={waiting.length}
+      email={email}
+      onLogout={logout}
+      liveStatus={liveStatus}
+    >
+      {managerTab === "dashboard" ? (
+        <ManagerDashboardTab
+          live={live}
+          insights={insights}
+          analytics={analytics}
+          rows={rows}
+          queues={queues}
+          branch={branch}
+          staffPickList={staffPickList}
+          branchOpenForOperations={branchOpenForOperations}
+          busy={busy}
+          onGoToCounter={goToCounter}
+          onGoToTab={setManagerTab}
+          onSetMode={setMode}
+          onAllowedLaneToggle={onAllowedLaneToggle}
         />
+      ) : null}
 
-        <main className="qgo-mgr-content">
-          {managerTab === "dashboard" ? (
-            <ManagerDashboardTab
-              live={live}
-              insights={insights}
-              rows={rows}
-              branch={branch}
-              staffPickList={staffPickList}
-              branchOpenForOperations={branchOpenForOperations}
-              onGoToCounter={goToCounter}
-              onGoToCounters={() => setManagerTab("counters")}
-            />
-          ) : null}
+      {managerTab === "counters" ? (
+        <ManagerFloorTab
+          rows={rows}
+          branch={branch}
+          branchOpenForOperations={branchOpenForOperations}
+          staffPickList={staffPickList}
+          busy={busy}
+          expandedCounterId={expandedCounterId}
+          onToggleExpand={(id) => setExpandedCounterId((prev) => (prev === id ? null : id))}
+          onSetMode={setMode}
+          onStaffChange={onStaffChange}
+          onAllowedLaneToggle={onAllowedLaneToggle}
+          onDedicatedLaneChange={onDedicatedLaneChange}
+          staffIdForRow={staffIdForRow}
+          onGoToTab={setManagerTab}
+        />
+      ) : null}
 
-          {managerTab === "counters" ? (
-            <ManagerFloorTab
-              rows={rows}
-              branch={branch}
-              branchOpenForOperations={branchOpenForOperations}
-              staffPickList={staffPickList}
-              busy={busy}
-              expandedCounterId={expandedCounterId}
-              onToggleExpand={(id) => setExpandedCounterId((prev) => (prev === id ? null : id))}
-              onSetMode={setMode}
-              onStaffChange={onStaffChange}
-              onAllowedLaneToggle={onAllowedLaneToggle}
-              onDedicatedLaneChange={onDedicatedLaneChange}
-              staffIdForRow={staffIdForRow}
-            />
-          ) : null}
+      {managerTab === "queue" ? (
+        <ManagerLiveQueueTab
+          live={live}
+          waiting={waiting}
+          queues={queues}
+          rows={rows}
+          staffPickList={staffPickList}
+          onGoToCounter={goToCounter}
+          onGoToTab={setManagerTab}
+        />
+      ) : null}
 
-          {managerTab === "queue" ? (
-            <ManagerLiveQueueTab
-              live={live}
-              waiting={waiting}
-              queues={queues}
-              rows={rows}
-              staffPickList={staffPickList}
-              onGoToCounter={goToCounter}
-            />
-          ) : null}
+      {managerTab === "queues" ? (
+        <ManagerQueuesTab branch={branch} queues={queues} busy={busy} onUpdate={onUpdateQueue} onSetServices={onSetQueueServices} onGoToTab={setManagerTab} />
+      ) : null}
 
-          {managerTab === "queues" ? (
-            <ManagerQueuesTab
-              branch={branch}
-              queues={queues}
-              busy={busy}
-              onUpdate={onUpdateQueue}
-              onSetServices={onSetQueueServices}
-            />
-          ) : null}
+      {managerTab === "appointments" ? <ManagerAppointmentsTab data={appointments} onGoToTab={setManagerTab} /> : null}
 
-          {managerTab === "appointments" ? (
-            <ManagerAppointmentsTab data={appointments} />
-          ) : null}
+      {managerTab === "capacity" ? (
+        <ManagerScheduleTab
+          settings={settings}
+          branch={branch}
+          busy={busy}
+          formSlot={formSlot}
+          setFormSlot={setFormSlot}
+          formWeekly={formWeekly}
+          setFormWeekly={setFormWeekly}
+          formMaxSlotTotal={formMaxSlotTotal}
+          setFormMaxSlotTotal={setFormMaxSlotTotal}
+          formEarlyCallMinutes={formEarlyCallMinutes}
+          setFormEarlyCallMinutes={setFormEarlyCallMinutes}
+          formCalledGraceMinutes={formCalledGraceMinutes}
+          setFormCalledGraceMinutes={setFormCalledGraceMinutes}
+          formNextWeekOpensDay={formNextWeekOpensDay}
+          setFormNextWeekOpensDay={setFormNextWeekOpensDay}
+          onSave={saveCapacity}
+          serviceOnlineSlots={serviceOnlineSlots}
+          onServiceOnlineSlotsChange={onServiceOnlineSlotsChange}
+          closures={closures}
+          onAddClosure={onAddClosure}
+          onDeleteClosure={onDeleteClosure}
+        />
+      ) : null}
 
-          {managerTab === "capacity" ? (
-            <ManagerScheduleTab
-              settings={settings}
-              branch={branch}
-              busy={busy}
-              formSlot={formSlot}
-              setFormSlot={setFormSlot}
-              formWeekly={formWeekly}
-              setFormWeekly={setFormWeekly}
-              formMaxSlotTotal={formMaxSlotTotal}
-              setFormMaxSlotTotal={setFormMaxSlotTotal}
-              formEarlyCallMinutes={formEarlyCallMinutes}
-              setFormEarlyCallMinutes={setFormEarlyCallMinutes}
-              formCalledGraceMinutes={formCalledGraceMinutes}
-              setFormCalledGraceMinutes={setFormCalledGraceMinutes}
-              formNextWeekOpensDay={formNextWeekOpensDay}
-              setFormNextWeekOpensDay={setFormNextWeekOpensDay}
-              onSave={saveCapacity}
-              serviceOnlineSlots={serviceOnlineSlots}
-              onServiceOnlineSlotsChange={onServiceOnlineSlotsChange}
-              closures={closures}
-              onAddClosure={onAddClosure}
-              onDeleteClosure={onDeleteClosure}
-            />
-          ) : null}
+      {managerTab === "analytics" ? <ManagerAnalyticsTab analytics={analytics} analyticsSource={analyticsSource} onGoToTab={setManagerTab} /> : null}
 
-          {managerTab === "analytics" ? (
-            <ManagerAnalyticsTab analytics={analytics} analyticsSource={analyticsSource} />
-          ) : null}
-        </main>
-      </div>
-    </div>
+      {managerTab === "qr" ? (
+        <ManagerWalkInQrTab
+          branchId={branchId}
+          branchName={branch?.name}
+          live={live}
+          loadLink={apiWalkInLink}
+          onCopied={(ok) => toast(ok ? "Link copied" : "Could not copy the link", ok ? "success" : "error")}
+          onGoToTab={setManagerTab}
+        />
+      ) : null}
+    </ManagerShell>
   );
 }

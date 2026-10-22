@@ -1,7 +1,7 @@
 import type { BranchOperatingHourRow, ManagerCounterRowDto } from "../api";
 import type { AssignableStaffDto } from "../api";
 
-export const MGR_SVC_COLORS = ["#00b14f", "#136fd8", "#17b5a6", "#f09800", "#9333ea", "#d42e1c"];
+export const MGR_SVC_COLORS = ["#1d4ed8", "#3b82f6", "#60a5fa", "#93c5fd", "#64748b", "#94a3b8"];
 
 export function minsToClock(m: number): string {
   const h = Math.floor(m / 60);
@@ -86,11 +86,9 @@ export function personInitials(name: string): string {
 
 export function formatMinutesShort(m: number | null | undefined): string {
   if (m == null || Number.isNaN(m)) return "—";
-  if (m < 1) return "<1m";
-  const whole = Math.floor(m);
-  const sec = Math.round((m - whole) * 60);
-  if (sec === 0) return `${whole}m`;
-  return `${whole}m ${sec}s`;
+  // One unit everywhere in the manager UI: whole minutes, "<1 min" below a minute.
+  if (m < 1) return "<1 min";
+  return `${Math.round(m)} min`;
 }
 
 export function slaTone(percent: number | null | undefined): "good" | "warn" | "bad" | "muted" {
@@ -98,4 +96,20 @@ export function slaTone(percent: number | null | undefined): "good" | "warn" | "
   if (percent >= 85) return "good";
   if (percent >= 70) return "warn";
   return "bad";
+}
+
+
+/** Friendly time-of-day greeting (local clock). */
+export function greetingForHour(hour = new Date().getHours()): string {
+  if (hour < 12) return "Good morning";
+  if (hour < 18) return "Good afternoon";
+  return "Good evening";
+}
+
+/** Short display name from an email / login (manager@x → Manager). */
+export function displayNameFromEmail(email: string | null | undefined): string {
+  if (!email) return "manager";
+  const local = email.split("@")[0]?.trim() || "manager";
+  const token = local.split(/[._+-]/)[0] || local;
+  return token.charAt(0).toUpperCase() + token.slice(1);
 }
