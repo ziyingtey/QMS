@@ -2608,9 +2608,36 @@ public sealed class QmsQueueService(
 
     private async Task AssertBranchOpenForCounterOperationsAsync(Guid branchId, CancellationToken cancellationToken)
     {
-        if (!await IsBranchOpenForOperationsAsync(branchId, cancellationToken))
-            throw new InvalidOperationException(
-                "Counters cannot be opened outside branch operating hours. Update Schedule & capacity or wait until the branch opens.");
+        if (await IsBranchOpenForOperationsAsync(branchId, cancellationToken))
+            return;
+
+        // Allow counter activation during the after-hours drain window
+        if (await IsInDrainWindowAsync(branchId, cancellationToken))
+            return;
+
+        throw new InvalidOperationException(
+            "Counters cannot be opened outside branch operating hours. Update Schedule & capacity or wait until the branch opens.");
+    }
+
+    private async Task<bool> IsInDrainWindowAsync(Guid branchId, CancellationToken cancellationToken)
+    {
+        var branch = await db.Branches.AsNoTracking().FirstOrDefaultAsync(b => b.Id == branchId, cancellationToken);
+        if (branch is null) return false;
+
+        var now = DateTimeOffset.UtcNow;
+        var zone = TimeSpan.FromMinutes(branch.ServiceZoneOffsetMinutes);
+        var localNow = now.ToOffset(zone);
+        var dowName = localNow.DayOfWeek.ToString();
+        var row = await db.BranchOperatingHours.AsNoTracking()
+            .Where(h => h.BranchId == branchId && h.DayOfWeek == dowName)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (row is null || row.IsClosed || row.CloseTime is null) return false;
+
+        var closeMin = (int)row.CloseTime.Value.TotalMinutes;
+        var dayStart = new DateTimeOffset(localNow.Year, localNow.Month, localNow.Day, 0, 0, 0, zone);
+        var closeTime = dayStart.AddMinutes(closeMin);
+        var drainDeadline = closeTime.AddMinutes(Math.Max(0, branch.AfterHoursDrainWindowMinutes));
+        return now >= closeTime && now < drainDeadline;
     }
 
     private async Task<(DateTimeOffset Start, DateTimeOffset End)?> GetBranchLocalServiceWindowAsync(

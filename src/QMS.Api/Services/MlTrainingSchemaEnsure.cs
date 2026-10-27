@@ -23,6 +23,11 @@ public static class MlTrainingSchemaEnsure
                     IF COL_LENGTH(N'dbo.ML_TRAINING_DATA', N'CounterSimEtaMinutes') IS NULL
                         ALTER TABLE dbo.ML_TRAINING_DATA ADD CounterSimEtaMinutes FLOAT NULL;
                 END
+                -- Branch drain window after closing (outside the ML table guard).
+                IF OBJECT_ID(N'dbo.BRANCHES', N'U') IS NOT NULL
+                   AND COL_LENGTH(N'dbo.BRANCHES', N'AfterHoursDrainWindowMinutes') IS NULL
+                    ALTER TABLE dbo.BRANCHES ADD AfterHoursDrainWindowMinutes INT NOT NULL
+                        CONSTRAINT DF_BRANCHES_AfterHoursDrainWindowMinutes DEFAULT (60);
                 """, ct);
         }
         catch (Exception ex)

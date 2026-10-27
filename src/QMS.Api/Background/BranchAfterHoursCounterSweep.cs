@@ -10,7 +10,11 @@ using QMS.Infrastructure.Persistence;
 namespace QMS.Api.Background;
 
 /// <summary>
-/// Closes counters and clears teller assignments when a branch is outside operating hours.
+/// After-hours sweep: when a branch is outside operating hours, apply a drain window strategy.
+/// During the drain window (configurable, default 60 min), counters with Called/Serving tickets
+/// remain open and may keep calling already-waiting tickets. Counters are only closed when they
+/// have no active ticket and the queue for their services is empty or the drain window has ended.
+/// New walk-ins are blocked at close (enforced in WalkInAsync via IsBranchOpenNow check).
 /// </summary>
 public static class BranchAfterHoursCounterSweep
 {
@@ -47,6 +51,13 @@ public static class BranchAfterHoursCounterSweep
             if (BranchHoursEvaluator.IsBranchOpenNow(branch, hours, now, closures))
                 continue;
 
+            // Branch is closed — determine if we are within the drain window
+            var zone = TimeSpan.FromMinutes(branch.ServiceZoneOffsetMinutes);
+            var closeTime = GetTodayCloseTime(branch, hours, now, zone);
+            var drainMinutes = Math.Max(0, branch.AfterHoursDrainWindowMinutes);
+            var drainDeadline = closeTime?.AddMinutes(drainMinutes);
+            var inDrainWindow = drainDeadline.HasValue && now < drainDeadline.Value;
+
             var counters = await db.Counters
                 .Where(c => c.BranchId == branch.Id
                             && (c.Mode != CounterMode.Closed || c.StaffId != null))
@@ -55,15 +66,54 @@ public static class BranchAfterHoursCounterSweep
             if (counters.Count == 0)
                 continue;
 
-            foreach (var counter in counters)
+            // Active tickets on each counter (Called or Serving)
+            var activeTicketCounterIds = await db.QueueEntries
+                .Where(q => q.BranchId == branch.Id
+                            && q.CounterId != null
+                            && (q.State == QueueEntryState.Called || q.State == QueueEntryState.Serving))
+                .Select(q => q.CounterId!.Value)
+                .Distinct()
+                .ToListAsync(ct);
+            var activeTicketSet = activeTicketCounterIds.ToHashSet();
+
+            // Waiting tickets per service (for drain check)
+            HashSet<Guid> servicesWithWaiting = [];
+            if (inDrainWindow)
             {
-                counter.Mode = CounterMode.Closed;
-                counter.StaffId = null;
+                servicesWithWaiting = (await db.QueueEntries
+                    .Where(q => q.BranchId == branch.Id && q.State == QueueEntryState.Waiting && q.CheckedIn)
+                    .Select(q => q.ServiceTypeId)
+                    .Distinct()
+                    .ToListAsync(ct)).ToHashSet();
             }
 
-            closedCount += counters.Count;
-            notifyCounters.Add(branch.Id);
-            notifyQueue.Add(branch.Id);
+            // Counter-to-services mapping
+            var counterServices = await db.Set<CounterAllowedService>()
+                .Where(cas => counters.Select(c => c.Id).Contains(cas.CounterId))
+                .GroupBy(cas => cas.CounterId)
+                .ToDictionaryAsync(g => g.Key, g => g.Select(x => x.ServiceTypeId).ToHashSet(), ct);
+
+            foreach (var counter in counters)
+            {
+                // Never close a counter that has an active (Called/Serving) ticket
+                if (activeTicketSet.Contains(counter.Id))
+                    continue;
+
+                if (inDrainWindow)
+                {
+                    // Keep the counter open if its services still have waiting tickets
+                    counterServices.TryGetValue(counter.Id, out var svcIds);
+                    if (svcIds != null && svcIds.Any(s => servicesWithWaiting.Contains(s)))
+                        continue;
+                }
+
+                // Close this counter
+                counter.Mode = CounterMode.Closed;
+                counter.StaffId = null;
+                closedCount++;
+                notifyCounters.Add(branch.Id);
+                notifyQueue.Add(branch.Id);
+            }
         }
 
         if (closedCount == 0)
@@ -82,5 +132,20 @@ public static class BranchAfterHoursCounterSweep
             await hub.Clients.Group(QueueHub.BranchGroup(branchId)).SendAsync("QueueUpdated", branchId, ct);
 
         return closedCount;
+    }
+
+    /// <summary>Get today's closing time for a branch (branch-local), or null if no hours configured.</summary>
+    private static DateTimeOffset? GetTodayCloseTime(
+        Branch branch, IReadOnlyList<BranchOperatingHour> hours, DateTimeOffset nowUtc, TimeSpan zone)
+    {
+        var localNow = nowUtc.ToOffset(zone);
+        var dowName = localNow.DayOfWeek.ToString();
+        var row = hours.FirstOrDefault(h =>
+            string.Equals(h.DayOfWeek, dowName, StringComparison.OrdinalIgnoreCase));
+        if (row is null || row.IsClosed || row.CloseTime is null)
+            return null;
+        var closeMin = (int)row.CloseTime.Value.TotalMinutes;
+        var dayStart = new DateTimeOffset(localNow.Year, localNow.Month, localNow.Day, 0, 0, 0, zone);
+        return dayStart.AddMinutes(closeMin);
     }
 }

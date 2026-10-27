@@ -27,7 +27,8 @@ CREATE TABLE dbo.BRANCHES (
     ImageUrl NVARCHAR(800) NULL,
     MaxCapacity INT NULL,
     OnlineEarlyCallMinutes INT NOT NULL,
-    CalledAbsentGraceMinutes INT NOT NULL
+    CalledAbsentGraceMinutes INT NOT NULL,
+    AfterHoursDrainWindowMinutes INT NOT NULL CONSTRAINT DF_BRANCHES_AfterHoursDrainWindowMinutes DEFAULT (60)
 );
 
 IF OBJECT_ID(N'dbo.CUSTOMER_PASSWORD_RESET_TOKENS', N'U') IS NULL

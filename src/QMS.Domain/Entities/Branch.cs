@@ -32,6 +32,8 @@ public class Branch
     public int OnlineEarlyCallMinutes { get; set; } = 10;
     /// <summary>After <see cref="QueueEntryState.Called"/>, if the customer does not start service within this many minutes, mark absent / no-show.</summary>
     public int CalledAbsentGraceMinutes { get; set; } = 5;
+    /// <summary>Minutes after closing time during which open counters may keep calling already-waiting tickets. New walk-ins are blocked at close.</summary>
+    public int AfterHoursDrainWindowMinutes { get; set; } = 60;
     public ICollection<Staff> StaffMembers { get; set; } = new List<Staff>();
     public ICollection<BranchOperatingHour> OperatingHoursSchedule { get; set; } = new List<BranchOperatingHour>();
     public ICollection<Counter> Counters { get; set; } = new List<Counter>();
