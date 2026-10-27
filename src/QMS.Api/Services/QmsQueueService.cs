@@ -792,12 +792,21 @@ public sealed class QmsQueueService(
     {
         var counter = await db.Counters
             .Include(c => c.AllowedServices)
+            .Include(c => c.Branch)
             .FirstOrDefaultAsync(c => c.StaffId == staffId, cancellationToken)
             ?? throw new InvalidOperationException("Counter not found for staff.");
 
-        var entry = await db.QueueEntries.FirstOrDefaultAsync(
-                        q => q.BranchId == counter.BranchId && q.TicketNumber == ticketNumber && q.CounterId == counter.Id,
-                        cancellationToken)
+        var zone = TimeSpan.FromMinutes(counter.Branch.ServiceZoneOffsetMinutes);
+        var todayLocal = DateOnly.FromDateTime(DateTimeOffset.UtcNow.ToOffset(zone).DateTime);
+
+        var entry = await db.QueueEntries
+                        .Where(q => q.BranchId == counter.BranchId
+                                    && q.TicketNumber == ticketNumber
+                                    && q.CounterId == counter.Id
+                                    && q.ServiceDay == todayLocal
+                                    && q.State == QueueEntryState.Called)
+                        .OrderByDescending(q => q.CreatedAt)
+                        .FirstOrDefaultAsync(cancellationToken)
                     ?? throw new InvalidOperationException("Ticket not found on this counter.");
 
         if (!CounterCanServeLane(counter, entry.ServiceTypeId))
@@ -849,13 +858,21 @@ public sealed class QmsQueueService(
 
     public async Task EndServiceAsync(Guid staffId, string ticketNumber, CancellationToken cancellationToken = default)
     {
-        var counter = await db.Counters.FirstOrDefaultAsync(
+        var counter = await db.Counters.Include(c => c.Branch).FirstOrDefaultAsync(
                           c => c.StaffId == staffId, cancellationToken)
                       ?? throw new InvalidOperationException("Counter not found for staff.");
 
-        var entry = await db.QueueEntries.Include(q => q.Booking).Include(q => q.Branch).Include(q => q.ServiceType).FirstOrDefaultAsync(
-                        q => q.BranchId == counter.BranchId && q.TicketNumber == ticketNumber && q.CounterId == counter.Id,
-                        cancellationToken)
+        var zone = TimeSpan.FromMinutes(counter.Branch.ServiceZoneOffsetMinutes);
+        var todayLocal = DateOnly.FromDateTime(DateTimeOffset.UtcNow.ToOffset(zone).DateTime);
+
+        var entry = await db.QueueEntries.Include(q => q.Booking).Include(q => q.Branch).Include(q => q.ServiceType)
+                        .Where(q => q.BranchId == counter.BranchId
+                                    && q.TicketNumber == ticketNumber
+                                    && q.CounterId == counter.Id
+                                    && q.ServiceDay == todayLocal
+                                    && q.State == QueueEntryState.Serving)
+                        .OrderByDescending(q => q.CreatedAt)
+                        .FirstOrDefaultAsync(cancellationToken)
                     ?? throw new InvalidOperationException("Ticket not found on this counter.");
 
         if (entry.ServingStartedAt is null)
@@ -2375,10 +2392,14 @@ public sealed class QmsQueueService(
             .FirstOrDefaultAsync(c => c.StaffId == staffId, cancellationToken)
             ?? throw new InvalidOperationException("No counter assigned to this staff user.");
 
+        var zone = TimeSpan.FromMinutes(counter.Branch.ServiceZoneOffsetMinutes);
+        var todayLocal = DateOnly.FromDateTime(DateTimeOffset.UtcNow.ToOffset(zone).DateTime);
+
         var entry = await db.QueueEntries
             .Include(q => q.Booking)
             .FirstOrDefaultAsync(
                 q => q.BranchId == counter.BranchId && q.TicketNumber == ticketNumber
+                     && q.ServiceDay == todayLocal
                      && (q.State == QueueEntryState.Waiting || q.State == QueueEntryState.Called),
                 cancellationToken)
             ?? throw new InvalidOperationException("Ticket not found or not transferable (must be Waiting/Called).");
