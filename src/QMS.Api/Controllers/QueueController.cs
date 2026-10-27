@@ -2,7 +2,6 @@ using System.Globalization;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using QMS.Api.Services;
 using QMS.Domain.Enums;
@@ -22,7 +21,6 @@ public sealed class QueueController(QmsQueueService queue, QmsDbContext db, Walk
     /// No capacity / daily limit; only a short-window per-device rate limit (policy "walk-in-public").
     /// </summary>
     [AllowAnonymous]
-    [EnableRateLimiting("walk-in-public")]
     [HttpPost("walk-in")]
     public async Task<ActionResult<WalkInResponse>> WalkIn([FromBody] WalkInRequest request, CancellationToken cancellationToken)
     {
@@ -81,10 +79,25 @@ public sealed class QueueController(QmsQueueService queue, QmsDbContext db, Walk
         return await IssueAsync(request.BranchId, request.ServiceTypeId, null, cancellationToken);
     }
 
+    /// <summary>
+    /// Queue status for a single ticket. Authenticated users (staff/customer JWT) can query any ticket.
+    /// Anonymous callers must provide either <c>bookingId</c> (unguessable GUID) or a matching
+    /// <c>X-Device-Id</c> header (walk-in page).
+    /// </summary>
     [AllowAnonymous]
     [HttpGet("status")]
     public async Task<ActionResult<QueueStatusDto>> Status([FromQuery] Guid branchId, [FromQuery] string ticket, [FromQuery] Guid? bookingId, CancellationToken cancellationToken)
     {
+        if (User.Identity?.IsAuthenticated != true && !bookingId.HasValue)
+        {
+            var device = ReadDeviceId();
+            if (device is null)
+                return Unauthorized(new { message = "Provide a bookingId or X-Device-Id header to view ticket status." });
+            var ownsTicket = await db.QueueEntries.AsNoTracking()
+                .AnyAsync(q => q.BranchId == branchId && q.TicketNumber == ticket && q.WalkInDeviceId == device, cancellationToken);
+            if (!ownsTicket) return NotFound();
+        }
+
         var status = await queue.GetQueueStatusAsync(branchId, ticket, cancellationToken, bookingId);
         return status is null ? NotFound() : Ok(status);
     }

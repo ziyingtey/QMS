@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -13,9 +14,19 @@ namespace QMS.Api.Controllers;
 [Route("api/branches/{branchId:guid}/[controller]")]
 public sealed class DashboardController(QmsDbContext db, QmsQueueService queue) : ControllerBase
 {
+    private async Task<bool> OwnsBranch(Guid branchId, CancellationToken ct)
+    {
+        if (!Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var staffId))
+            return false;
+        var staffBranchId = await db.StaffMembers.AsNoTracking()
+            .Where(s => s.Id == staffId).Select(s => (Guid?)s.BranchId).FirstOrDefaultAsync(ct);
+        return staffBranchId == branchId;
+    }
+
     [HttpGet("live")]
     public async Task<ActionResult<LiveDashboardDto>> Live(Guid branchId, CancellationToken cancellationToken)
     {
+        if (!await OwnsBranch(branchId, cancellationToken)) return Forbid();
         var now = DateTimeOffset.UtcNow;
 
         // Use branch-local service day instead of UTC date

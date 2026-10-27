@@ -1,16 +1,27 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using QMS.Api.Services;
 using QMS.Domain.Enums;
+using QMS.Infrastructure.Persistence;
 
 namespace QMS.Api.Controllers;
 
 [ApiController]
 [Authorize(Policy = "Staff")]
 [Route("api/[controller]")]
-public sealed class StaffController(QmsQueueService queue) : ControllerBase
+public sealed class StaffController(QmsQueueService queue, QmsDbContext db) : ControllerBase
 {
+    private async Task<bool> OwnsBranch(Guid branchId, CancellationToken ct)
+    {
+        if (!Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var staffId))
+            return false;
+        var staffBranchId = await db.StaffMembers.AsNoTracking()
+            .Where(s => s.Id == staffId).Select(s => (Guid?)s.BranchId).FirstOrDefaultAsync(ct);
+        return staffBranchId == branchId;
+    }
+
     [HttpPost("call-next")]
     public async Task<ActionResult<CallNextDto>> CallNext([FromBody] CallNextRequest request, CancellationToken cancellationToken)
     {
@@ -92,6 +103,7 @@ public sealed class StaffController(QmsQueueService queue) : ControllerBase
         Guid serviceTypeId,
         CancellationToken cancellationToken)
     {
+        if (!await OwnsBranch(branchId, cancellationToken)) return Forbid();
         var list = await queue.ListWaitingTicketsAsync(branchId, serviceTypeId, cancellationToken);
         return Ok(list);
     }

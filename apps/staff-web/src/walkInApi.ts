@@ -81,6 +81,7 @@ export async function apiMyWalkIns(branchId: string): Promise<MyWalkInTicket[]> 
 export async function apiQueueStatus(branchId: string, ticket: string): Promise<QueueStatus | null> {
   const res = await fetch(
     `${API_BASE}/api/queue/status?branchId=${encodeURIComponent(branchId)}&ticket=${encodeURIComponent(ticket)}`,
+    { headers: { "X-Device-Id": getWalkInDeviceId() } },
   );
   if (res.status === 404) return null;
   if (!res.ok) await fail(res);

@@ -47,7 +47,13 @@ builder.Services.AddSwaggerGen(c =>
     });
 });
 
-var jwtKey = builder.Configuration["Jwt:Key"] ?? "CHANGE_ME_DEV_ONLY_32_CHARS_MIN!!";
+var jwtKey = builder.Configuration["Jwt:Key"];
+if (string.IsNullOrWhiteSpace(jwtKey))
+{
+    if (builder.Environment.IsProduction())
+        throw new InvalidOperationException("Jwt:Key must be configured in Production (use Jwt__Key env var or user-secrets).");
+    jwtKey = "CHANGE_ME_DEV_ONLY_32_CHARS_MIN!!";
+}
 var keyBytes = Encoding.UTF8.GetBytes(jwtKey);
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
@@ -84,14 +90,17 @@ builder.Services.AddAuthorization(options =>
     options.AddPolicy("Manager", p => p.RequireRole("Manager"));
 });
 
+var corsOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>();
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("Dev", policy =>
     {
-        policy
-            .AllowAnyHeader()
-            .AllowAnyMethod()
-            .SetIsOriginAllowed(_ => true);
+        policy.AllowAnyHeader().AllowAnyMethod();
+        if (corsOrigins is { Length: > 0 })
+            policy.WithOrigins(corsOrigins).AllowCredentials();
+        else if (builder.Environment.IsDevelopment())
+            policy.SetIsOriginAllowed(_ => true);
+        // Non-dev with no configured origins → no origins allowed (fail-closed)
     });
 });
 
@@ -106,7 +115,9 @@ builder.Services.AddScoped<CustomerNotificationService>();
 builder.Services.AddScoped<QmsQueueService>();
 builder.Services.Configure<WalkInOptions>(builder.Configuration.GetSection(WalkInOptions.SectionName));
 builder.Services.AddSingleton<WalkInTokenService>();
-// Public walk-in rate limit: staff/manager unlimited; per X-Device-Id 3 / 10 min; no device id → per IP 30 / 10 min.
+// Walk-in rate limit: both per-IP (30/10 min) and per-device (3/10 min) always apply.
+// Chained via GlobalLimiter so a request must pass BOTH limiters — changing X-Device-Id
+// cannot bypass the per-IP cap. Staff/manager bypass both.
 builder.Services.AddRateLimiter(o =>
 {
     o.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
@@ -116,18 +127,32 @@ builder.Services.AddRateLimiter(o =>
         await ctx.HttpContext.Response.WriteAsync(
             "{\"message\":\"Too many tickets from this device. Please wait a few minutes or ask our staff for help.\"}", ct);
     };
-    o.AddPolicy("walk-in-public", http =>
+
+    var ipLimiter = PartitionedRateLimiter.Create<HttpContext, string>(http =>
     {
+        if (!http.Request.Path.StartsWithSegments("/api/Queue/walk-in"))
+            return RateLimitPartition.GetNoLimiter("other");
+        if (http.User.IsInRole("Staff") || http.User.IsInRole("Manager"))
+            return RateLimitPartition.GetNoLimiter("staff");
+        var ip = http.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        return RateLimitPartition.GetFixedWindowLimiter("ip:" + ip,
+            _ => new FixedWindowRateLimiterOptions { PermitLimit = 30, Window = TimeSpan.FromMinutes(10), QueueLimit = 0 });
+    });
+
+    var deviceLimiter = PartitionedRateLimiter.Create<HttpContext, string>(http =>
+    {
+        if (!http.Request.Path.StartsWithSegments("/api/Queue/walk-in"))
+            return RateLimitPartition.GetNoLimiter("other");
         if (http.User.IsInRole("Staff") || http.User.IsInRole("Manager"))
             return RateLimitPartition.GetNoLimiter("staff");
         var device = http.Request.Headers["X-Device-Id"].ToString().Trim();
         if (!string.IsNullOrEmpty(device) && device.Length <= 64)
             return RateLimitPartition.GetFixedWindowLimiter("dev:" + device,
                 _ => new FixedWindowRateLimiterOptions { PermitLimit = 3, Window = TimeSpan.FromMinutes(10), QueueLimit = 0 });
-        var ip = http.Connection.RemoteIpAddress?.ToString() ?? "unknown";
-        return RateLimitPartition.GetFixedWindowLimiter("ip:" + ip,
-            _ => new FixedWindowRateLimiterOptions { PermitLimit = 30, Window = TimeSpan.FromMinutes(10), QueueLimit = 0 });
+        return RateLimitPartition.GetNoLimiter("no-device");
     });
+
+    o.GlobalLimiter = PartitionedRateLimiter.CreateChained(ipLimiter, deviceLimiter);
 });
 builder.Services.AddHostedService<BookingLifecycleHostedService>();
 builder.Services.AddHostedService<BranchQueueDayRolloverHostedService>();
