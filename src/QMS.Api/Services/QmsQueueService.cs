@@ -1074,9 +1074,7 @@ public sealed class QmsQueueService(
         Guid serviceTypeId,
         CancellationToken cancellationToken = default)
     {
-        var active = await CountActiveLaneCountersAsync(branchId, serviceTypeId, cancellationToken);
-        var n = Math.Max(1, active);
-
+        // Staff lists intentionally omit the ETA (product decision); field kept null for API compatibility.
         var svc = await db.ServiceTypes.AsNoTracking().FirstOrDefaultAsync(
                       s => s.Id == serviceTypeId && s.BranchId == branchId, cancellationToken)
                   ?? throw new InvalidOperationException("Service not found.");
@@ -1085,10 +1083,6 @@ public sealed class QmsQueueService(
         var zone = TimeSpan.FromMinutes(branch.ServiceZoneOffsetMinutes);
         var nowAtBranch = DateTimeOffset.UtcNow.ToOffset(zone);
         var todayDate = nowAtBranch.Date;
-
-        var currentlyServing = await db.QueueEntries.AsNoTracking().CountAsync(
-            q => q.BranchId == branchId && q.ServiceTypeId == serviceTypeId && q.State == QueueEntryState.Serving,
-            cancellationToken);
 
         var allWaiting = await db.QueueEntries.AsNoTracking()
             .Where(q => q.BranchId == branchId && q.ServiceTypeId == serviceTypeId && q.State == QueueEntryState.Waiting)
@@ -1125,23 +1119,12 @@ public sealed class QmsQueueService(
         var position = 1;
         foreach (var q in list)
         {
-            double? eta;
-            try
-            {
-                eta = await ResolveDisplayEtaMinutesAsync(q, branch, svc, earlyMin, nowUtc, cancellationToken);
-            }
-            catch
-            {
-                var ahead = position - 1;
-                var raw = WaitTimeEstimator.EstimateMinutes(ahead + currentlyServing, svc.DefaultAvgServiceMinutes, n);
-                eta = double.IsInfinity(raw) ? null : Math.Round(raw, 1);
-            }
             var eligible = IsEligible(q);
             result.Add(new WaitingTicketDto(
                 q.TicketNumber,
                 q.EntryType.ToString(),
                 position,
-                eta,
+                null,
                 svc.Name,
                 q.CheckedIn,
                 q.AssignedSlotStart.HasValue ? FormatIsoOffset(q.AssignedSlotStart.Value) : null,
@@ -1206,25 +1189,18 @@ public sealed class QmsQueueService(
         foreach (var leftover in todayEntries.Where(q => !IsEligible(q)).OrderBy(q => q.CreatedAt).ThenBy(q => q.Id))
             ordered.Add(leftover);
 
+        // Staff lists intentionally omit the ETA (product decision); field kept null for API compatibility.
         var result = new List<WaitingTicketDto>();
         for (int i = 0; i < ordered.Count; i++)
         {
             var q = ordered[i];
             var svcName = services.TryGetValue(q.ServiceTypeId, out var svc) ? svc.Name : "Unknown";
 
-            double? eta = null;
-            try
-            {
-                if (services.TryGetValue(q.ServiceTypeId, out var svcForEta))
-                    eta = await ResolveDisplayEtaMinutesAsync(q, branch, svcForEta, earlyMin, nowUtc, ct);
-            }
-            catch { /* best-effort */ }
-
             result.Add(new WaitingTicketDto(
                 q.TicketNumber,
                 q.EntryType.ToString(),
                 i + 1,
-                eta,
+                null,
                 svcName,
                 q.CheckedIn,
                 q.AssignedSlotStart.HasValue ? FormatIsoOffset(q.AssignedSlotStart.Value) : null,
@@ -1497,16 +1473,33 @@ public sealed class QmsQueueService(
             .Where(bq => bq.BranchId == branchId)
             .ToDictionaryAsync(bq => bq.Id, bq => bq.ServiceLevelMinutes, ct);
 
+        // Pre-compute per-service stats for formula ETA (avoids per-ticket ML HTTP calls)
+        var serviceIds = sorted.Select(q => q.ServiceTypeId).Distinct().ToList();
+        var servingBySvc = new Dictionary<Guid, int>();
+        var countersBySvc = new Dictionary<Guid, int>();
+        var avgBySvc = new Dictionary<Guid, double>();
+        foreach (var svcId in serviceIds)
+        {
+            servingBySvc[svcId] = await db.QueueEntries.CountAsync(
+                q => q.BranchId == branchId && q.ServiceTypeId == svcId && q.State == QueueEntryState.Serving, ct);
+            countersBySvc[svcId] = await CountActiveLaneCountersAsync(branchId, svcId, ct);
+            avgBySvc[svcId] = sorted.FirstOrDefault(q => q.ServiceTypeId == svcId)?.ServiceType?.DefaultAvgServiceMinutes ?? 5;
+        }
+
         var result = new List<ManagerWaitingTicketDto>();
+        var posBySvc = new Dictionary<Guid, int>();
         for (int i = 0; i < sorted.Count; i++)
         {
             var q = sorted[i];
-            double? eta = null;
-            try
-            {
-                eta = await ResolveDisplayEtaMinutesAsync(q, branch, q.ServiceType, earlyMinutes, nowUtc, ct);
-            }
-            catch { /* swallow — ETA is best-effort */ }
+
+            // List endpoint: use formula ETA instead of per-ticket ML call
+            posBySvc.TryGetValue(q.ServiceTypeId, out var svcPos);
+            servingBySvc.TryGetValue(q.ServiceTypeId, out var svcServing);
+            countersBySvc.TryGetValue(q.ServiceTypeId, out var svcCounters);
+            avgBySvc.TryGetValue(q.ServiceTypeId, out var svcAvg);
+            var raw = WaitTimeEstimator.EstimateMinutes(svcPos + svcServing, svcAvg, Math.Max(1, svcCounters));
+            double? eta = double.IsInfinity(raw) ? null : Math.Round(raw, 1);
+            posBySvc[q.ServiceTypeId] = svcPos + 1;
 
             result.Add(new ManagerWaitingTicketDto(
                 q.Id, q.TicketNumber, q.ServiceType.Name,

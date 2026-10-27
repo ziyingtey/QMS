@@ -220,6 +220,7 @@ export type WaitingTicketDto = {
   ticketNumber: string;
   entryType: string;
   position: number;
+  /** Always null: staff lists intentionally omit the ETA. Kept for API compatibility. */
   estimatedWaitMinutes: number | null;
   serviceName: string | null;
   checkedIn: boolean;
