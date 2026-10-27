@@ -57,7 +57,7 @@ public sealed class QmsQueueService(
         var hidePastSlotsForToday = calendarDay == todayInBranch;
 
         var slots = new List<SlotDto>();
-        for (var t = windowStart; t < windowEnd; t = t.AddMinutes(slotMinutes))
+        for (var t = windowStart; t.AddMinutes(slotMinutes) <= windowEnd; t = t.AddMinutes(slotMinutes))
         {
             var slotStart = t;
             var slotEnd = t.AddMinutes(slotMinutes);
@@ -119,6 +119,11 @@ public sealed class QmsQueueService(
         var bookingDay = DateOnly.FromDateTime(slotStartZ.DateTime);
         var todayInBranch = DateOnly.FromDateTime(nowAtBranch.DateTime);
 
+        // Validate slot shape: end must equal start + slot duration
+        var slotMinutes = branch.SlotDurationMinutes < 1 ? 30 : branch.SlotDurationMinutes;
+        if (slotEndZ != slotStartZ.AddMinutes(slotMinutes))
+            throw new InvalidOperationException($"Invalid slot: duration must be exactly {slotMinutes} minutes.");
+
         // Weekly booking window check
         if (!IsWithinBookingWindow(bookingDay, todayInBranch, branch.NextWeekBookingOpensOnDay))
             throw new InvalidOperationException("Booking is only available for the current and next week.");
@@ -133,6 +138,11 @@ public sealed class QmsQueueService(
         var (serviceWindowStart, serviceWindowEnd) = serviceWindow.Value;
         if (slotStartZ < serviceWindowStart || slotEndZ > serviceWindowEnd)
             throw new InvalidOperationException("This time slot is outside branch service hours.");
+
+        // Validate slot alignment: must align to the opening-time grid
+        var minutesFromOpen = (slotStartZ - serviceWindowStart).TotalMinutes;
+        if (minutesFromOpen < 0 || minutesFromOpen % slotMinutes != 0)
+            throw new InvalidOperationException("This time slot does not align with the booking grid.");
 
         var onlineUsed = await CountActiveOnlineBookingsForSlotAsync(
             branchId, serviceTypeId, slotStart, slotEnd, null, cancellationToken);
@@ -397,6 +407,9 @@ public sealed class QmsQueueService(
 
         booking.SlotStart = newSlotStart;
         booking.SlotEnd = newSlotEnd;
+        // Reset check-in state: rescheduled booking must be checked in again at the new time
+        booking.CheckedInAt = null;
+        booking.Status = BookingStatus.Confirmed;
 
         if (booking.QueueEntry is { State: QueueEntryState.Waiting } qe)
         {
@@ -429,10 +442,9 @@ public sealed class QmsQueueService(
             qe.ServiceDay = newSvcDay;
             qe.AssignedSlotStart = newSlotStart;
             qe.AssignedSlotEnd = newSlotEnd;
-            // Before check-in this is provisional (= SlotStart); if already checked in, keep the
-            // max(CheckedInAt, SlotStart - EarlyCall) rule used at check-in.
-            qe.QueueEligibleAt = OnlineQueueEligibleAt(
-                newSlotStart, booking.Branch.OnlineEarlyCallMinutes, qe.CheckedIn ? booking.CheckedInAt : null);
+            // Reset check-in flag and set provisional queue eligibility to slot start
+            qe.CheckedIn = false;
+            qe.QueueEligibleAt = newSlotStart;
         }
 
         await db.SaveChangesAsync(cancellationToken);
