@@ -17,16 +17,20 @@ public sealed class DashboardController(QmsDbContext db, QmsQueueService queue) 
     public async Task<ActionResult<LiveDashboardDto>> Live(Guid branchId, CancellationToken cancellationToken)
     {
         var now = DateTimeOffset.UtcNow;
-        var dayStart = now.ToUniversalTime().Date;
-        var dayEnd = dayStart.AddDays(1);
-        var dayStartOffset = new DateTimeOffset(dayStart, TimeSpan.Zero);
-        var dayEndOffset = new DateTimeOffset(dayEnd, TimeSpan.Zero);
+
+        // Use branch-local service day instead of UTC date
+        var branch = await db.Branches.AsNoTracking().FirstOrDefaultAsync(b => b.Id == branchId, cancellationToken);
+        if (branch is null) return NotFound();
+        var zone = TimeSpan.FromMinutes(branch.ServiceZoneOffsetMinutes);
+        var nowLocal = now.ToOffset(zone);
+        var todayDate = DateOnly.FromDateTime(nowLocal.DateTime);
+        var dayStartOffset = new DateTimeOffset(todayDate.ToDateTime(TimeOnly.MinValue), zone);
+        var dayEndOffset = dayStartOffset.AddDays(1);
 
         var waiting = await db.QueueEntries.CountAsync(
             q => q.BranchId == branchId && q.State == QueueEntryState.Waiting
                  && q.CheckedIn
-                 && (q.CreatedAt >= dayStartOffset
-                     || (q.Booking != null && q.Booking.SlotStart >= dayStartOffset)),
+                 && q.ServiceDay == todayDate,
             cancellationToken);
 
         var serving = await db.QueueEntries.CountAsync(
@@ -99,8 +103,7 @@ public sealed class DashboardController(QmsDbContext db, QmsQueueService queue) 
             var ahead = await db.QueueEntries.CountAsync(
                 q => q.BranchId == branchId && q.ServiceTypeId == s.Id && q.State == QueueEntryState.Waiting
                      && q.CheckedIn
-                     && (q.CreatedAt >= dayStartOffset
-                         || (q.Booking != null && q.Booking.SlotStart >= dayStartOffset)),
+                     && q.ServiceDay == todayDate,
                 cancellationToken);
             var laneServing = await db.QueueEntries.CountAsync(
                 q => q.BranchId == branchId && q.ServiceTypeId == s.Id && q.State == QueueEntryState.Serving,
@@ -119,26 +122,25 @@ public sealed class DashboardController(QmsDbContext db, QmsQueueService queue) 
                  && q.ServingEndedAt < dayEndOffset,
             cancellationToken);
 
+        // Walk-ins today: by service day (walk-in created today → served today)
         var walkInsToday = await db.QueueEntries.CountAsync(
             q => q.BranchId == branchId
                  && q.EntryType == QueueEntryType.WalkIn
-                 && q.CreatedAt >= dayStartOffset
-                 && q.CreatedAt < dayEndOffset,
+                 && q.ServiceDay == todayDate,
             cancellationToken);
 
+        // Appointments today: bookings whose slot is today (not when the booking was created)
         var appointmentsToday = await db.QueueEntries.CountAsync(
             q => q.BranchId == branchId
                  && q.EntryType == QueueEntryType.OnlineBooked
-                 && q.CreatedAt >= dayStartOffset
-                 && q.CreatedAt < dayEndOffset,
+                 && q.ServiceDay == todayDate,
             cancellationToken);
 
         var onlineCheckInsWaiting = await db.QueueEntries.CountAsync(
             q => q.BranchId == branchId
                  && q.State == QueueEntryState.Waiting
                  && q.EntryType == QueueEntryType.OnlineBooked
-                 && q.Booking != null
-                 && q.Booking.CheckedInAt != null,
+                 && q.CheckedIn,
             cancellationToken);
 
         return Ok(new LiveDashboardDto(

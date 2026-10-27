@@ -95,9 +95,12 @@ export type TicketStatusSummary = {
   served: number;
   waiting: number;
   serving: number;
-  /** Missed tickets: called, no response (not booking no-shows). */
-  noShow: number;
+  /** Missed tickets: called, no response. */
+  missed: number;
+  /** Customer-initiated cancellations. */
   cancelled: number;
+  /** No-shows: online booking slot ended without check-in. */
+  noShows?: number;
 };
 export type ChannelAnalytics = {
   tickets: number;

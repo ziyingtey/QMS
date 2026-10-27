@@ -470,7 +470,7 @@ public sealed class QmsQueueService(
         Guid? releasedServiceTypeId = null;
         if (booking.QueueEntry is not null)
         {
-            booking.QueueEntry.State = QueueEntryState.Missed;
+            booking.QueueEntry.State = QueueEntryState.Cancelled;
             releasedServiceTypeId = booking.QueueEntry.ServiceTypeId;
         }
 
@@ -1592,19 +1592,17 @@ public sealed class QmsQueueService(
 
         var alerts = new List<ManagerInsightAlertDto>();
         var suggestions = new List<ManagerSuggestionDto>();
-        var dayStart = DateTimeOffset.UtcNow.UtcDateTime.Date;
-        var dayEnd = dayStart.AddDays(1);
-        var dayStartOffset = new DateTimeOffset(dayStart, TimeSpan.Zero);
-        var dayEndOffset = new DateTimeOffset(dayEnd, TimeSpan.Zero);
 
         var zone = TimeSpan.FromMinutes(branchEntity.ServiceZoneOffsetMinutes);
         var nowAtBranch = DateTimeOffset.UtcNow.ToOffset(zone);
+        var todayLocalDate = DateOnly.FromDateTime(nowAtBranch.DateTime);
+        var dayStartOffset = new DateTimeOffset(todayLocalDate.ToDateTime(TimeOnly.MinValue), zone);
+        var dayEndOffset = dayStartOffset.AddDays(1);
         var slotMin = branchEntity.SlotDurationMinutes < 1 ? 30 : branchEntity.SlotDurationMinutes;
-        var todayLocal = DateOnly.FromDateTime(nowAtBranch.DateTime);
         DateTimeOffset nextStart;
         DateTimeOffset nextEnd;
         var validNextWindow = false;
-        var todaySvcWindow = await GetBranchLocalServiceWindowAsync(branchEntity.Id, todayLocal, zone, cancellationToken);
+        var todaySvcWindow = await GetBranchLocalServiceWindowAsync(branchEntity.Id, todayLocalDate, zone, cancellationToken);
         if (todaySvcWindow is { } tw)
         {
             var windowStart = tw.Start;
@@ -1625,8 +1623,7 @@ public sealed class QmsQueueService(
         var waitingTotal = await db.QueueEntries.CountAsync(
             q => q.BranchId == branchId && q.State == QueueEntryState.Waiting
                  && q.CheckedIn
-                 && (q.CreatedAt >= dayStartOffset
-                     || (q.Booking != null && q.Booking.SlotStart >= dayStartOffset)),
+                 && q.ServiceDay == todayLocalDate,
             cancellationToken);
         var activeAll = await db.Counters.CountAsync(
             c => c.BranchId == branchId && c.Mode == CounterMode.Active, cancellationToken);
@@ -1654,8 +1651,7 @@ public sealed class QmsQueueService(
         var nowUtc = DateTimeOffset.UtcNow;
         var waitingRows = await db.QueueEntries.AsNoTracking()
             .Where(q => q.BranchId == branchId && q.State == QueueEntryState.Waiting && q.CheckedIn
-                        && (q.CreatedAt >= dayStartOffset
-                            || (q.Booking != null && q.Booking.SlotStart >= dayStartOffset)))
+                        && q.ServiceDay == todayLocalDate)
             .Select(q => new { q.ServiceTypeId, EligibleAt = q.QueueEligibleAt ?? q.CreatedAt })
             .ToListAsync(cancellationToken);
         var eligibleRows = waitingRows.Where(r => r.EligibleAt <= nowUtc).ToList();
@@ -1680,8 +1676,7 @@ public sealed class QmsQueueService(
             var w = await db.QueueEntries.CountAsync(
                 q => q.BranchId == branchId && q.ServiceTypeId == svc.Id && q.State == QueueEntryState.Waiting
                      && q.CheckedIn
-                     && (q.CreatedAt >= dayStartOffset
-                         || (q.Booking != null && q.Booking.SlotStart >= dayStartOffset)),
+                     && q.ServiceDay == todayLocalDate,
                 cancellationToken);
             var serving = await db.QueueEntries.CountAsync(
                 q => q.BranchId == branchId && q.ServiceTypeId == svc.Id && q.State == QueueEntryState.Serving, cancellationToken);
@@ -1787,8 +1782,10 @@ public sealed class QmsQueueService(
             .Where(s => s.BranchId == branchId).OrderBy(s => s.Name).ToListAsync(cancellationToken);
         var serviceNameById = services.ToDictionary(s => s.Id, s => s.Name);
 
+        var todayDate = DateOnly.FromDateTime(nowBranch.DateTime);
+
         var ticketsTodayRows = await db.QueueEntries.AsNoTracking()
-            .Where(q => q.BranchId == branchId && q.CreatedAt >= dayStart && q.CreatedAt < dayEnd)
+            .Where(q => q.BranchId == branchId && q.ServiceDay == todayDate)
             .Select(q => new { q.State, q.EntryType, q.CreatedAt, q.ServiceTypeId })
             .ToListAsync(cancellationToken);
 
@@ -1914,30 +1911,32 @@ public sealed class QmsQueueService(
                  && b.SlotStart < dayEnd,
             cancellationToken);
 
+        var cancelledEntries = ticketsTodayRows.Count(t => t.State == QueueEntryState.Cancelled);
+
         var ticketStatus = new TicketStatusSummaryDto(
             ticketsTodayRows.Count,
             ticketsTodayRows.Count(t => t.State == QueueEntryState.Completed),
             ticketsTodayRows.Count(t => t.State == QueueEntryState.Waiting),
             ticketsTodayRows.Count(t => t.State == QueueEntryState.Serving),
             ticketsTodayRows.Count(t => t.State == QueueEntryState.Missed),
-            cancelledBookings);
+            cancelledBookings + cancelledEntries,
+            ticketsTodayRows.Count(t => t.State == QueueEntryState.NoShow));
 
         var walkInToday = ticketsTodayRows.Where(t => t.EntryType == QueueEntryType.WalkIn).ToList();
         var onlineToday = ticketsTodayRows.Where(t => t.EntryType == QueueEntryType.OnlineBooked).ToList();
         var walkInWaits = calledWaits.Where(c => c.EntryType == QueueEntryType.WalkIn).Select(c => c.Minutes).ToList();
         var onlineWaits = calledWaits.Where(c => c.EntryType == QueueEntryType.OnlineBooked).Select(c => c.Minutes).ToList();
 
-        // noShows here = Missed tickets (called, no response; QueueEntryState.Missed). Booking no-shows
-        // (never checked in, BookingStatus.NoShow) are only on the Appointments page.
+        // Missed = called, no response. Cancelled and NoShow are distinct.
         ChannelAnalyticsDto ChannelStats(
             int tickets,
             int served,
-            int noShows,
+            int missed,
             IReadOnlyList<double> toCallMinutes)
         {
-            var rate = tickets > 0 ? Math.Round(noShows * 100.0 / tickets, 1) : (double?)null;
+            var rate = tickets > 0 ? Math.Round(missed * 100.0 / tickets, 1) : (double?)null;
             double? avg = toCallMinutes.Count > 0 ? Math.Round(toCallMinutes.Average(), 1) : null;
-            return new ChannelAnalyticsDto(tickets, served, noShows, rate, avg);
+            return new ChannelAnalyticsDto(tickets, served, missed, rate, avg);
         }
 
         var walkInChannel = ChannelStats(
@@ -2817,9 +2816,12 @@ public sealed record TicketStatusSummaryDto(
     int Served,
     int Waiting,
     int Serving,
-    /// <summary>Missed tickets (QueueEntryState.Missed: called, no response). JSON name kept for compatibility.</summary>
-    int NoShow,
-    int Cancelled);
+    /// <summary>Missed tickets (QueueEntryState.Missed: called, no response).</summary>
+    int Missed,
+    /// <summary>Customer-initiated cancellations.</summary>
+    int Cancelled,
+    /// <summary>No-shows: online booking slot ended without check-in.</summary>
+    int NoShows = 0);
 /// <param name="NoShows">Missed tickets (called, no response). JSON name kept for compatibility.</param>
 /// <param name="NoShowRatePercent">Missed / tickets, in percent.</param>
 public sealed record ChannelAnalyticsDto(

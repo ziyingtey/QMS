@@ -403,7 +403,8 @@ export function TicketStatusStrip({ status, service }: { status: TicketStatusSum
     { key: "Served", val: status.served, color: STATUS_TONES.served },
     { key: "Serving", val: status.serving, color: STATUS_TONES.serving },
     { key: "Waiting", val: status.waiting, color: STATUS_TONES.waiting },
-    { key: "Missed", val: status.noShow, color: STATUS_TONES.missed },
+    { key: "Missed", val: status.missed, color: STATUS_TONES.missed },
+    { key: "No-show", val: status.noShows ?? 0, color: STATUS_TONES.missed },
     { key: "Cancelled", val: status.cancelled, color: STATUS_TONES.cancelled },
   ];
   // Only rows with a count: keeps the legend short on quiet days.

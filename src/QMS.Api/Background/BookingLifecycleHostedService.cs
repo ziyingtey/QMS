@@ -90,7 +90,7 @@ public sealed class BookingLifecycleHostedService(
 
             if (bk.QueueEntry is { } qe && qe.State == QueueEntryState.Waiting)
             {
-                qe.State = QueueEntryState.Missed;
+                qe.State = QueueEntryState.NoShow;
                 branchIds.Add(qe.BranchId);
             }
 

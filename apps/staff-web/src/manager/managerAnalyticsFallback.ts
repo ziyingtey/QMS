@@ -34,8 +34,9 @@ export function buildAnalyticsFallback(
       served,
       waiting: live?.queueLength ?? 0,
       serving: live?.servingCount ?? 0,
-      noShow: insights?.missedToday ?? 0,
+      missed: insights?.missedToday ?? 0,
       cancelled: 0,
+      noShows: 0,
     },
     walkIn: {
       tickets: live?.walkInsToday ?? 0,
