@@ -95,6 +95,10 @@ npx expo start
 
 Android emulator: `EXPO_PUBLIC_API_URL=http://10.0.2.2:5154`. Allow location to check in.
 
+## Local secrets
+
+Database password, walk-in token secret and SMTP credentials are stored in [.NET User Secrets](docs/LOCAL_SECRETS.md) — not in `appsettings.Development.json`. Run the setup commands in that doc on each dev machine.
+
 ## Email (SMTP)
 
 Registration / password reset send mail via `Smtp` settings (`DryRun: true` logs instead of sending). Set `PublicUrls:ApiPublicBaseUrl` for production links. See [docs/real-email-verification-smtp.md](docs/real-email-verification-smtp.md) and [docs/email-setup-step-by-step.md](docs/email-setup-step-by-step.md).
