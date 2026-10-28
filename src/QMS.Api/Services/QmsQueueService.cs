@@ -499,13 +499,14 @@ public sealed class QmsQueueService(
         Guid? bookingId = null)
     {
         // If bookingId is provided, use it for exact lookup (avoids cross-day ticket shadowing).
+        // If the bookingId doesn't match, return null (404) — never fall through to ticket-number
+        // lookup, which would let anyone read any ticket with a random GUID.
         if (bookingId.HasValue)
         {
             var byBooking = await db.QueueEntries.AsNoTracking()
                 .Include(q => q.ServiceType).Include(q => q.Branch).Include(q => q.Counter).Include(q => q.Booking)
                 .FirstOrDefaultAsync(q => q.BookingId == bookingId.Value && q.BranchId == branchId, cancellationToken);
-            if (byBooking is not null)
-                return await BuildQueueStatusDto(byBooking, cancellationToken);
+            return byBooking is not null ? await BuildQueueStatusDto(byBooking, cancellationToken) : null;
         }
 
         // Prefer today's ticket; fall back to most recent if none found today.
