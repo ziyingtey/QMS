@@ -2376,7 +2376,7 @@ public sealed class QmsQueueService(
         return (await ListBranchQueuesAsync(branchId, cancellationToken)).First(q => q.Id == queue.Id);
     }
 
-    private static string NormalizePrefix(string raw)
+    internal static string NormalizePrefix(string raw)
     {
         if (string.IsNullOrWhiteSpace(raw))
             throw new InvalidOperationException("Ticket prefix is required (1–3 letters).");
