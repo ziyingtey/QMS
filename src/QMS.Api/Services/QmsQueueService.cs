@@ -117,41 +117,48 @@ public sealed class QmsQueueService(
         await ValidateBookableSlotAsync(branch, service, slotStart, slotEnd,
             excludeBookingId: null, cancellationToken);
 
-        var (queue, seq, ticket, svcDay) = await IssueTicketAsync(branch, service, cancellationToken, serviceDay: slotStart);
-
-        var booking = new Booking
+        Booking booking = null!;
+        QueueEntry entry = null!;
+        string ticket = null!;
+        await SaveWithTicketNumberRetryAsync(async ct =>
         {
-            Id = Guid.NewGuid(),
-            CustomerId = userId,
-            BranchId = branchId,
-            ServiceTypeId = serviceTypeId,
-            SlotStart = slotStart,
-            SlotEnd = slotEnd,
-            Status = BookingStatus.Confirmed
-        };
+            var (queue, seq, t, svcDay) = await IssueTicketAsync(branch, service, ct, serviceDay: slotStart);
+            ticket = t;
 
-        var entry = new QueueEntry
-        {
-            Id = Guid.NewGuid(),
-            BranchId = branchId,
-            ServiceTypeId = serviceTypeId,
-            QueueId = queue.Id,
-            TicketNumber = ticket,
-            EntryType = QueueEntryType.OnlineBooked,
-            State = QueueEntryState.Waiting,
-            BookingId = booking.Id,
-            EnqueueSequence = seq,
-            ServiceDay = svcDay,
-            AssignedSlotStart = slotStart,
-            AssignedSlotEnd = slotEnd,
-            CheckedIn = false,
-            // Online: eligible when slot begins (minus OnlineEarlyCallMinutes, handled at call time)
-            QueueEligibleAt = slotStart,
-        };
+            booking = new Booking
+            {
+                Id = Guid.NewGuid(),
+                CustomerId = userId,
+                BranchId = branchId,
+                ServiceTypeId = serviceTypeId,
+                SlotStart = slotStart,
+                SlotEnd = slotEnd,
+                Status = BookingStatus.Confirmed
+            };
 
-        booking.QueueEntry = entry;
-        db.Bookings.Add(booking);
-        await db.SaveChangesAsync(cancellationToken);
+            entry = new QueueEntry
+            {
+                Id = Guid.NewGuid(),
+                BranchId = branchId,
+                ServiceTypeId = serviceTypeId,
+                QueueId = queue.Id,
+                TicketNumber = ticket,
+                EntryType = QueueEntryType.OnlineBooked,
+                State = QueueEntryState.Waiting,
+                BookingId = booking.Id,
+                EnqueueSequence = seq,
+                ServiceDay = svcDay,
+                AssignedSlotStart = slotStart,
+                AssignedSlotEnd = slotEnd,
+                CheckedIn = false,
+                // Online: eligible when slot begins (minus OnlineEarlyCallMinutes, handled at call time)
+                QueueEligibleAt = slotStart,
+            };
+
+            booking.QueueEntry = entry;
+            db.Bookings.Add(booking);
+            return new object[] { booking, entry };
+        }, cancellationToken);
 
         await bds.OnTicketIssuedAsync(branch.BranchCode, ticket, entry.CreatedAt, service.Code, cancellationToken);
         await hubContext.Clients.Group(QueueHub.BranchGroup(branchId)).SendAsync("QueueUpdated", branchId, cancellationToken);
@@ -199,30 +206,35 @@ public sealed class QmsQueueService(
         if (chosenStart < windowStart) chosenStart = windowStart;
         var chosenEnd = chosenStart.AddMinutes(slotM);
 
-        var (queue, seq, ticket, svcDay) = await IssueTicketAsync(branch, service, cancellationToken);
-
-        var nowUtc = DateTimeOffset.UtcNow;
-        var entry = new QueueEntry
+        QueueEntry entry = null!;
+        string ticket = null!;
+        await SaveWithTicketNumberRetryAsync(async ct =>
         {
-            Id = Guid.NewGuid(),
-            BranchId = branchId,
-            ServiceTypeId = serviceTypeId,
-            QueueId = queue.Id,
-            TicketNumber = ticket,
-            EntryType = QueueEntryType.WalkIn,
-            State = QueueEntryState.Waiting,
-            CreatedAt = nowUtc,
-            EnqueueSequence = seq,
-            ServiceDay = svcDay,
-            AssignedSlotStart = chosenStart,
-            AssignedSlotEnd = chosenEnd,
-            CheckedIn = true,
-            QueueEligibleAt = nowUtc,
-            WalkInDeviceId = walkInDeviceId,
-        };
+            var (queue, seq, t, svcDay) = await IssueTicketAsync(branch, service, ct);
+            ticket = t;
+            var nowUtc = DateTimeOffset.UtcNow;
+            entry = new QueueEntry
+            {
+                Id = Guid.NewGuid(),
+                BranchId = branchId,
+                ServiceTypeId = serviceTypeId,
+                QueueId = queue.Id,
+                TicketNumber = ticket,
+                EntryType = QueueEntryType.WalkIn,
+                State = QueueEntryState.Waiting,
+                CreatedAt = nowUtc,
+                EnqueueSequence = seq,
+                ServiceDay = svcDay,
+                AssignedSlotStart = chosenStart,
+                AssignedSlotEnd = chosenEnd,
+                CheckedIn = true,
+                QueueEligibleAt = nowUtc,
+                WalkInDeviceId = walkInDeviceId,
+            };
 
-        db.QueueEntries.Add(entry);
-        await db.SaveChangesAsync(cancellationToken);
+            db.QueueEntries.Add(entry);
+            return new object[] { entry };
+        }, cancellationToken);
 
         // ML snapshot: walk-in is immediately queue-eligible, capture features now
         try
@@ -367,36 +379,44 @@ public sealed class QmsQueueService(
             var oldSlotEnd = qe.AssignedSlotEnd;
             var oldSeq = qe.EnqueueSequence;
 
-            // Re-issue ticket for the new service day (prevents cross-day ticket collision)
-            var (queue, newSeq, newTicket, newSvcDay) = await IssueTicketAsync(branch, service, cancellationToken, serviceDay: newSlotStart);
-
-            // Record reschedule movement
-            db.QueueMovements.Add(new QueueMovement
+            await SaveWithTicketNumberRetryAsync(async ct =>
             {
-                Id = Guid.NewGuid(),
-                QueueEntryId = qe.Id,
-                FromSlotStart = oldSlotStart,
-                FromSlotEnd = oldSlotEnd,
-                ToSlotStart = newSlotStart,
-                ToSlotEnd = newSlotEnd,
-                PreviousEnqueueSequence = oldSeq,
-                NewEnqueueSequence = newSeq,
-                MovedAt = DateTimeOffset.UtcNow,
-                Reason = QueueMovementReason.ManualReschedule,
-            });
+                // Re-issue ticket for the new service day (prevents cross-day ticket collision)
+                var (queue, newSeq, newTicket, newSvcDay) = await IssueTicketAsync(branch, service, ct, serviceDay: newSlotStart);
 
-            qe.QueueId = queue.Id;
-            qe.EnqueueSequence = newSeq;
-            qe.TicketNumber = newTicket;
-            qe.ServiceDay = newSvcDay;
-            qe.AssignedSlotStart = newSlotStart;
-            qe.AssignedSlotEnd = newSlotEnd;
-            // Reset check-in flag and set provisional queue eligibility to slot start
-            qe.CheckedIn = false;
-            qe.QueueEligibleAt = newSlotStart;
+                // Record reschedule movement
+                var movement = new QueueMovement
+                {
+                    Id = Guid.NewGuid(),
+                    QueueEntryId = qe.Id,
+                    FromSlotStart = oldSlotStart,
+                    FromSlotEnd = oldSlotEnd,
+                    ToSlotStart = newSlotStart,
+                    ToSlotEnd = newSlotEnd,
+                    PreviousEnqueueSequence = oldSeq,
+                    NewEnqueueSequence = newSeq,
+                    MovedAt = DateTimeOffset.UtcNow,
+                    Reason = QueueMovementReason.ManualReschedule,
+                };
+                db.QueueMovements.Add(movement);
+
+                qe.QueueId = queue.Id;
+                qe.EnqueueSequence = newSeq;
+                qe.TicketNumber = newTicket;
+                qe.ServiceDay = newSvcDay;
+                qe.AssignedSlotStart = newSlotStart;
+                qe.AssignedSlotEnd = newSlotEnd;
+                // Reset check-in flag and set provisional queue eligibility to slot start
+                qe.CheckedIn = false;
+                qe.QueueEligibleAt = newSlotStart;
+
+                return new object[] { movement };
+            }, cancellationToken);
         }
-
-        await db.SaveChangesAsync(cancellationToken);
+        else
+        {
+            await db.SaveChangesAsync(cancellationToken);
+        }
         await hubContext.Clients.Group(QueueHub.BranchGroup(booking.BranchId)).SendAsync("QueueUpdated", booking.BranchId, cancellationToken);
     }
 
@@ -2420,36 +2440,44 @@ public sealed class QmsQueueService(
         var oldSlotStart = entry.AssignedSlotStart;
         var oldSlotEnd = entry.AssignedSlotEnd;
 
-        var (queue, seq, newTicket, newSvcDay) = await IssueTicketAsync(counter.Branch, target, cancellationToken);
-
-        entry.ServiceTypeId = target.Id;
-        entry.QueueId = queue.Id;
-        entry.EnqueueSequence = seq;
-        entry.TicketNumber = newTicket;
-        entry.ServiceDay = newSvcDay;
-        entry.State = QueueEntryState.Waiting;
-        entry.CalledAt = null;
-        entry.CounterId = null;
-        entry.QueueEligibleAt = DateTimeOffset.UtcNow;
-
-        if (entry.Booking is not null)
-            entry.Booking.ServiceTypeId = target.Id;
-
-        db.QueueMovements.Add(new QueueMovement
+        string newTicket = null!;
+        string ticketPrefix = null!;
+        await SaveWithTicketNumberRetryAsync(async ct =>
         {
-            Id = Guid.NewGuid(),
-            QueueEntryId = entry.Id,
-            FromSlotStart = oldSlotStart,
-            FromSlotEnd = oldSlotEnd,
-            ToSlotStart = entry.AssignedSlotStart,
-            ToSlotEnd = entry.AssignedSlotEnd,
-            PreviousEnqueueSequence = oldSeq,
-            NewEnqueueSequence = seq,
-            MovedAt = DateTimeOffset.UtcNow,
-            Reason = QueueMovementReason.QueueTransfer,
-        });
+            var (queue, seq, nt, newSvcDay) = await IssueTicketAsync(counter.Branch, target, ct);
+            newTicket = nt;
+            ticketPrefix = queue.TicketPrefix;
 
-        await db.SaveChangesAsync(cancellationToken);
+            entry.ServiceTypeId = target.Id;
+            entry.QueueId = queue.Id;
+            entry.EnqueueSequence = seq;
+            entry.TicketNumber = newTicket;
+            entry.ServiceDay = newSvcDay;
+            entry.State = QueueEntryState.Waiting;
+            entry.CalledAt = null;
+            entry.CounterId = null;
+            entry.QueueEligibleAt = DateTimeOffset.UtcNow;
+
+            if (entry.Booking is not null)
+                entry.Booking.ServiceTypeId = target.Id;
+
+            var movement = new QueueMovement
+            {
+                Id = Guid.NewGuid(),
+                QueueEntryId = entry.Id,
+                FromSlotStart = oldSlotStart,
+                FromSlotEnd = oldSlotEnd,
+                ToSlotStart = entry.AssignedSlotStart,
+                ToSlotEnd = entry.AssignedSlotEnd,
+                PreviousEnqueueSequence = oldSeq,
+                NewEnqueueSequence = seq,
+                MovedAt = DateTimeOffset.UtcNow,
+                Reason = QueueMovementReason.QueueTransfer,
+            };
+            db.QueueMovements.Add(movement);
+
+            return new object[] { movement };
+        }, cancellationToken);
 
         await hubContext.Clients.Group(QueueHub.BranchGroup(counter.BranchId))
             .SendAsync("QueueUpdated", counter.BranchId, cancellationToken);
@@ -2466,9 +2494,46 @@ public sealed class QmsQueueService(
                 cancellationToken);
         }
 
-        return new TransferTicketDto(oldTicket, newTicket, target.Name, queue.TicketPrefix);
+        return new TransferTicketDto(oldTicket, newTicket, target.Name, ticketPrefix);
     }
 
+
+    /// <summary>
+    /// Retries <see cref="QmsDbContext.SaveChangesAsync"/> when a ticket-number unique-index collision occurs.
+    /// WHY: Daily ticket numbers (e.g. A001) are allocated as Max+1 without a database lock, so two
+    /// concurrent requests can race and hit the unique index on (BranchId, ServiceDay, TicketNumber).
+    /// The retry re-issues a ticket with the new Max+1 and tries again.
+    /// </summary>
+    /// <param name="stageAttemptAsync">
+    /// Delegate that issues a ticket, creates/updates entities, and adds them to the DbContext.
+    /// Returns the NEW entities that must be detached if the save collides (existing tracked entities
+    /// are simply overwritten on the next attempt).
+    /// </param>
+    /// <param name="ct">Cancellation token.</param>
+    private async Task SaveWithTicketNumberRetryAsync(
+        Func<CancellationToken, Task<IReadOnlyList<object>>> stageAttemptAsync,
+        CancellationToken ct)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            var newEntities = await stageAttemptAsync(ct);
+            try
+            {
+                await db.SaveChangesAsync(ct);
+                return;
+            }
+            catch (DbUpdateException ex) when (
+                attempt < TicketAllocationRetry.MaxTicketNumberAttempts
+                && TicketAllocationRetry.IsUniqueConstraintViolation(ex))
+            {
+                foreach (var entity in newEntities)
+                    db.Entry(entity).State = EntityState.Detached;
+                logger.LogWarning(
+                    "Ticket-number collision on attempt {Attempt} of {Max} — retrying",
+                    attempt, TicketAllocationRetry.MaxTicketNumberAttempts);
+            }
+        }
+    }
 
     private async Task<(BranchQueue Queue, long Seq, string Ticket, DateOnly ServiceDay)> IssueTicketAsync(
         Branch branch, ServiceType service, CancellationToken cancellationToken,
