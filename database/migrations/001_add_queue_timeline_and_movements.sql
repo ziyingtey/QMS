@@ -7,7 +7,7 @@
 
   Safe to re-run (IF NOT EXISTS / COL_LENGTH guards).
 
-  Run against existing IH-QMS database:
+  Run against existing QGo database:
     sqlcmd -S localhost,1433 -d QMS -i database/migrations/001_add_queue_timeline_and_movements.sql
 */
 

@@ -110,7 +110,7 @@ public sealed class StaffController(QmsQueueService queue, QmsDbContext db) : Co
 
     /// <summary>
     /// Cross-lane queue: waiting tickets across this counter's allowed services,
-    /// ordered like successive Call Next picks (档 B longest-wait queue heads).
+    /// ordered like successive Call Next picks (service queues longest-wait queue heads).
     /// </summary>
     [HttpGet("cross-lane-waiting")]
     public async Task<ActionResult<IReadOnlyList<WaitingTicketDto>>> CrossLaneWaiting(CancellationToken cancellationToken)
@@ -126,7 +126,7 @@ public sealed class StaffController(QmsQueueService queue, QmsDbContext db) : Co
         }
     }
 
-    /// <summary>档 B: transfer Waiting/Called ticket into another service queue (new letter+number).</summary>
+    /// <summary>Transfer Waiting/Called ticket into another service queue (new letter+number).</summary>
     [HttpPost("transfer")]
     public async Task<ActionResult<TransferTicketDto>> Transfer(
         [FromBody] TransferTicketRequest request, CancellationToken cancellationToken)

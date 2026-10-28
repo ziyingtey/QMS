@@ -1,4 +1,4 @@
--- 档 B Phase 1: SERVICE_QUEUES + QueueId + daily ticket reuse
+-- Service queues Phase 1: SERVICE_QUEUES + QueueId + daily ticket reuse
 IF OBJECT_ID(N'dbo.SERVICE_QUEUES', N'U') IS NULL
 CREATE TABLE dbo.SERVICE_QUEUES (
     Id UNIQUEIDENTIFIER NOT NULL CONSTRAINT PK_SERVICE_QUEUES PRIMARY KEY,

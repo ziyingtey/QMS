@@ -12,7 +12,7 @@ public class ServiceType
     public int PriorityWeight { get; set; } = 1;
     /// <summary>Manager-set max online bookings per slot for this service (0 = no online booking allowed).</summary>
     public int OnlineSlotsPerSlot { get; set; } = 4;
-    /// <summary>Service queue this lane issues tickets into (档 B). One service → one queue by default.</summary>
+    /// <summary>Service queue this lane issues tickets into. One service → one queue by default.</summary>
     public Guid? QueueId { get; set; }
     public BranchQueue? Queue { get; set; }
     public ICollection<Booking> Bookings { get; set; } = new List<Booking>();

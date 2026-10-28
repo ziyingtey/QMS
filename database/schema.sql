@@ -1,5 +1,5 @@
 /*
-  IH-QMS physical schema — aligned with QmsDbContext / EnsureCreated (net8 EF Core).
+  QGo physical schema — aligned with QmsDbContext / EnsureCreated (net8 EF Core).
   Regenerate reference: dotnet ef dbcontext script --project src/QMS.Infrastructure --startup-project src/QMS.Api
 
   Optional BDS reporting (not in EF model): database/bds_public_layout.sql on the same database.
@@ -430,7 +430,7 @@ IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_STAFF_Email' AND obje
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_QUEUE_MOVEMENTS_QueueEntryId_MovedAt' AND object_id = OBJECT_ID(N'dbo.QUEUE_MOVEMENTS'))
     CREATE NONCLUSTERED INDEX IX_QUEUE_MOVEMENTS_QueueEntryId_MovedAt ON dbo.QUEUE_MOVEMENTS(QueueEntryId, MovedAt);
 
--- 档 B: ensure SERVICE_QUEUES + QueueId on existing DBs (idempotent)
+-- Service queues: ensure SERVICE_QUEUES + QueueId on existing DBs (idempotent)
 IF OBJECT_ID(N'dbo.SERVICE_QUEUES', N'U') IS NULL
 CREATE TABLE dbo.SERVICE_QUEUES (
     Id UNIQUEIDENTIFIER NOT NULL CONSTRAINT PK_SERVICE_QUEUES PRIMARY KEY,

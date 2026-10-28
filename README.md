@@ -1,6 +1,6 @@
-# Intelligent Hybrid Queue Management System (IH-QMS)
+# QGo — Queue Management System
 
-Bank branch queue system (FYP): unified per-lane queue for **online bookings** and **walk-ins**, hybrid counter dispatch, live updates over **SignalR**, and an **ML-assisted wait-time ETA**.
+Bank branch queue system (FYP): unified per-lane queue for **online bookings** and **walk-ins**, live updates over **SignalR**, and an **ML-assisted wait-time ETA**.
 
 ## Architecture
 
@@ -18,7 +18,7 @@ Bank branch queue system (FYP): unified per-lane queue for **online bookings** a
 Walk-in tickets are **not** taken in the customer app.
 
 1. **QR scan (public):** staff open `/walk-in-qr` (calls `GET /api/branches/{branchId}/walk-in-link`, Staff policy) and display/print the branch QR. It links to the public `/walk-in` page with a **daily HMAC token** (`WalkIn:TokenSecret`; HMAC-SHA256 of branch + branch-local date, 8 chars; yesterday's token stays valid for `GraceMinutesAfterMidnight`, default 30 min). The page refreshes the token every 5 min.
-2. Customers scan the QR, pick a service, and get a ticket via `POST /api/queue/walk-in` — **anonymous, no capacity/daily limit**. The only limit is the `walk-in-public` rate-limit policy: **3 requests / 10 min per `X-Device-Id`** (fallback **30 / 10 min per IP**; staff/manager are not limited). `GET /api/queue/walk-in/mine` lets the page restore that device's tickets.
+2. Customers scan the QR, pick a service, and get a ticket via `POST /api/queue/walk-in` — **anonymous, no capacity/daily limit**. The only limit is a global chained rate limiter applied to that POST endpoint only: **30 requests / 10 min per IP** AND **3 requests / 10 min per `X-Device-Id`** (both always applied; staff/manager bypass both). `GET /api/queue/walk-in/mine` and `POST walk-in/staff` are not rate-limited.
 3. **Staff-issued:** staff can issue a walk-in at the counter from the Staff Deck (`POST /api/queue/walk-in/staff`, no token, no rate limit).
 
 Set `WalkIn:PublicWebBaseUrl` to the staff-web public origin so QR URLs point to the right host (otherwise the request origin is used).
@@ -117,7 +117,7 @@ Check Swagger for exact request shapes.
 ## Queue rules (summary)
 
 - Each ticket belongs to a service lane; **Call next** only considers **Active** counters allowed for that lane.
-- Hybrid dispatch ≈ **2 online : 1 walk-in**, with a walk-in boost when walk-ins dominate the line; checked-in online customers go ahead of not-checked-in.
+- Call Next uses **FIFO** ordering across all eligible tickets in the counter's allowed lanes (earliest `CreatedAt` first, then `Id` tiebreak).
 - Background jobs: booking lifecycle (late → `LateDegraded`, no check-in → `NoShow`), daily queue rollover per branch, after-hours counter close, ML snapshot collection.
 
 SignalR hub `/hubs/queue` is anonymous; clients call `WatchBranch(branchId)` and receive `QueueUpdated`, `TicketCalled`, `CountersUpdated`.

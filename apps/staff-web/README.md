@@ -1,4 +1,4 @@
-# IH-QMS Staff Web
+# QGo Staff Web
 
 Vite + React + TypeScript front-end for staff and managers.
 

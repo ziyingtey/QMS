@@ -6,7 +6,7 @@ using QMS.Infrastructure.Persistence;
 namespace QMS.Api.Services;
 
 /// <summary>
-/// Ensures each ServiceType has a BranchQueue (档 B). Safe to run on every startup.
+/// Ensures each ServiceType has a BranchQueue (service queues). Safe to run on every startup.
 /// Also applies SQL DDL when using SQL Server so existing databases pick up SERVICE_QUEUES.
 /// </summary>
 public static class ServiceQueueProvisioning

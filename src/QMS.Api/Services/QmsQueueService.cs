@@ -1931,7 +1931,7 @@ public sealed class QmsQueueService(
                 svc.Id, svc.Name, laneWaits.Count, avgCall, maxCall, avgSvcMin, laneSla));
         }
 
-        // 档 B: per-queue performance (letter series)
+        // Service queues: per-queue performance (letter series)
         var branchQueues = await db.BranchQueues.AsNoTracking()
             .Where(q => q.BranchId == branchId)
             .OrderBy(q => q.TicketPrefix)
@@ -2217,7 +2217,7 @@ public sealed class QmsQueueService(
 
 
     // ─────────────────────────────────────────────────────────────────────
-    // 档 B: list queues + transfer between queues
+    // Service queues: list queues + transfer between queues
     // ─────────────────────────────────────────────────────────────────────
 
     public async Task<IReadOnlyList<BranchQueueDto>> ListBranchQueuesAsync(

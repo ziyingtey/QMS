@@ -1,4 +1,4 @@
-/** IH-QMS customer — mockup-aligned deep blue + light content surfaces */
+/** QGo customer — mockup-aligned deep blue + light content surfaces */
 export const theme = {
   bg: "#0f172a",
   /** Home / list content area behind white cards */

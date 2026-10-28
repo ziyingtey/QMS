@@ -1,7 +1,7 @@
 namespace QMS.Domain.Entities;
 
 /// <summary>
-/// First-class service queue (档 B). Tickets are issued into a queue; counters listen to queues
+/// First-class service queue. Tickets are issued into a queue; counters listen to queues
 /// via the services mapped to those queues (AllowedServices → ServiceType.QueueId).
 /// </summary>
 public class BranchQueue
