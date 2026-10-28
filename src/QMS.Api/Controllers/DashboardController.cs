@@ -48,12 +48,20 @@ public sealed class DashboardController(QmsDbContext db, QmsQueueService queue) 
             q => q.BranchId == branchId && q.State == QueueEntryState.Serving,
             cancellationToken);
 
+        // Same filter as `waiting` (ServiceDay + CheckedIn) so KPIs add up:
+        // walkInsWaiting + onlineWaiting == waiting
         var walkInsWaiting = await db.QueueEntries.CountAsync(
-            q => q.BranchId == branchId && q.State == QueueEntryState.Waiting && q.EntryType == QueueEntryType.WalkIn,
+            q => q.BranchId == branchId && q.State == QueueEntryState.Waiting
+                 && q.CheckedIn
+                 && q.ServiceDay == todayDate
+                 && q.EntryType == QueueEntryType.WalkIn,
             cancellationToken);
 
         var onlineWaiting = await db.QueueEntries.CountAsync(
-            q => q.BranchId == branchId && q.State == QueueEntryState.Waiting && q.EntryType == QueueEntryType.OnlineBooked,
+            q => q.BranchId == branchId && q.State == QueueEntryState.Waiting
+                 && q.CheckedIn
+                 && q.ServiceDay == todayDate
+                 && q.EntryType == QueueEntryType.OnlineBooked,
             cancellationToken);
 
         var waitingRows = await db.QueueEntries.AsNoTracking()
