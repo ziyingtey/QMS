@@ -18,9 +18,3 @@ export const theme = {
   radiusLg: "16px",
   shadow: "0 4px 24px rgba(4, 51, 107, 0.08)",
 } as const;
-
-export const counterModeColor: Record<string, string> = {
-  active: theme.green,
-  break: theme.warning,
-  closed: "#94a3b8",
-};

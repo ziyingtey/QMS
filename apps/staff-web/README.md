@@ -10,7 +10,6 @@ Vite + React + TypeScript front-end for staff and managers.
 | `/manager` | Manager | Dashboard, queues, counters, schedule, analytics |
 | `/walk-in` | Public | Page opened by scanning the branch QR (`?t=` daily token) to take a walk-in ticket |
 | `/walk-in-qr` | Staff/Manager | Shows/prints today's branch walk-in QR |
-| `/preview/*` | Dev | Mock-data previews of the deck/manager UI |
 
 ## Run
 

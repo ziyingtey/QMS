@@ -425,19 +425,6 @@ export async function apiManagerQueues(branchId: string): Promise<BranchQueueDto
   return res.json() as Promise<BranchQueueDto[]>;
 }
 
-export async function apiManagerCreateQueue(
-  branchId: string,
-  body: { name: string; ticketPrefix: string; serviceLevelMinutes: number },
-): Promise<BranchQueueDto> {
-  const res = await fetch(`${API_BASE}/api/manager/branches/${branchId}/queues`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...(await staffAuthHeaders()) },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) throw new Error(await parseError(res));
-  return res.json() as Promise<BranchQueueDto>;
-}
-
 export async function apiManagerUpdateQueue(
   branchId: string,
   queueId: string,

@@ -105,15 +105,6 @@ export function slaTone(pct: number | null | undefined): "success" | "warning" |
   return "danger";
 }
 
-/**
- * Lower bound in minutes parsed from a bucket label such as "0–5 min", "15-20 min" or "20+ min".
- * Returns null when the label cannot be parsed (the bucket is then treated as within SLA).
- */
-export function bucketLowerBound(label: string): number | null {
-  const m = /(\d+(?:\.\d+)?)\s*(?:[–—-]|\+)/.exec(label);
-  return m ? Number(m[1]) : null;
-}
-
 /** Aligns sparse hourly rows (e.g. missed tickets) to the full list of hours, filling gaps with 0. */
 export function alignHours(hours: string[], rows: HourlyCount[]): HourlyCount[] {
   const map = new Map(rows.map((r) => [r.hourLabel, r.count]));
