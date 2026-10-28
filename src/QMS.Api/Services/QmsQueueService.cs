@@ -109,45 +109,8 @@ public sealed class QmsQueueService(
         if (service.OnlineSlotsPerSlot <= 0)
             throw new InvalidOperationException("Online booking is not available for this service.");
 
-        var zone = TimeSpan.FromMinutes(branch.ServiceZoneOffsetMinutes);
-        var nowAtBranch = DateTimeOffset.UtcNow.ToOffset(zone);
-        if (slotEnd <= nowAtBranch)
-            throw new InvalidOperationException("This time slot is no longer available (it is in the past).");
-
-        var slotStartZ = slotStart.ToOffset(zone);
-        var slotEndZ = slotEnd.ToOffset(zone);
-        var bookingDay = DateOnly.FromDateTime(slotStartZ.DateTime);
-        var todayInBranch = DateOnly.FromDateTime(nowAtBranch.DateTime);
-
-        // Validate slot shape: end must equal start + slot duration
-        var slotMinutes = branch.SlotDurationMinutes < 1 ? 30 : branch.SlotDurationMinutes;
-        if (slotEndZ != slotStartZ.AddMinutes(slotMinutes))
-            throw new InvalidOperationException($"Invalid slot: duration must be exactly {slotMinutes} minutes.");
-
-        // Weekly booking window check
-        if (!IsWithinBookingWindow(bookingDay, todayInBranch, branch.NextWeekBookingOpensOnDay))
-            throw new InvalidOperationException("Booking is only available for the current and next week.");
-
-        // Branch closure check
-        if (await IsBranchClosedOnAsync(branchId, bookingDay, zone, cancellationToken))
-            throw new InvalidOperationException("The branch is closed on this day.");
-
-        var serviceWindow = await GetBranchLocalServiceWindowAsync(branch.Id, bookingDay, zone, cancellationToken);
-        if (serviceWindow is null)
-            throw new InvalidOperationException("The branch is not open for booking on this day.");
-        var (serviceWindowStart, serviceWindowEnd) = serviceWindow.Value;
-        if (slotStartZ < serviceWindowStart || slotEndZ > serviceWindowEnd)
-            throw new InvalidOperationException("This time slot is outside branch service hours.");
-
-        // Validate slot alignment: must align to the opening-time grid
-        var minutesFromOpen = (slotStartZ - serviceWindowStart).TotalMinutes;
-        if (minutesFromOpen < 0 || minutesFromOpen % slotMinutes != 0)
-            throw new InvalidOperationException("This time slot does not align with the booking grid.");
-
-        var onlineUsed = await CountActiveOnlineBookingsForSlotAsync(
-            branchId, serviceTypeId, slotStart, slotEnd, null, cancellationToken);
-        if (onlineUsed >= service.OnlineSlotsPerSlot)
-            throw new InvalidOperationException("Online capacity for this slot is full.");
+        await ValidateBookableSlotAsync(branch, service, slotStart, slotEnd,
+            excludeBookingId: null, cancellationToken);
 
         var (queue, seq, ticket, svcDay) = await IssueTicketAsync(branch, service, cancellationToken, serviceDay: slotStart);
 
@@ -378,32 +341,9 @@ public sealed class QmsQueueService(
         if (booking.SlotStart - nowAtBranch < TimeSpan.FromHours(1))
             throw new InvalidOperationException("Rescheduling is only allowed up to 1 hour before the scheduled appointment.");
 
-        if (newSlotEnd <= nowAtBranch)
-            throw new InvalidOperationException("This time slot is no longer available (it is in the past).");
-
-        var newSlotStartZ = newSlotStart.ToOffset(zone);
-        var newSlotEndZ = newSlotEnd.ToOffset(zone);
-        var newBookingDay = DateOnly.FromDateTime(newSlotStartZ.DateTime);
-        var newWindow = await GetBranchLocalServiceWindowAsync(booking.BranchId, newBookingDay, zone, cancellationToken);
-        if (newWindow is null)
-            throw new InvalidOperationException("The branch is not open for booking on the selected day.");
-        var (newWindowStart, newWindowEnd) = newWindow.Value;
-        if (newSlotStartZ < newWindowStart || newSlotEndZ > newWindowEnd)
-            throw new InvalidOperationException("This time slot is outside branch service hours.");
-
-        // Closure check for new date
-        if (await IsBranchClosedOnAsync(booking.BranchId, newBookingDay, zone, cancellationToken))
-            throw new InvalidOperationException("The branch is closed on the selected day.");
-
-        // Booking window check (must be within current + next week)
-        var todayInBranch = DateOnly.FromDateTime(nowAtBranch.DateTime);
-        if (!IsWithinBookingWindow(newBookingDay, todayInBranch, branch.NextWeekBookingOpensOnDay))
-            throw new InvalidOperationException("Booking is only available for the current and next week.");
-
-        var onlineUsed = await CountActiveOnlineBookingsForSlotAsync(
-            booking.BranchId, booking.ServiceTypeId, newSlotStart, newSlotEnd, bookingId, cancellationToken);
-        if (onlineUsed >= service.OnlineSlotsPerSlot)
-            throw new InvalidOperationException("Online capacity for the new slot is full.");
+        // All slot/grid/window/closure/capacity checks — same as create, excluding this booking from capacity
+        await ValidateBookableSlotAsync(branch, service, newSlotStart, newSlotEnd,
+            excludeBookingId: bookingId, cancellationToken);
 
         booking.SlotStart = newSlotStart;
         booking.SlotEnd = newSlotEnd;
@@ -2095,6 +2035,54 @@ public sealed class QmsQueueService(
     // ─────────────────────────────────────────────────────────────────────
     // PRIVATE HELPERS
     // ─────────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Single validation path for bookable slots — used by both CreateBookingAsync and RescheduleBookingAsync
+    /// so all slot checks (past, shape, grid, booking window, closure, service hours, capacity) are identical.
+    /// </summary>
+    private async Task ValidateBookableSlotAsync(
+        Branch branch,
+        ServiceType service,
+        DateTimeOffset slotStart,
+        DateTimeOffset slotEnd,
+        Guid? excludeBookingId,
+        CancellationToken cancellationToken)
+    {
+        var zone = TimeSpan.FromMinutes(branch.ServiceZoneOffsetMinutes);
+        var nowAtBranch = DateTimeOffset.UtcNow.ToOffset(zone);
+        if (slotEnd <= nowAtBranch)
+            throw new InvalidOperationException("This time slot is no longer available (it is in the past).");
+
+        var slotStartZ = slotStart.ToOffset(zone);
+        var bookingDay = DateOnly.FromDateTime(slotStartZ.DateTime);
+        var todayInBranch = DateOnly.FromDateTime(nowAtBranch.DateTime);
+
+        var slotMinutes = branch.SlotDurationMinutes < 1 ? 30 : branch.SlotDurationMinutes;
+
+        // Weekly booking window check
+        if (!IsWithinBookingWindow(bookingDay, todayInBranch, branch.NextWeekBookingOpensOnDay))
+            throw new InvalidOperationException("Booking is only available for the current and next week.");
+
+        // Branch closure check
+        if (await IsBranchClosedOnAsync(branch.Id, bookingDay, zone, cancellationToken))
+            throw new InvalidOperationException("The branch is closed on this day.");
+
+        var serviceWindow = await GetBranchLocalServiceWindowAsync(branch.Id, bookingDay, zone, cancellationToken);
+        if (serviceWindow is null)
+            throw new InvalidOperationException("The branch is not open for booking on this day.");
+        var (serviceWindowStart, serviceWindowEnd) = serviceWindow.Value;
+
+        // Pure shape + grid check (public static so it can be unit-tested)
+        var shapeError = BookingSlotRules.ValidateSlotShape(
+            slotStart.ToOffset(zone), slotEnd.ToOffset(zone), slotMinutes, serviceWindowStart, serviceWindowEnd);
+        if (shapeError is not null)
+            throw new InvalidOperationException(shapeError);
+
+        var onlineUsed = await CountActiveOnlineBookingsForSlotAsync(
+            branch.Id, service.Id, slotStart, slotEnd, excludeBookingId, cancellationToken);
+        if (onlineUsed >= service.OnlineSlotsPerSlot)
+            throw new InvalidOperationException("Online capacity for this slot is full.");
+    }
 
     /// <summary>
     /// Online queue-eligible moment = max(CheckedInAt, SlotStart - OnlineEarlyCallMinutes), matching the
