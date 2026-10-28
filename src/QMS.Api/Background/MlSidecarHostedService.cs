@@ -184,9 +184,9 @@ public sealed class MlSidecarHostedService : IHostedService, IDisposable
             if (!_process.HasExited)
                 _process.Kill(entireProcessTree: true);
         }
-        catch
+        catch (Exception ex)
         {
-            // best-effort
+            _log.LogDebug(ex, "ML sidecar kill best-effort failed");
         }
     }
 
@@ -212,7 +212,7 @@ public sealed class MlSidecarHostedService : IHostedService, IDisposable
         return candidates.Distinct(StringComparer.OrdinalIgnoreCase).FirstOrDefault();
     }
 
-    private static string? ResolvePython(string mlDir)
+    private string? ResolvePython(string mlDir)
     {
         // Unix venv (Mac/Linux) — user is on Mac
         var venvUnix = Path.Combine(mlDir, ".venv", "bin", "python");
@@ -244,9 +244,9 @@ public sealed class MlSidecarHostedService : IHostedService, IDisposable
                 if (p.ExitCode == 0)
                     return name;
             }
-            catch
+            catch (Exception ex)
             {
-                // try next
+                _log.LogDebug(ex, "Python probe failed for candidate '{Candidate}'", name);
             }
         }
 
@@ -266,7 +266,7 @@ public sealed class MlSidecarHostedService : IHostedService, IDisposable
         return port is > 0 and < 65536;
     }
 
-    private static bool IsPortAccepting(string host, int port)
+    private bool IsPortAccepting(string host, int port)
     {
         try
         {
@@ -276,8 +276,9 @@ public sealed class MlSidecarHostedService : IHostedService, IDisposable
                 return false;
             return client.Connected;
         }
-        catch
+        catch (Exception ex)
         {
+            _log.LogDebug(ex, "Port probe failed for {Host}:{Port}", host, port);
             return false;
         }
     }

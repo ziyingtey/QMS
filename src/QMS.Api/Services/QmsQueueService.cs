@@ -21,7 +21,8 @@ public sealed class QmsQueueService(
     IWaitTimeEstimator waitTimeEstimator,
     WaitTimeFeatureBuilder featureBuilder,
     CounterSimulationEstimator simulationEstimator,
-    IOptions<ManagerAlertOptions> managerAlertOptions)
+    IOptions<ManagerAlertOptions> managerAlertOptions,
+    ILogger<QmsQueueService> logger)
 {
     // ─────────────────────────────────────────────────────────────────────
     // GET SLOTS (customer booking grid)
@@ -228,9 +229,14 @@ public sealed class QmsQueueService(
             db.MlTrainingObservations.Add(obs);
             await db.SaveChangesAsync(cancellationToken);
         }
-        catch (Exception)
+        catch (Exception ex)
         {
-            // Snapshot failure must never block ticket creation
+            // Snapshot failure must never block ticket creation — detach the added observation
+            // so the next SaveChanges doesn't retry it
+            foreach (var e in db.ChangeTracker.Entries<MlTrainingObservation>()
+                         .Where(e => e.State == EntityState.Added).ToList())
+                e.State = EntityState.Detached;
+            logger.LogWarning(ex, "ML snapshot failed for walk-in ticket {Ticket} at branch {BranchId}", ticket, branchId);
         }
 
         await bds.OnTicketIssuedAsync(branch.BranchCode, ticket, entry.CreatedAt, service.Code, cancellationToken);
@@ -627,9 +633,9 @@ public sealed class QmsQueueService(
                     cancellationToken);
             }
         }
-        catch
+        catch (Exception ex)
         {
-            // Best-effort — must not block Call Next
+            logger.LogWarning(ex, "Almost-next notification failed for branch {BranchId}", branchId);
         }
 
         return new CallNextDto(claimed.TicketNumber, counter.Number, null);
@@ -687,7 +693,7 @@ public sealed class QmsQueueService(
             await tx.CommitAsync(ct);
             return tracked;
         }
-        catch
+        catch (Exception)
         {
             await tx.RollbackAsync(ct);
             throw;
@@ -800,9 +806,9 @@ public sealed class QmsQueueService(
                 }
             }
         }
-        catch (Exception)
+        catch (Exception ex)
         {
-            // Target attachment failure must never block service start
+            logger.LogWarning(ex, "ML target attachment at StartService failed for ticket {Ticket}", ticketNumber);
         }
 
         await db.SaveChangesAsync(cancellationToken);
@@ -939,9 +945,9 @@ public sealed class QmsQueueService(
         {
             simEta = await simulationEstimator.EstimateAsync(entry, earlyCallMinutes, nowUtc, ct);
         }
-        catch
+        catch (Exception ex)
         {
-            /* simulation best-effort */
+            logger.LogWarning(ex, "Counter simulation failed for ticket {TicketId}", entry.Id);
         }
 
         double estMin;
@@ -977,8 +983,14 @@ public sealed class QmsQueueService(
                 await db.SaveChangesAsync(ct);
             }
         }
-        catch
+        catch (Exception ex)
         {
+            // Detach any WaitPrediction rows that were Added but not saved, so they don't
+            // resurface on the next SaveChanges in the main operation.
+            foreach (var e in db.ChangeTracker.Entries<WaitPrediction>()
+                         .Where(e => e.State == EntityState.Added).ToList())
+                e.State = EntityState.Detached;
+            logger.LogWarning(ex, "ETA prediction/feature build failed for ticket {TicketId}", entry.Id);
             if (double.IsInfinity(simEta))
                 return null;
             return Math.Round(simEta, 1);
@@ -2130,9 +2142,9 @@ public sealed class QmsQueueService(
             if (observations.Count > 0 || predictions.Count > 0)
                 await db.SaveChangesAsync(ct);
         }
-        catch (Exception)
+        catch (Exception ex)
         {
-            // Target attachment failure must never block Call Next
+            logger.LogWarning(ex, "ML target attachment at CallNext failed for ticket {TicketId}", entry.Id);
         }
     }
 
