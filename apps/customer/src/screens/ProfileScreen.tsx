@@ -115,8 +115,8 @@ export function ProfileScreen() {
     try {
       await updateProfile({ name: editName, phone: editPhone });
       setEditVisible(false);
-    } catch (e: any) {
-      Alert.alert("Error", e.message || "Failed to update profile.");
+    } catch (e: unknown) {
+      Alert.alert("Error", e instanceof Error ? e.message : "Failed to update profile.");
     } finally {
       setSaving(false);
     }
