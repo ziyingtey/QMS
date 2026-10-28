@@ -52,11 +52,7 @@ public static class BranchAfterHoursCounterSweep
                 continue;
 
             // Branch is closed — determine if we are within the drain window
-            var zone = TimeSpan.FromMinutes(branch.ServiceZoneOffsetMinutes);
-            var closeTime = GetTodayCloseTime(branch, hours, now, zone);
-            var drainMinutes = Math.Max(0, branch.AfterHoursDrainWindowMinutes);
-            var drainDeadline = closeTime?.AddMinutes(drainMinutes);
-            var inDrainWindow = drainDeadline.HasValue && now < drainDeadline.Value;
+            var inDrainWindow = BranchHoursEvaluator.IsInDrainWindow(now, branch, hours);
 
             var counters = await db.Counters
                 .Where(c => c.BranchId == branch.Id
@@ -134,18 +130,4 @@ public static class BranchAfterHoursCounterSweep
         return closedCount;
     }
 
-    /// <summary>Get today's closing time for a branch (branch-local), or null if no hours configured.</summary>
-    private static DateTimeOffset? GetTodayCloseTime(
-        Branch branch, IReadOnlyList<BranchOperatingHour> hours, DateTimeOffset nowUtc, TimeSpan zone)
-    {
-        var localNow = nowUtc.ToOffset(zone);
-        var dowName = localNow.DayOfWeek.ToString();
-        var row = hours.FirstOrDefault(h =>
-            string.Equals(h.DayOfWeek, dowName, StringComparison.OrdinalIgnoreCase));
-        if (row is null || row.IsClosed || row.CloseTime is null)
-            return null;
-        var closeMin = (int)row.CloseTime.Value.TotalMinutes;
-        var dayStart = new DateTimeOffset(localNow.Year, localNow.Month, localNow.Day, 0, 0, 0, zone);
-        return dayStart.AddMinutes(closeMin);
-    }
 }

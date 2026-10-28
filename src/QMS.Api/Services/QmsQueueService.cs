@@ -2628,20 +2628,9 @@ public sealed class QmsQueueService(
         var branch = await db.Branches.AsNoTracking().FirstOrDefaultAsync(b => b.Id == branchId, cancellationToken);
         if (branch is null) return false;
 
-        var now = DateTimeOffset.UtcNow;
-        var zone = TimeSpan.FromMinutes(branch.ServiceZoneOffsetMinutes);
-        var localNow = now.ToOffset(zone);
-        var dowName = localNow.DayOfWeek.ToString();
-        var row = await db.BranchOperatingHours.AsNoTracking()
-            .Where(h => h.BranchId == branchId && h.DayOfWeek == dowName)
-            .FirstOrDefaultAsync(cancellationToken);
-        if (row is null || row.IsClosed || row.CloseTime is null) return false;
-
-        var closeMin = (int)row.CloseTime.Value.TotalMinutes;
-        var dayStart = new DateTimeOffset(localNow.Year, localNow.Month, localNow.Day, 0, 0, 0, zone);
-        var closeTime = dayStart.AddMinutes(closeMin);
-        var drainDeadline = closeTime.AddMinutes(Math.Max(0, branch.AfterHoursDrainWindowMinutes));
-        return now >= closeTime && now < drainDeadline;
+        var hours = await db.BranchOperatingHours.AsNoTracking()
+            .Where(h => h.BranchId == branchId).ToListAsync(cancellationToken);
+        return BranchHoursEvaluator.IsInDrainWindow(DateTimeOffset.UtcNow, branch, hours);
     }
 
     private async Task<(DateTimeOffset Start, DateTimeOffset End)?> GetBranchLocalServiceWindowAsync(
