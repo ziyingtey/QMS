@@ -29,10 +29,8 @@ public static class QueueCallNextSelector
     /// Pick the next ticket Call Next should claim from an already-eligible pool.
     /// </summary>
     public static QueueEntry? SelectLongestWaitQueueHead(
-        IReadOnlyList<QueueEntry> eligible,
-        DateTimeOffset nowUtc)
+        IReadOnlyList<QueueEntry> eligible)
     {
-        _ = nowUtc; // kept for call-site compatibility; eligibility is caller-side
         if (eligible.Count == 0) return null;
 
         return eligible
@@ -46,10 +44,8 @@ public static class QueueCallNextSelector
     /// (single counter listening to the given eligible pool).
     /// </summary>
     public static List<QueueEntry> OrderByCallNextDrain(
-        IEnumerable<QueueEntry> tickets,
-        DateTimeOffset nowUtc)
+        IEnumerable<QueueEntry> tickets)
     {
-        _ = nowUtc;
         return tickets
             .OrderBy(e => e.CreatedAt)
             .ThenBy(e => e.Id)

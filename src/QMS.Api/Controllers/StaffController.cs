@@ -28,7 +28,7 @@ public sealed class StaffController(QmsQueueService queue, QmsDbContext db) : Co
         var staffId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
         try
         {
-            var result = await queue.CallNextAsync(staffId, request.BranchId, request.ServiceTypeId, cancellationToken);
+            var result = await queue.CallNextAsync(staffId, request.BranchId, cancellationToken);
             return Ok(result);
         }
         catch (InvalidOperationException ex)

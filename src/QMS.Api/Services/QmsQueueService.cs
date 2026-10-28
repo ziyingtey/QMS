@@ -24,6 +24,10 @@ public sealed class QmsQueueService(
     IOptions<ManagerAlertOptions> managerAlertOptions,
     ILogger<QmsQueueService> logger)
 {
+    // WHY static readonly: the injected IWaitTimeEstimator may be the ML wrapper;
+    // we need a guaranteed-formula baseline for the ML sanity clamp. FormulaWaitTimeEstimator is stateless.
+    private static readonly FormulaWaitTimeEstimator FormulaEstimator = new();
+
     // ─────────────────────────────────────────────────────────────────────
     // GET SLOTS (customer booking grid)
     // ─────────────────────────────────────────────────────────────────────
@@ -223,9 +227,9 @@ public sealed class QmsQueueService(
         // ML snapshot: walk-in is immediately queue-eligible, capture features now
         try
         {
-            var fb = new WaitTimeFeatureBuilder(db);
-            var features = await fb.BuildAsync(entry, branch, service, nowUtc, cancellationToken);
-            var obs = WaitTimeFeatureBuilder.ToObservation(features, entry, nowUtc);
+            var snapNow = DateTimeOffset.UtcNow;
+            var features = await featureBuilder.BuildAsync(entry, branch, service, snapNow, cancellationToken);
+            var obs = WaitTimeFeatureBuilder.ToObservation(features, entry, snapNow);
             db.MlTrainingObservations.Add(obs);
             await db.SaveChangesAsync(cancellationToken);
         }
@@ -362,7 +366,6 @@ public sealed class QmsQueueService(
             var oldSlotStart = qe.AssignedSlotStart;
             var oldSlotEnd = qe.AssignedSlotEnd;
             var oldSeq = qe.EnqueueSequence;
-            var oldTicket = qe.TicketNumber;
 
             // Re-issue ticket for the new service day (prevents cross-day ticket collision)
             var (queue, newSeq, newTicket, newSvcDay) = await IssueTicketAsync(branch, service, cancellationToken, serviceDay: newSlotStart);
@@ -413,12 +416,8 @@ public sealed class QmsQueueService(
             throw new InvalidOperationException("Cancellation is only allowed up to 1 hour before the scheduled appointment.");
 
         booking.Status = BookingStatus.Cancelled;
-        Guid? releasedServiceTypeId = null;
         if (booking.QueueEntry is not null)
-        {
             booking.QueueEntry.State = QueueEntryState.Cancelled;
-            releasedServiceTypeId = booking.QueueEntry.ServiceTypeId;
-        }
 
         await db.SaveChangesAsync(cancellationToken);
         await hubContext.Clients.Group(QueueHub.BranchGroup(booking.BranchId)).SendAsync("QueueUpdated", booking.BranchId, cancellationToken);
@@ -550,7 +549,6 @@ public sealed class QmsQueueService(
     public async Task<CallNextDto> CallNextAsync(
         Guid staffId,
         Guid branchId,
-        Guid serviceTypeId, // kept for API compat but ignored — we search all counter lanes
         CancellationToken cancellationToken = default)
     {
         var counter = await db.Counters
@@ -567,7 +565,6 @@ public sealed class QmsQueueService(
             throw new InvalidOperationException("This counter has no allowed service lanes.");
 
         var allowedServiceIds = counter.AllowedServices.Select(a => a.ServiceTypeId).ToList();
-        var zone = TimeSpan.FromMinutes(counter.Branch.ServiceZoneOffsetMinutes);
         var nowUtc = DateTimeOffset.UtcNow;
         var earlyMinutes = counter.Branch.OnlineEarlyCallMinutes;
 
@@ -620,7 +617,7 @@ public sealed class QmsQueueService(
                         && q.AssignedSlotStart.Value.AddMinutes(-earlyMinutes) <= nowUtc))
                 .ToListAsync(cancellationToken);
 
-            var almostNext = QueueCallNextSelector.SelectLongestWaitQueueHead(nextEligible, nowUtc);
+            var almostNext = QueueCallNextSelector.SelectLongestWaitQueueHead(nextEligible);
             if (almostNext?.Booking?.CustomerId is Guid almostId)
             {
                 await notifications.NotifyAsync(
@@ -669,7 +666,7 @@ public sealed class QmsQueueService(
                         && q.AssignedSlotStart.Value.AddMinutes(-earlyCallMinutes) <= nowUtc))
                 .ToListAsync(ct);
 
-            var next = QueueCallNextSelector.SelectLongestWaitQueueHead(eligible, nowUtc);
+            var next = QueueCallNextSelector.SelectLongestWaitQueueHead(eligible);
             if (next is null)
             {
                 await tx.RollbackAsync(ct);
@@ -958,7 +955,7 @@ public sealed class QmsQueueService(
             var features = await featureBuilder.BuildAsync(entry, branch, service, nowUtc, ct);
             (estMin, estSource) = waitTimeEstimator.Estimate(features);
             // Raw formula baseline for sanity clamp (IWaitTimeEstimator may be ML wrapper)
-            (formulaMin, _) = new FormulaWaitTimeEstimator().Estimate(features);
+            (formulaMin, _) = FormulaEstimator.Estimate(features);
 
             if (recordPredictions)
             {
@@ -998,7 +995,7 @@ public sealed class QmsQueueService(
 
         double eta;
         if (estSource == PredictionSource.Ml)
-            eta = ApplyMlSanityClamp(estMin, formulaMin, simEta);
+            eta = ApplyMlSanityClamp(estMin, formulaMin);
         else if (!double.IsInfinity(simEta))
             eta = simEta;
         else
@@ -1014,9 +1011,8 @@ public sealed class QmsQueueService(
     /// formula or the Call Next simulation). Only invalid output (NaN, infinity, negative) is replaced,
     /// by the formula value. WaitPredictions store the same raw ML score.
     /// </summary>
-    private static double ApplyMlSanityClamp(double mlMinutes, double formulaMinutes, double simMinutes)
+    private static double ApplyMlSanityClamp(double mlMinutes, double formulaMinutes)
     {
-        _ = simMinutes; // no longer used: the simulation does not cap ML
         if (double.IsNaN(mlMinutes) || double.IsInfinity(mlMinutes) || mlMinutes < 0)
             return Math.Max(0, formulaMinutes);
         return mlMinutes;
@@ -1138,7 +1134,7 @@ public sealed class QmsQueueService(
 
         // Eligible first in Call Next drain order; not-yet-eligible at the end
         var eligible = todayEntries.Where(IsEligible).ToList();
-        var ordered = QueueCallNextSelector.OrderByCallNextDrain(eligible, nowUtc);
+        var ordered = QueueCallNextSelector.OrderByCallNextDrain(eligible);
         foreach (var leftover in todayEntries.Where(q => !IsEligible(q)).OrderBy(q => q.CreatedAt).ThenBy(q => q.Id))
             ordered.Add(leftover);
 
@@ -1416,7 +1412,7 @@ public sealed class QmsQueueService(
             .ToList();
 
         // Match Call Next: CreatedAt FIFO among eligible
-        var sorted = QueueCallNextSelector.OrderByCallNextDrain(eligible, nowUtc);
+        var sorted = QueueCallNextSelector.OrderByCallNextDrain(eligible);
 
         // Wait start + lane target per row (LaneWaitRules), so Live Monitor row colours match the breach count.
         var serviceQueueMap = await db.ServiceTypes.AsNoTracking()
@@ -2408,9 +2404,6 @@ public sealed class QmsQueueService(
                      && (q.State == QueueEntryState.Waiting || q.State == QueueEntryState.Called),
                 cancellationToken)
             ?? throw new InvalidOperationException("Ticket not found or not transferable (must be Waiting/Called).");
-
-        if (entry.State == QueueEntryState.Serving)
-            throw new InvalidOperationException("Finish or miss the ticket before transferring.");
 
         var target = await db.ServiceTypes.FirstOrDefaultAsync(
                          s => s.Id == targetServiceTypeId && s.BranchId == counter.BranchId, cancellationToken)

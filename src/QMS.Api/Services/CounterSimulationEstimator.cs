@@ -106,7 +106,7 @@ public sealed class CounterSimulationEstimator(QmsDbContext db)
                 var lane = remaining
                     .Where(q => counterServices[c.Id].Contains(q.ServiceTypeId))
                     .ToList();
-                var head = QueueCallNextSelector.SelectLongestWaitQueueHead(lane, nowUtc);
+                var head = QueueCallNextSelector.SelectLongestWaitQueueHead(lane);
                 if (head is null) continue;
                 if (!counterFreeAt.TryGetValue(c.Id, out var freeAt)) continue;
                 if (freeAt < bestFreeAt
