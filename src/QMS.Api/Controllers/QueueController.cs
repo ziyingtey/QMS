@@ -18,7 +18,7 @@ public sealed class QueueController(QmsQueueService queue, QmsDbContext db, Walk
     /// <summary>
     /// Public walk-in (branch QR → web page). Requires today's branch token <c>t</c> (from the QR).
     /// Optional anonymous <c>X-Device-Id</c> header lets the page restore its tickets via <c>walk-in/mine</c>.
-    /// No capacity / daily limit; only a short-window per-device rate limit (policy "walk-in-public").
+    /// No capacity / daily limit; only a global chained rate limiter (30/10 min per IP + 3/10 min per device).
     /// </summary>
     [AllowAnonymous]
     [HttpPost("walk-in")]

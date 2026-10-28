@@ -130,7 +130,7 @@ builder.Services.AddRateLimiter(o =>
 
     var ipLimiter = PartitionedRateLimiter.Create<HttpContext, string>(http =>
     {
-        if (!http.Request.Path.StartsWithSegments("/api/Queue/walk-in"))
+        if (!WalkInRateLimitRules.IsPublicWalkInIssue(http.Request))
             return RateLimitPartition.GetNoLimiter("other");
         if (http.User.IsInRole("Staff") || http.User.IsInRole("Manager"))
             return RateLimitPartition.GetNoLimiter("staff");
@@ -141,7 +141,7 @@ builder.Services.AddRateLimiter(o =>
 
     var deviceLimiter = PartitionedRateLimiter.Create<HttpContext, string>(http =>
     {
-        if (!http.Request.Path.StartsWithSegments("/api/Queue/walk-in"))
+        if (!WalkInRateLimitRules.IsPublicWalkInIssue(http.Request))
             return RateLimitPartition.GetNoLimiter("other");
         if (http.User.IsInRole("Staff") || http.User.IsInRole("Manager"))
             return RateLimitPartition.GetNoLimiter("staff");
