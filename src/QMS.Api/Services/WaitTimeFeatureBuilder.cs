@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using QMS.Application.Waiting;
 using QMS.Domain.Entities;
 using QMS.Domain.Enums;
+using QMS.Domain.Time;
 using QMS.Infrastructure.Persistence;
 
 namespace QMS.Api.Services;
@@ -33,8 +34,7 @@ public sealed class WaitTimeFeatureBuilder(QmsDbContext db)
         DateTimeOffset snapshotAt,
         CancellationToken ct = default)
     {
-        var zone = TimeSpan.FromMinutes(branch.ServiceZoneOffsetMinutes);
-        var localTime = snapshotAt.ToOffset(zone);
+        var localTime = MalaysiaTime.ToLocal(snapshotAt);
         var hour = localTime.Hour;
         var isPeak = (hour >= 9 && hour <= 11) || (hour >= 14 && hour <= 16);
 
@@ -42,7 +42,7 @@ public sealed class WaitTimeFeatureBuilder(QmsDbContext db)
         // Convert so e.g. Monday is 0 (was 1) and Sunday is 6 (was 0).
         var dayOfWeekMon0 = ((int)localTime.DayOfWeek + 6) % 7;
 
-        var snapshotDay = DateOnly.FromDateTime(localTime.DateTime);
+        var snapshotDay = MalaysiaTime.LocalDate(snapshotAt);
         var earlyCallMinutes = branch.OnlineEarlyCallMinutes;
 
         // Queue counts only include tickets that are already queue-eligible at the snapshot (training:

@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using QMS.Domain.Entities;
 using QMS.Domain.Enums;
+using QMS.Domain.Time;
 using QMS.Infrastructure.Persistence;
 
 namespace QMS.Api.Services;
@@ -67,9 +68,9 @@ public static class CallNextQueueMath
         return new HeardLanes(active, listening, heard, serviceSets, serviceTypeId);
     }
 
-    /// <summary>Branch-local calendar day of <paramref name="at"/> (matches QueueEntry.ServiceDay).</summary>
-    public static DateOnly BranchDay(Branch branch, DateTimeOffset at) =>
-        DateOnly.FromDateTime(at.ToOffset(TimeSpan.FromMinutes(branch.ServiceZoneOffsetMinutes)).DateTime);
+    /// <summary>Malaysia calendar day of <paramref name="at"/> (matches QueueEntry.ServiceDay).</summary>
+    public static DateOnly BranchDay(DateTimeOffset at) =>
+        MalaysiaTime.LocalDate(at);
 
     /// <summary>
     /// Waiting tickets of the branch for <paramref name="serviceDay"/> that are Call Next eligible at
@@ -129,6 +130,6 @@ public static class CallNextQueueMath
     {
         var lanes = await ResolveHeardLanesAsync(db, me.BranchId, me.ServiceTypeId, ct);
         return await CountPeopleAheadAsync(
-            db, me, lanes, BranchDay(branch, at), at, branch.OnlineEarlyCallMinutes, ct);
+            db, me, lanes, BranchDay(at), at, branch.OnlineEarlyCallMinutes, ct);
     }
 }

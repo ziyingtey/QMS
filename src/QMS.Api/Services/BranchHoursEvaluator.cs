@@ -1,10 +1,11 @@
 using QMS.Domain.Entities;
 using QMS.Domain.Enums;
+using QMS.Domain.Time;
 
 namespace QMS.Api.Services;
 
 /// <summary>
-/// Mirrors customer-app branch open logic: manager override, ad-hoc closures, then weekly hours in branch local time.
+/// Mirrors customer-app branch open logic: manager override, ad-hoc closures, then weekly hours in Malaysia time.
 /// </summary>
 public static class BranchHoursEvaluator
 {
@@ -27,8 +28,7 @@ public static class BranchHoursEvaluator
         if (weeklyHours.Count == 0)
             return branch.OpeningStatus == BranchOpeningStatus.Open;
 
-        var zone = TimeSpan.FromMinutes(branch.ServiceZoneOffsetMinutes);
-        var localNow = utcNow.ToOffset(zone);
+        var localNow = MalaysiaTime.ToLocal(utcNow);
         var dowName = localNow.DayOfWeek.ToString();
 
         var row = weeklyHours.FirstOrDefault(h =>
@@ -52,16 +52,15 @@ public static class BranchHoursEvaluator
     public static DateTimeOffset? GetTodayCloseTime(
         Branch branch, IReadOnlyList<BranchOperatingHour> hours, DateTimeOffset utcNow)
     {
-        var zone = TimeSpan.FromMinutes(branch.ServiceZoneOffsetMinutes);
-        var localNow = utcNow.ToOffset(zone);
+        var localNow = MalaysiaTime.ToLocal(utcNow);
         var dowName = localNow.DayOfWeek.ToString();
         var row = hours.FirstOrDefault(h =>
             string.Equals(h.DayOfWeek, dowName, StringComparison.OrdinalIgnoreCase));
         if (row is null || row.IsClosed || row.CloseTime is null)
             return null;
         var closeMin = (int)row.CloseTime.Value.TotalMinutes;
-        var dayStart = new DateTimeOffset(localNow.Year, localNow.Month, localNow.Day, 0, 0, 0, zone);
-        return dayStart.AddMinutes(closeMin);
+        var localDate = DateOnly.FromDateTime(localNow.DateTime);
+        return MalaysiaTime.DayStart(localDate).AddMinutes(closeMin);
     }
 
     /// <summary>

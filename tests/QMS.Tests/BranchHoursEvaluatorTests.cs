@@ -55,6 +55,19 @@ public class BranchHoursEvaluatorTests
     }
 
     [Fact]
+    public void UsesMalaysiaWeekday_NotUtcWeekday()
+    {
+        // Thursday 2026-10-29 18:00 UTC is Friday 02:00 MYT. The branch is only open on Thursday,
+        // so evaluating with the UTC weekday would wrongly pick the Thursday row.
+        var thursdayEveningUtc = new DateTimeOffset(2026, 10, 29, 18, 0, 0, TimeSpan.Zero);
+        var allDayThursday = new List<BranchOperatingHour>
+        {
+            new() { DayOfWeek = "Thursday", OpenTime = TimeSpan.Zero, CloseTime = TimeSpan.FromHours(24), IsClosed = false },
+        };
+        Assert.False(BranchHoursEvaluator.IsBranchOpenNow(MakeBranch(), allDayThursday, thursdayEveningUtc));
+    }
+
+    [Fact]
     public void ManagerOverrideClosed()
     {
         var branch = MakeBranch();

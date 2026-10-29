@@ -5,13 +5,14 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using QMS.Api.Services;
 using QMS.Domain.Enums;
+using QMS.Domain.Time;
 using QMS.Infrastructure.Persistence;
 
 namespace QMS.Api.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-public sealed class QueueController(QmsQueueService queue, QmsDbContext db, WalkInTokenService walkInTokens) : ControllerBase
+public sealed class QueueController(QmsQueueService queue, QmsDbContext db, WalkInTokenService walkInTokens, IBranchClock clock) : ControllerBase
 {
     const string ScanQrMessage = "Please scan the QR code at the branch to take a walk-in ticket.";
 
@@ -24,15 +25,13 @@ public sealed class QueueController(QmsQueueService queue, QmsDbContext db, Walk
     [HttpPost("walk-in")]
     public async Task<ActionResult<WalkInResponse>> WalkIn([FromBody] WalkInRequest request, CancellationToken cancellationToken)
     {
-        var branch = await db.Branches.AsNoTracking()
-            .Where(b => b.Id == request.BranchId)
-            .Select(b => new { b.Id, b.ServiceZoneOffsetMinutes })
-            .FirstOrDefaultAsync(cancellationToken);
-        if (branch is null)
+        var branchExists = await db.Branches.AsNoTracking()
+            .AnyAsync(b => b.Id == request.BranchId, cancellationToken);
+        if (!branchExists)
             return NotFound(new { message = "Branch not found." });
         if (string.IsNullOrWhiteSpace(request.T))
             return BadRequest(new { message = ScanQrMessage, code = "walkin_token_missing" });
-        if (!walkInTokens.Validate(branch.Id, branch.ServiceZoneOffsetMinutes, request.T, DateTimeOffset.UtcNow))
+        if (!walkInTokens.Validate(request.BranchId, request.T, clock.UtcNow))
             return StatusCode(StatusCodes.Status403Forbidden, new { message = ScanQrMessage, code = "walkin_token_invalid" });
 
         return await IssueAsync(request.BranchId, request.ServiceTypeId, ReadDeviceId(), cancellationToken);
@@ -45,13 +44,10 @@ public sealed class QueueController(QmsQueueService queue, QmsDbContext db, Walk
     {
         var device = ReadDeviceId();
         if (device is null) return Ok(Array.Empty<MyWalkInTicketDto>());
-        var zoneMin = await db.Branches.AsNoTracking().Where(b => b.Id == branchId)
-            .Select(b => (int?)b.ServiceZoneOffsetMinutes).FirstOrDefaultAsync(cancellationToken);
-        if (zoneMin is null) return NotFound(new { message = "Branch not found." });
+        var branchExists = await db.Branches.AsNoTracking().AnyAsync(b => b.Id == branchId, cancellationToken);
+        if (!branchExists) return NotFound(new { message = "Branch not found." });
 
-        var zone = TimeSpan.FromMinutes(zoneMin.Value);
-        var local = DateTimeOffset.UtcNow.ToOffset(zone);
-        var startOfToday = new DateTimeOffset(local.Year, local.Month, local.Day, 0, 0, 0, zone);
+        var startOfToday = MalaysiaTime.DayStart(clock.LocalToday);
 
         var rows = await db.QueueEntries.AsNoTracking()
             .Where(q => q.BranchId == branchId && q.WalkInDeviceId == device && q.CreatedAt >= startOfToday)

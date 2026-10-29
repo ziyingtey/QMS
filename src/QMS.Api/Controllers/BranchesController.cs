@@ -5,13 +5,14 @@ using QMS.Api.Dtos;
 using QMS.Api.Services;
 using QMS.Domain.Entities;
 using QMS.Domain.Enums;
+using QMS.Domain.Time;
 using QMS.Infrastructure.Persistence;
 
 namespace QMS.Api.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-public sealed class BranchesController(QmsDbContext db, QmsQueueService queue) : ControllerBase
+public sealed class BranchesController(QmsDbContext db, QmsQueueService queue, IBranchClock clock) : ControllerBase
 {
     [AllowAnonymous]
     [HttpGet]
@@ -76,17 +77,14 @@ public sealed class BranchesController(QmsDbContext db, QmsQueueService queue) :
         [FromServices] Microsoft.Extensions.Options.IOptions<WalkInOptions> walkInOptions,
         CancellationToken cancellationToken)
     {
-        var branch = await db.Branches.AsNoTracking().Where(b => b.Id == branchId)
-            .Select(b => new { b.Id, b.ServiceZoneOffsetMinutes }).FirstOrDefaultAsync(cancellationToken);
-        if (branch is null) return NotFound();
+        var branchExists = await db.Branches.AsNoTracking().AnyAsync(b => b.Id == branchId, cancellationToken);
+        if (!branchExists) return NotFound();
         if (!walkInTokens.IsConfigured)
             return Problem("Walk-in QR is not configured (WalkIn:TokenSecret).", statusCode: StatusCodes.Status503ServiceUnavailable);
 
-        var zone = TimeSpan.FromMinutes(branch.ServiceZoneOffsetMinutes);
-        var local = DateTimeOffset.UtcNow.ToOffset(zone);
-        var today = DateOnly.FromDateTime(local.DateTime);
+        var today = clock.LocalToday;
         var token = walkInTokens.Compute(branchId, today);
-        var validUntil = new DateTimeOffset(local.Year, local.Month, local.Day, 0, 0, 0, zone).AddDays(1);
+        var validUntil = MalaysiaTime.DayEnd(today);
 
         var configured = walkInOptions.Value.PublicWebBaseUrl?.Trim().TrimEnd('/');
         var origin = string.IsNullOrEmpty(configured) ? $"{Request.Scheme}://{Request.Host.Value}" : configured;

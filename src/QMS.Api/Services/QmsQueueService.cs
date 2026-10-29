@@ -8,6 +8,7 @@ using QMS.Application.Geo;
 using QMS.Application.Waiting;
 using QMS.Domain.Entities;
 using QMS.Domain.Enums;
+using QMS.Domain.Time;
 using QMS.Infrastructure.Bds;
 using QMS.Infrastructure.Persistence;
 
@@ -22,6 +23,7 @@ public sealed class QmsQueueService(
     WaitTimeFeatureBuilder featureBuilder,
     CounterSimulationEstimator simulationEstimator,
     IOptions<ManagerAlertOptions> managerAlertOptions,
+    IBranchClock clock,
     ILogger<QmsQueueService> logger)
 {
     // WHY static readonly: the injected IWaitTimeEstimator may be the ML wrapper;
@@ -41,19 +43,18 @@ public sealed class QmsQueueService(
                           s => s.Id == serviceTypeId && s.BranchId == branchId, cancellationToken)
                       ?? throw new InvalidOperationException("Service not found.");
 
-        var zone = TimeSpan.FromMinutes(branch.ServiceZoneOffsetMinutes);
-        var nowAtBranch = DateTimeOffset.UtcNow.ToOffset(zone);
-        var todayInBranch = DateOnly.FromDateTime(nowAtBranch.DateTime);
+        var nowAtBranch = clock.LocalNow;
+        var todayInBranch = clock.LocalToday;
 
         // Weekly booking window: can only book current week + next week (opens on configured day)
         if (!IsWithinBookingWindow(calendarDay, todayInBranch, branch.NextWeekBookingOpensOnDay))
             return Array.Empty<SlotDto>();
 
         // Branch closure check
-        if (await IsBranchClosedOnAsync(branchId, calendarDay, zone, cancellationToken))
+        if (await IsBranchClosedOnAsync(branchId, calendarDay, cancellationToken))
             return Array.Empty<SlotDto>();
 
-        var window = await GetBranchLocalServiceWindowAsync(branchId, calendarDay, zone, cancellationToken);
+        var window = await GetBranchLocalServiceWindowAsync(branchId, calendarDay, cancellationToken);
         if (window is null) return Array.Empty<SlotDto>();
 
         var (windowStart, windowEnd) = window.Value;
@@ -187,10 +188,9 @@ public sealed class QmsQueueService(
                           s => s.Id == serviceTypeId && s.BranchId == branchId, cancellationToken)
                       ?? throw new InvalidOperationException("Service not found");
 
-        var zone = TimeSpan.FromMinutes(branch.ServiceZoneOffsetMinutes);
-        var nowAtBranch = DateTimeOffset.UtcNow.ToOffset(zone);
-        var todayLocal = DateOnly.FromDateTime(nowAtBranch.DateTime);
-        var todayWindow = await GetBranchLocalServiceWindowAsync(branch.Id, todayLocal, zone, cancellationToken);
+        var nowAtBranch = clock.LocalNow;
+        var todayLocal = clock.LocalToday;
+        var todayWindow = await GetBranchLocalServiceWindowAsync(branch.Id, todayLocal, cancellationToken);
         if (todayWindow is null)
             throw new InvalidOperationException("Branch is not open today.");
         var (windowStart, windowEnd) = todayWindow.Value;
@@ -282,10 +282,8 @@ public sealed class QmsQueueService(
             throw new InvalidOperationException("This booking cannot be checked in (current status: " + booking.Status + ").");
 
         // Date guard: can only check in on the booking's service day
-        var zone = TimeSpan.FromMinutes(booking.Branch.ServiceZoneOffsetMinutes);
-        var nowAtBranch = DateTimeOffset.UtcNow.ToOffset(zone);
-        var todayLocal = DateOnly.FromDateTime(nowAtBranch.DateTime);
-        var slotDay = DateOnly.FromDateTime(booking.SlotStart.ToOffset(zone).DateTime);
+        var todayLocal = clock.LocalToday;
+        var slotDay = MalaysiaTime.LocalDate(booking.SlotStart);
         if (todayLocal != slotDay)
             throw new InvalidOperationException(
                 $"Check-in is only available on the day of your appointment ({slotDay:yyyy-MM-dd}). Today is {todayLocal:yyyy-MM-dd}.");
@@ -357,8 +355,7 @@ public sealed class QmsQueueService(
         var branch = booking.Branch;
         var service = booking.ServiceType;
 
-        var zone = TimeSpan.FromMinutes(branch.ServiceZoneOffsetMinutes);
-        var nowAtBranch = DateTimeOffset.UtcNow.ToOffset(zone);
+        var nowAtBranch = clock.LocalNow;
 
         if (booking.SlotStart - nowAtBranch < TimeSpan.FromHours(1))
             throw new InvalidOperationException("Rescheduling is only allowed up to 1 hour before the scheduled appointment.");
@@ -430,8 +427,7 @@ public sealed class QmsQueueService(
             .FirstOrDefaultAsync(b => b.Id == bookingId && b.CustomerId == userId, cancellationToken)
             ?? throw new InvalidOperationException("Booking not found");
 
-        var zone = TimeSpan.FromMinutes(booking.Branch.ServiceZoneOffsetMinutes);
-        var nowAtBranch = DateTimeOffset.UtcNow.ToOffset(zone);
+        var nowAtBranch = clock.LocalNow;
         if (booking.SlotStart - nowAtBranch < TimeSpan.FromHours(1))
             throw new InvalidOperationException("Cancellation is only allowed up to 1 hour before the scheduled appointment.");
 
@@ -477,12 +473,7 @@ public sealed class QmsQueueService(
         // Prefer today's ticket; fall back to most recent if none found today.
         // With daily-reset numbers (A001 each day), ServiceDay disambiguates.
         var branch0 = await db.Branches.AsNoTracking().FirstOrDefaultAsync(b => b.Id == branchId, cancellationToken);
-        DateOnly? todayAtBranch = null;
-        if (branch0 is not null)
-        {
-            var zone0 = TimeSpan.FromMinutes(branch0.ServiceZoneOffsetMinutes);
-            todayAtBranch = DateOnly.FromDateTime(DateTimeOffset.UtcNow.ToOffset(zone0).DateTime);
-        }
+        DateOnly? todayAtBranch = branch0 is not null ? clock.LocalToday : null;
 
         var entry = todayAtBranch is not null
             ? await db.QueueEntries.AsNoTracking()
@@ -727,8 +718,7 @@ public sealed class QmsQueueService(
             .FirstOrDefaultAsync(c => c.StaffId == staffId, cancellationToken)
             ?? throw new InvalidOperationException("Counter not found for staff.");
 
-        var zone = TimeSpan.FromMinutes(counter.Branch.ServiceZoneOffsetMinutes);
-        var todayLocal = DateOnly.FromDateTime(DateTimeOffset.UtcNow.ToOffset(zone).DateTime);
+        var todayLocal = clock.LocalToday;
 
         var entry = await db.QueueEntries.Include(q => q.Booking)
             .FirstOrDefaultAsync(
@@ -772,8 +762,7 @@ public sealed class QmsQueueService(
             .FirstOrDefaultAsync(c => c.StaffId == staffId, cancellationToken)
             ?? throw new InvalidOperationException("Counter not found for staff.");
 
-        var zone = TimeSpan.FromMinutes(counter.Branch.ServiceZoneOffsetMinutes);
-        var todayLocal = DateOnly.FromDateTime(DateTimeOffset.UtcNow.ToOffset(zone).DateTime);
+        var todayLocal = clock.LocalToday;
 
         var entry = await db.QueueEntries
                         .Where(q => q.BranchId == counter.BranchId
@@ -838,8 +827,7 @@ public sealed class QmsQueueService(
                           c => c.StaffId == staffId, cancellationToken)
                       ?? throw new InvalidOperationException("Counter not found for staff.");
 
-        var zone = TimeSpan.FromMinutes(counter.Branch.ServiceZoneOffsetMinutes);
-        var todayLocal = DateOnly.FromDateTime(DateTimeOffset.UtcNow.ToOffset(zone).DateTime);
+        var todayLocal = clock.LocalToday;
 
         var entry = await db.QueueEntries.Include(q => q.Booking).Include(q => q.Branch).Include(q => q.ServiceType)
                         .Where(q => q.BranchId == counter.BranchId
@@ -1049,8 +1037,7 @@ public sealed class QmsQueueService(
                   ?? throw new InvalidOperationException("Service not found.");
 
         var branch = await db.Branches.AsNoTracking().FirstAsync(b => b.Id == branchId, cancellationToken);
-        var zone = TimeSpan.FromMinutes(branch.ServiceZoneOffsetMinutes);
-        var nowAtBranch = DateTimeOffset.UtcNow.ToOffset(zone);
+        var nowAtBranch = clock.LocalNow;
         var todayDate = nowAtBranch.Date;
 
         var allWaiting = await db.QueueEntries.AsNoTracking()
@@ -1058,11 +1045,11 @@ public sealed class QmsQueueService(
             .ToListAsync(cancellationToken);
 
         // Only show today's entries to staff
-        var nowUtc = DateTimeOffset.UtcNow;
+        var nowUtc = clock.UtcNow;
         var earlyMin = branch.OnlineEarlyCallMinutes;
 
         var list = allWaiting
-            .Where(q => q.AssignedSlotStart.HasValue && q.AssignedSlotStart.Value.ToOffset(zone).Date == todayDate)
+            .Where(q => q.AssignedSlotStart.HasValue && MalaysiaTime.ToLocal(q.AssignedSlotStart.Value).Date == todayDate)
             .ToList();
 
         // Sort like Call Next: eligible first, then CreatedAt FIFO (ThenBy Id)
@@ -1123,9 +1110,8 @@ public sealed class QmsQueueService(
         if (allowedServiceIds.Count == 0) return Array.Empty<WaitingTicketDto>();
 
         var branch = counter.Branch;
-        var zone = TimeSpan.FromMinutes(branch.ServiceZoneOffsetMinutes);
-        var nowUtc = DateTimeOffset.UtcNow;
-        var nowLocal = nowUtc.ToOffset(zone);
+        var nowUtc = clock.UtcNow;
+        var nowLocal = clock.LocalNow;
         var todayDate = nowLocal.Date;
         var earlyMin = branch.OnlineEarlyCallMinutes;
 
@@ -1142,7 +1128,7 @@ public sealed class QmsQueueService(
 
         // Filter today only
         var todayEntries = waiting
-            .Where(q => q.AssignedSlotStart!.Value.ToOffset(zone).Date == todayDate)
+            .Where(q => MalaysiaTime.ToLocal(q.AssignedSlotStart!.Value).Date == todayDate)
             .ToList();
 
         bool IsEligible(QueueEntry q) =>
@@ -1489,11 +1475,9 @@ public sealed class QmsQueueService(
         var branch = await db.Branches.AsNoTracking().FirstOrDefaultAsync(b => b.Id == branchId, ct)
             ?? throw new InvalidOperationException("Branch not found.");
 
-        var zone = TimeSpan.FromMinutes(branch.ServiceZoneOffsetMinutes);
-        var nowLocal = DateTimeOffset.UtcNow.ToOffset(zone);
-        var todayDate = DateOnly.FromDateTime(nowLocal.DateTime);
-        var dayStartUtc = new DateTimeOffset(todayDate.ToDateTime(TimeOnly.MinValue), zone).UtcDateTime;
-        var dayEndUtc = dayStartUtc.AddDays(1);
+        var todayDate = clock.LocalToday;
+        var dayStartUtc = clock.LocalDayStartUtc(todayDate).UtcDateTime;
+        var dayEndUtc = clock.LocalDayEndUtc(todayDate).UtcDateTime;
 
         var bookings = await db.Bookings.AsNoTracking()
             .Include(b => b.ServiceType)
@@ -1555,16 +1539,15 @@ public sealed class QmsQueueService(
         var alerts = new List<ManagerInsightAlertDto>();
         var suggestions = new List<ManagerSuggestionDto>();
 
-        var zone = TimeSpan.FromMinutes(branchEntity.ServiceZoneOffsetMinutes);
-        var nowAtBranch = DateTimeOffset.UtcNow.ToOffset(zone);
-        var todayLocalDate = DateOnly.FromDateTime(nowAtBranch.DateTime);
-        var dayStartOffset = new DateTimeOffset(todayLocalDate.ToDateTime(TimeOnly.MinValue), zone);
-        var dayEndOffset = dayStartOffset.AddDays(1);
+        var nowAtBranch = clock.LocalNow;
+        var todayLocalDate = clock.LocalToday;
+        var dayStartOffset = MalaysiaTime.DayStart(todayLocalDate);
+        var dayEndOffset = MalaysiaTime.DayEnd(todayLocalDate);
         var slotMin = branchEntity.SlotDurationMinutes < 1 ? 30 : branchEntity.SlotDurationMinutes;
         DateTimeOffset nextStart;
         DateTimeOffset nextEnd;
         var validNextWindow = false;
-        var todaySvcWindow = await GetBranchLocalServiceWindowAsync(branchEntity.Id, todayLocalDate, zone, cancellationToken);
+        var todaySvcWindow = await GetBranchLocalServiceWindowAsync(branchEntity.Id, todayLocalDate, cancellationToken);
         if (todaySvcWindow is { } tw)
         {
             var windowStart = tw.Start;
@@ -1734,17 +1717,15 @@ public sealed class QmsQueueService(
                            .FirstOrDefaultAsync(b => b.Id == branchId, cancellationToken)
                        ?? throw new InvalidOperationException("Branch not found.");
 
-        var zone = TimeSpan.FromMinutes(branch.ServiceZoneOffsetMinutes);
-        var nowBranch = DateTimeOffset.UtcNow.ToOffset(zone);
-        var dayStart = new DateTimeOffset(nowBranch.Date, zone);
-        var dayEnd = dayStart.AddDays(1);
+        var nowBranch = clock.LocalNow;
+        var todayDate = clock.LocalToday;
+        var dayStart = MalaysiaTime.DayStart(todayDate);
+        var dayEnd = MalaysiaTime.DayEnd(todayDate);
         var elapsedMinutes = Math.Max(1.0, (nowBranch - dayStart).TotalMinutes);
 
         var services = await db.ServiceTypes.AsNoTracking()
             .Where(s => s.BranchId == branchId).OrderBy(s => s.Name).ToListAsync(cancellationToken);
         var serviceNameById = services.ToDictionary(s => s.Id, s => s.Name);
-
-        var todayDate = DateOnly.FromDateTime(nowBranch.DateTime);
 
         var ticketsTodayRows = await db.QueueEntries.AsNoTracking()
             .Where(q => q.BranchId == branchId && q.ServiceDay == todayDate)
@@ -1754,7 +1735,7 @@ public sealed class QmsQueueService(
         var hourly = new Dictionary<int, int>();
         foreach (var e in ticketsTodayRows)
         {
-            var h = e.CreatedAt.ToOffset(zone).Hour;
+            var h = MalaysiaTime.ToLocal(e.CreatedAt).Hour;
             hourly[h] = hourly.GetValueOrDefault(h) + 1;
         }
 
@@ -1771,7 +1752,7 @@ public sealed class QmsQueueService(
                 ? Math.Round((peakKv.Value - avgHourly) / avgHourly * 100.0, 0)
                 : (double?)null;
             var peakHourTickets = ticketsTodayRows
-                .Where(t => t.CreatedAt.ToOffset(zone).Hour == peakKv.Key)
+                .Where(t => MalaysiaTime.ToLocal(t.CreatedAt).Hour == peakKv.Key)
                 .GroupBy(t => t.ServiceTypeId)
                 .OrderByDescending(g => g.Count())
                 .FirstOrDefault();
@@ -1977,7 +1958,7 @@ public sealed class QmsQueueService(
         var noShowHourly = new Dictionary<int, int>();
         foreach (var at in missedRows)
         {
-            var h = at.ToOffset(zone).Hour;
+            var h = MalaysiaTime.ToLocal(at).Hour;
             noShowHourly[h] = noShowHourly.GetValueOrDefault(h) + 1;
         }
         var noShowsByHour = noShowHourly.OrderBy(kv => kv.Key)
@@ -2040,14 +2021,12 @@ public sealed class QmsQueueService(
                   ?? throw new InvalidOperationException("Service not found.");
 
         var branch = await db.Branches.AsNoTracking().FirstAsync(b => b.Id == branchId, cancellationToken);
-        var zone = TimeSpan.FromMinutes(branch.ServiceZoneOffsetMinutes);
-        var nowAtBranch = DateTimeOffset.UtcNow.ToOffset(zone);
-        var todayDate = nowAtBranch.Date;
+        var todayDate = clock.LocalToday;
 
         var allWaiting = await db.QueueEntries.AsNoTracking()
             .Where(q => q.BranchId == branchId && q.ServiceTypeId == serviceTypeId && q.State == QueueEntryState.Waiting)
             .ToListAsync(cancellationToken);
-        var waiting = allWaiting.Count(q => q.AssignedSlotStart.HasValue && q.AssignedSlotStart.Value.ToOffset(zone).Date == todayDate);
+        var waiting = allWaiting.Count(q => q.AssignedSlotStart.HasValue && MalaysiaTime.LocalDate(q.AssignedSlotStart.Value) == todayDate);
 
         var serving = await db.QueueEntries.CountAsync(
             q => q.BranchId == branchId && q.ServiceTypeId == serviceTypeId && q.State == QueueEntryState.Serving, cancellationToken);
@@ -2076,14 +2055,12 @@ public sealed class QmsQueueService(
         Guid? excludeBookingId,
         CancellationToken cancellationToken)
     {
-        var zone = TimeSpan.FromMinutes(branch.ServiceZoneOffsetMinutes);
-        var nowAtBranch = DateTimeOffset.UtcNow.ToOffset(zone);
+        var nowAtBranch = clock.LocalNow;
         if (slotEnd <= nowAtBranch)
             throw new InvalidOperationException("This time slot is no longer available (it is in the past).");
 
-        var slotStartZ = slotStart.ToOffset(zone);
-        var bookingDay = DateOnly.FromDateTime(slotStartZ.DateTime);
-        var todayInBranch = DateOnly.FromDateTime(nowAtBranch.DateTime);
+        var bookingDay = MalaysiaTime.LocalDate(slotStart);
+        var todayInBranch = clock.LocalToday;
 
         var slotMinutes = branch.SlotDurationMinutes < 1 ? 30 : branch.SlotDurationMinutes;
 
@@ -2092,17 +2069,17 @@ public sealed class QmsQueueService(
             throw new InvalidOperationException("Booking is only available for the current and next week.");
 
         // Branch closure check
-        if (await IsBranchClosedOnAsync(branch.Id, bookingDay, zone, cancellationToken))
+        if (await IsBranchClosedOnAsync(branch.Id, bookingDay, cancellationToken))
             throw new InvalidOperationException("The branch is closed on this day.");
 
-        var serviceWindow = await GetBranchLocalServiceWindowAsync(branch.Id, bookingDay, zone, cancellationToken);
+        var serviceWindow = await GetBranchLocalServiceWindowAsync(branch.Id, bookingDay, cancellationToken);
         if (serviceWindow is null)
             throw new InvalidOperationException("The branch is not open for booking on this day.");
         var (serviceWindowStart, serviceWindowEnd) = serviceWindow.Value;
 
         // Pure shape + grid check (public static so it can be unit-tested)
         var shapeError = BookingSlotRules.ValidateSlotShape(
-            slotStart.ToOffset(zone), slotEnd.ToOffset(zone), slotMinutes, serviceWindowStart, serviceWindowEnd);
+            MalaysiaTime.ToLocal(slotStart), MalaysiaTime.ToLocal(slotEnd), slotMinutes, serviceWindowStart, serviceWindowEnd);
         if (shapeError is not null)
             throw new InvalidOperationException(shapeError);
 
@@ -2198,12 +2175,12 @@ public sealed class QmsQueueService(
     /// Without this, Monday's booking for Friday A011 collides with Friday's walk-in A011.
     /// </summary>
     private async Task<long> AllocateQueueSequenceAsync(
-        Guid queueId, Guid branchId, TimeSpan branchZone, CancellationToken cancellationToken,
+        Guid queueId, Guid branchId, CancellationToken cancellationToken,
         DateTimeOffset? serviceDay = null)
     {
-        var nowBranch = DateTimeOffset.UtcNow.ToOffset(branchZone);
-        var targetDay = serviceDay?.ToOffset(branchZone) ?? nowBranch;
-        var targetDate = DateOnly.FromDateTime(targetDay.DateTime);
+        var targetDate = serviceDay.HasValue
+            ? MalaysiaTime.LocalDate(serviceDay.Value)
+            : clock.LocalToday;
 
         // Max seq among all tickets for the same service day (via ServiceDay column).
         var maxSeq = await db.QueueEntries
@@ -2413,8 +2390,7 @@ public sealed class QmsQueueService(
             .FirstOrDefaultAsync(c => c.StaffId == staffId, cancellationToken)
             ?? throw new InvalidOperationException("No counter assigned to this staff user.");
 
-        var zone = TimeSpan.FromMinutes(counter.Branch.ServiceZoneOffsetMinutes);
-        var todayLocal = DateOnly.FromDateTime(DateTimeOffset.UtcNow.ToOffset(zone).DateTime);
+        var todayLocal = clock.LocalToday;
 
         var entry = await db.QueueEntries
             .Include(q => q.Booking)
@@ -2548,14 +2524,13 @@ public sealed class QmsQueueService(
         if (!queue.IsActive)
             throw new InvalidOperationException(
                 $"Queue «{queue.TicketPrefix} · {queue.Name}» is inactive — reactivate it in Manager → Queues, or move this service to another queue.");
-        var zone = TimeSpan.FromMinutes(branch.ServiceZoneOffsetMinutes);
-        var seq = await AllocateQueueSequenceAsync(queue.Id, branch.Id, zone, cancellationToken, serviceDay);
+        var seq = await AllocateQueueSequenceAsync(queue.Id, branch.Id, cancellationToken, serviceDay);
         var ticket = FormatTicket(queue.TicketPrefix, seq);
 
         // Compute the branch-local calendar date this ticket belongs to
-        var nowBranch = DateTimeOffset.UtcNow.ToOffset(zone);
-        var targetDay = serviceDay?.ToOffset(zone) ?? nowBranch;
-        var svcDay = DateOnly.FromDateTime(targetDay.DateTime);
+        var svcDay = serviceDay.HasValue
+            ? MalaysiaTime.LocalDate(serviceDay.Value)
+            : clock.LocalToday;
 
         return (queue, seq, ticket, svcDay);
     }
@@ -2693,7 +2668,7 @@ public sealed class QmsQueueService(
     }
 
     private async Task<(DateTimeOffset Start, DateTimeOffset End)?> GetBranchLocalServiceWindowAsync(
-        Guid branchId, DateOnly calendarDay, TimeSpan zone, CancellationToken cancellationToken)
+        Guid branchId, DateOnly calendarDay, CancellationToken cancellationToken)
     {
         var dowName = calendarDay.DayOfWeek.ToString();
         var row = await db.BranchOperatingHours.AsNoTracking()
@@ -2706,7 +2681,7 @@ public sealed class QmsQueueService(
         var em = (int)row.CloseTime.Value.TotalMinutes;
         if (em <= sm) return null;
 
-        var dayStart = new DateTimeOffset(calendarDay.Year, calendarDay.Month, calendarDay.Day, 0, 0, 0, zone);
+        var dayStart = MalaysiaTime.DayStart(calendarDay);
         return (dayStart.AddMinutes(sm), dayStart.AddMinutes(em));
     }
 
@@ -2737,10 +2712,10 @@ public sealed class QmsQueueService(
     }
 
     /// <summary>Check if a branch has a closure covering the given calendar day.</summary>
-    private async Task<bool> IsBranchClosedOnAsync(Guid branchId, DateOnly calendarDay, TimeSpan zone, CancellationToken ct)
+    private async Task<bool> IsBranchClosedOnAsync(Guid branchId, DateOnly calendarDay, CancellationToken ct)
     {
-        var dayStart = new DateTimeOffset(calendarDay.Year, calendarDay.Month, calendarDay.Day, 0, 0, 0, zone);
-        var dayEnd = dayStart.AddDays(1);
+        var dayStart = MalaysiaTime.DayStart(calendarDay);
+        var dayEnd = MalaysiaTime.DayEnd(calendarDay);
 
         return await db.BranchClosures.AsNoTracking()
             .AnyAsync(c => c.BranchId == branchId && c.ClosedFrom < dayEnd && c.ClosedTo >= dayStart, ct);

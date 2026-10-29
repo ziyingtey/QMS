@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using QMS.Api.Services;
 using QMS.Application.Waiting;
 using QMS.Domain.Enums;
+using QMS.Domain.Time;
 using QMS.Infrastructure.Persistence;
 
 namespace QMS.Api.Controllers;
@@ -12,7 +13,7 @@ namespace QMS.Api.Controllers;
 [ApiController]
 [Authorize(Policy = "Staff")]
 [Route("api/branches/{branchId:guid}/[controller]")]
-public sealed class DashboardController(QmsDbContext db, QmsQueueService queue) : ControllerBase
+public sealed class DashboardController(QmsDbContext db, QmsQueueService queue, IBranchClock clock) : ControllerBase
 {
     private async Task<bool> OwnsBranch(Guid branchId, CancellationToken ct)
     {
@@ -27,16 +28,14 @@ public sealed class DashboardController(QmsDbContext db, QmsQueueService queue) 
     public async Task<ActionResult<LiveDashboardDto>> Live(Guid branchId, CancellationToken cancellationToken)
     {
         if (!await OwnsBranch(branchId, cancellationToken)) return Forbid();
-        var now = DateTimeOffset.UtcNow;
+        var now = clock.UtcNow;
 
-        // Use branch-local service day instead of UTC date
-        var branch = await db.Branches.AsNoTracking().FirstOrDefaultAsync(b => b.Id == branchId, cancellationToken);
-        if (branch is null) return NotFound();
-        var zone = TimeSpan.FromMinutes(branch.ServiceZoneOffsetMinutes);
-        var nowLocal = now.ToOffset(zone);
-        var todayDate = DateOnly.FromDateTime(nowLocal.DateTime);
-        var dayStartOffset = new DateTimeOffset(todayDate.ToDateTime(TimeOnly.MinValue), zone);
-        var dayEndOffset = dayStartOffset.AddDays(1);
+        // Use Malaysia-local service day
+        var branchExists = await db.Branches.AsNoTracking().AnyAsync(b => b.Id == branchId, cancellationToken);
+        if (!branchExists) return NotFound();
+        var todayDate = clock.LocalToday;
+        var dayStartOffset = MalaysiaTime.DayStart(todayDate);
+        var dayEndOffset = MalaysiaTime.DayEnd(todayDate);
 
         var waiting = await db.QueueEntries.CountAsync(
             q => q.BranchId == branchId && q.State == QueueEntryState.Waiting

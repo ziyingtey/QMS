@@ -4,17 +4,20 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using QMS.Api.Hubs;
+using QMS.Api.Services;
 using QMS.Domain.Enums;
+using QMS.Domain.Time;
 using QMS.Infrastructure.Persistence;
 
 namespace QMS.Api.Background;
 
 /// <summary>
-/// When the branch-local calendar day advances, clears open queue rows from before that midnight so
+/// When the Malaysia calendar day advances, clears open queue rows from before that midnight so
 /// staff/manager dashboards start the new day without yesterday’s waiting pile.
 /// </summary>
 public sealed class BranchQueueDayRolloverHostedService(
     IServiceScopeFactory scopeFactory,
+    IBranchClock clock,
     ILogger<BranchQueueDayRolloverHostedService> logger) : BackgroundService
 {
     private static readonly TimeSpan Interval = TimeSpan.FromSeconds(45);
@@ -45,18 +48,16 @@ public sealed class BranchQueueDayRolloverHostedService(
         var hub = scope.ServiceProvider.GetRequiredService<IHubContext<QueueHub>>();
 
         var branches = await db.Branches.AsNoTracking()
-            .Select(b => new { b.Id, b.ServiceZoneOffsetMinutes })
+            .Select(b => new { b.Id })
             .ToListAsync(ct);
 
         var notify = new HashSet<Guid>();
+        // All branches share the Malaysia calendar, so the day boundary is computed once per tick.
+        var today = clock.LocalToday;
+        var startOfToday = MalaysiaTime.DayStart(today);
 
         foreach (var br in branches)
         {
-            var zone = TimeSpan.FromMinutes(br.ServiceZoneOffsetMinutes);
-            var nowB = DateTimeOffset.UtcNow.ToOffset(zone);
-            var today = DateOnly.FromDateTime(nowB.DateTime);
-            var startOfToday = new DateTimeOffset(nowB.Year, nowB.Month, nowB.Day, 0, 0, 0, zone);
-
             if (!LastProcessedLocalDay.TryGetValue(br.Id, out var lastDay))
             {
                 await PurgeOpenQueuesBeforeAsync(br.Id, startOfToday, db, ct);

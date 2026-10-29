@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using QMS.Domain.Time;
 
 namespace QMS.Api.Services;
 
@@ -33,14 +34,14 @@ public sealed class WalkInTokenService(Microsoft.Extensions.Options.IOptions<Wal
         return sb.ToString();
     }
 
-    public static DateOnly LocalDate(int zoneOffsetMinutes, DateTimeOffset nowUtc) =>
-        DateOnly.FromDateTime(nowUtc.ToOffset(TimeSpan.FromMinutes(zoneOffsetMinutes)).DateTime);
+    public static DateOnly LocalDate(DateTimeOffset nowUtc) =>
+        MalaysiaTime.LocalDate(nowUtc);
 
-    public bool Validate(Guid branchId, int zoneOffsetMinutes, string? token, DateTimeOffset nowUtc)
+    public bool Validate(Guid branchId, string? token, DateTimeOffset nowUtc)
     {
         if (!IsConfigured || string.IsNullOrWhiteSpace(token)) return false;
         var t = token.Trim().ToUpperInvariant();
-        var local = nowUtc.ToOffset(TimeSpan.FromMinutes(zoneOffsetMinutes));
+        var local = MalaysiaTime.ToLocal(nowUtc);
         var today = DateOnly.FromDateTime(local.DateTime);
         if (FixedEquals(t, Compute(branchId, today))) return true;
         if (local.TimeOfDay < TimeSpan.FromMinutes(Math.Max(0, options.Value.GraceMinutesAfterMidnight)))

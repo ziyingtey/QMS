@@ -45,6 +45,7 @@ public class IntegrationTests : IDisposable
             new WaitTimeFeatureBuilder(_db),
             new CounterSimulationEstimator(_db),
             Options.Create(new ManagerAlertOptions()),
+            new BranchClock(TimeProvider.System),
             NullLogger<QmsQueueService>.Instance);
     }
 

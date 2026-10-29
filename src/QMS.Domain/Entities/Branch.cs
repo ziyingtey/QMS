@@ -18,7 +18,10 @@ public class Branch
     public int NextWeekBookingOpensOnDay { get; set; } = 6;
     public int SlotDurationMinutes { get; set; } = 30;
     public int GeofenceMeters { get; set; } = 80;
-    /// <summary>Fixed offset from UTC for interpreting calendar dates (e.g. 480 = Singapore UTC+8).</summary>
+    /// <summary>
+    /// Informational offset for clients (480 = Malaysia UTC+8). The server uses
+    /// <see cref="QMS.Domain.Time.MalaysiaTime"/> for all timezone logic.
+    /// </summary>
     public int ServiceZoneOffsetMinutes { get; set; } = 8 * 60;
     /// <summary>Lecturer ERD branch status (open/closed).</summary>
     public BranchOpeningStatus OpeningStatus { get; set; } = BranchOpeningStatus.Open;
