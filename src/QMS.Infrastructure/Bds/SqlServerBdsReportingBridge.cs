@@ -2,6 +2,7 @@ using System.Data;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using QMS.Domain.Time;
 using QMS.Infrastructure.Persistence;
 
 namespace QMS.Infrastructure.Bds;
@@ -105,7 +106,7 @@ public sealed class SqlServerBdsReportingBridge : IBdsReportingBridge
                 cmd.Parameters.AddWithValue("@b", branchCode);
                 cmd.Parameters.AddWithValue("@t", Bds10(ticketNumber));
                 cmd.Parameters.AddWithValue("@wait", waitSec);
-                cmd.Parameters.AddWithValue("@ticketDate", servingStartedUtc.UtcDateTime.Date);
+                cmd.Parameters.AddWithValue("@ticketDate", MalaysiaTime.LocalDate(servingStartedUtc).ToDateTime(TimeOnly.MinValue));
                 cmd.Parameters.AddWithValue("@issued", servingStartedUtc.UtcDateTime);
                 cmd.Parameters.AddWithValue("@served", servingEndedUtc.UtcDateTime);
                 cmd.Parameters.AddWithValue("@counter", counterNumber);
