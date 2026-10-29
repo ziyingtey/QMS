@@ -115,6 +115,8 @@ builder.Services.AddScoped<CustomerNotificationService>();
 builder.Services.AddScoped<QmsQueueService>();
 builder.Services.Configure<WalkInOptions>(builder.Configuration.GetSection(WalkInOptions.SectionName));
 builder.Services.AddSingleton<WalkInTokenService>();
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddSingleton<IBranchClock, BranchClock>();
 // Walk-in rate limit: both per-IP (30/10 min) and per-device (3/10 min) always apply.
 // Chained via GlobalLimiter so a request must pass BOTH limiters — changing X-Device-Id
 // cannot bypass the per-IP cap. Staff/manager bypass both.
