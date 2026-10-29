@@ -25,7 +25,6 @@ import {
   branchCalendarYmd,
   buildMonthGrid,
   compareIsoYmd,
-  deviceLocalCalendarYmd,
   formatSlotRange,
   monthTitle,
   parseYmd,
@@ -91,16 +90,9 @@ export function BookingSlotsScreen({ navigation, route }: Props) {
     }
     setBusy(true);
     try {
-      let list = await apiSlots(branch.id, service.id, selectedYmd);
-      let usedDay = selectedYmd;
-      if (list.length === 0 && selectedYmd === minYmd) {
-        const fallback = deviceLocalCalendarYmd();
-        if (fallback !== minYmd) {
-          list = await apiSlots(branch.id, service.id, fallback);
-          if (list.length > 0) usedDay = fallback;
-        }
-      }
-      setLoadedDay(usedDay);
+      // Always query the Malaysia calendar day the user picked; never fall back to the device's date.
+      const list = await apiSlots(branch.id, service.id, selectedYmd);
+      setLoadedDay(selectedYmd);
       setSlots(list);
     } catch (e) {
       Alert.alert("Couldn’t load slots", userFacingApiError(e));
@@ -109,7 +101,7 @@ export function BookingSlotsScreen({ navigation, route }: Props) {
     } finally {
       setBusy(false);
     }
-  }, [branch.id, minYmd, selectedYmd, service.id, sessionToken]);
+  }, [branch.id, selectedYmd, service.id, sessionToken]);
 
   useEffect(() => {
     void reload();

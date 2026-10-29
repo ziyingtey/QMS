@@ -99,20 +99,30 @@ export function branchWallComponents(d: Date, branchOffsetMinutes: number): { y:
   };
 }
 
-/** Default branch offset when not yet loaded (Malaysia demo). */
+/**
+ * Default branch offset: Malaysia (UTC+8, no DST). All QGo branches operate in MYT.
+ * Used as the fallback when the branch object has not loaded yet, so the calendar
+ * and slot display still show Malaysia wall time (not the device's local zone).
+ */
 export const defaultBranchOffsetMinutes = 8 * 60;
 
 /** Branch-local calendar date (yyyy-MM-dd) for `?day=` — fixed offset, not device TZ. */
 export function branchCalendarYmd(serviceZoneOffsetMinutes: number): string {
-  const off = Number.isFinite(serviceZoneOffsetMinutes) ? serviceZoneOffsetMinutes : 8 * 60;
+  const off = Number.isFinite(serviceZoneOffsetMinutes) ? serviceZoneOffsetMinutes : defaultBranchOffsetMinutes;
   const shifted = new Date(Date.now() + off * 60_000);
   return `${shifted.getUTCFullYear()}-${pad2(shifted.getUTCMonth() + 1)}-${pad2(shifted.getUTCDate())}`;
 }
 
-/** Device local calendar yyyy-MM-dd (fallback when branch-local day returns no slots). */
-export function deviceLocalCalendarYmd(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+const WEEKDAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+/** Current branch-local weekday name (e.g. "Thursday") and minutes since branch-local midnight. */
+export function branchNowParts(branchOffsetMinutes: number = defaultBranchOffsetMinutes): {
+  weekday: string;
+  minutesFromMidnight: number;
+} {
+  const w = branchWallComponents(new Date(), branchOffsetMinutes);
+  const weekdayIndex = new Date(Date.UTC(w.y, w.m0, w.d)).getUTCDay();
+  return { weekday: WEEKDAY_NAMES[weekdayIndex], minutesFromMidnight: w.h * 60 + w.mi };
 }
 
 /**
@@ -134,45 +144,35 @@ export function formatSlotRange(slotStart: string, slotEnd: string, branchOffset
   const a = parseApiDateTime(slotStart);
   const b = parseApiDateTime(slotEnd);
   if (!a || !b) return `${slotStart} – ${slotEnd}`;
-  if (branchOffsetMinutes != null && Number.isFinite(branchOffsetMinutes)) {
-    const ac = branchWallComponents(a, branchOffsetMinutes);
-    const bc = branchWallComponents(b, branchOffsetMinutes);
-    return `${pad2(ac.h)}:${pad2(ac.mi)} – ${pad2(bc.h)}:${pad2(bc.mi)}`;
-  }
-  const opts: Intl.DateTimeFormatOptions = { hour: "2-digit", minute: "2-digit" };
-  return `${a.toLocaleTimeString([], opts)} – ${b.toLocaleTimeString([], opts)}`;
+  const off = branchOffsetMinutes != null && Number.isFinite(branchOffsetMinutes) ? branchOffsetMinutes : defaultBranchOffsetMinutes;
+  const ac = branchWallComponents(a, off);
+  const bc = branchWallComponents(b, off);
+  return `${pad2(ac.h)}:${pad2(ac.mi)} – ${pad2(bc.h)}:${pad2(bc.mi)}`;
 }
 
 export function formatBookingSlotDateTime(slotStart: string, slotEnd: string, branchOffsetMinutes?: number): string {
   const a = parseApiDateTime(slotStart);
   const b = parseApiDateTime(slotEnd);
   if (!a || !b) return `${slotStart} – ${slotEnd}`;
-  if (branchOffsetMinutes != null && Number.isFinite(branchOffsetMinutes)) {
-    const ac = branchWallComponents(a, branchOffsetMinutes);
-    const bc = branchWallComponents(b, branchOffsetMinutes);
-    const da = new Date(Date.UTC(ac.y, ac.m0, ac.d, ac.h, ac.mi));
-    const db = new Date(Date.UTC(bc.y, bc.m0, bc.d, bc.h, bc.mi));
-    const dateStr = da.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
-    const timeA = da.toLocaleTimeString([], { hour: "numeric", minute: "2-digit", timeZone: "UTC" });
-    const timeB = db.toLocaleTimeString([], { hour: "numeric", minute: "2-digit", timeZone: "UTC" });
-    return `${dateStr} · ${timeA} – ${timeB}`;
-  }
-  const dateStr = a.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" });
-  const timeA = a.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-  const timeB = b.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const off = branchOffsetMinutes != null && Number.isFinite(branchOffsetMinutes) ? branchOffsetMinutes : defaultBranchOffsetMinutes;
+  const ac = branchWallComponents(a, off);
+  const bc = branchWallComponents(b, off);
+  const da = new Date(Date.UTC(ac.y, ac.m0, ac.d, ac.h, ac.mi));
+  const db = new Date(Date.UTC(bc.y, bc.m0, bc.d, bc.h, bc.mi));
+  const dateStr = da.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
+  const timeA = da.toLocaleTimeString([], { hour: "numeric", minute: "2-digit", timeZone: "UTC" });
+  const timeB = db.toLocaleTimeString([], { hour: "numeric", minute: "2-digit", timeZone: "UTC" });
   return `${dateStr} · ${timeA} – ${timeB}`;
 }
 
-/** e.g. May 5, 2026 — branch wall date when offset passed */
+/** e.g. May 5, 2026 — branch wall date (always Malaysia offset). */
 export function formatBookingDateMedium(slotStart: string, branchOffsetMinutes?: number): string {
   const a = parseApiDateTime(slotStart);
   if (!a) return "";
-  if (branchOffsetMinutes != null && Number.isFinite(branchOffsetMinutes)) {
-    const w = branchWallComponents(a, branchOffsetMinutes);
-    const d = new Date(Date.UTC(w.y, w.m0, w.d, w.h, w.mi));
-    return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
-  }
-  return a.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+  const off = branchOffsetMinutes != null && Number.isFinite(branchOffsetMinutes) ? branchOffsetMinutes : defaultBranchOffsetMinutes;
+  const w = branchWallComponents(a, off);
+  const d = new Date(Date.UTC(w.y, w.m0, w.d, w.h, w.mi));
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
 }
 
 /** Branch-local yyyy-MM-dd for the start of the booking slot (service zone offset). */
@@ -181,4 +181,33 @@ export function bookingSlotStartYmdInBranchZone(slotStart: string, branchOffsetM
   if (!d) return null;
   const w = branchWallComponents(d, branchOffsetMinutes);
   return toYmd(w.y, w.m0, w.d);
+}
+
+/** Wall-clock fields of `d` at the branch offset, packed into a Date whose UTC fields hold them (format with timeZone "UTC"). */
+function toBranchWallDate(d: Date, branchOffsetMinutes: number): Date {
+  const w = branchWallComponents(d, branchOffsetMinutes);
+  return new Date(Date.UTC(w.y, w.m0, w.d, w.h, w.mi));
+}
+
+/**
+ * Format an API instant as Malaysia wall-clock time, e.g. "2:30 PM", independent of device timezone.
+ * Uses the fixed-offset shift (Hermes-safe: no reliance on Intl timeZone data for Asia/Kuala_Lumpur).
+ */
+export function formatMalaysiaTime(value: string | Date, branchOffsetMinutes = defaultBranchOffsetMinutes): string {
+  const d = typeof value === "string" ? parseApiDateTime(value) : value;
+  if (!d || Number.isNaN(d.getTime())) return "—";
+  return toBranchWallDate(d, branchOffsetMinutes).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", timeZone: "UTC" });
+}
+
+/** Format an API instant as Malaysia date + time, e.g. "Oct 29, 2:30 PM", independent of device timezone. */
+export function formatMalaysiaDateTime(value: string | Date, branchOffsetMinutes = defaultBranchOffsetMinutes): string {
+  const d = typeof value === "string" ? parseApiDateTime(value) : value;
+  if (!d || Number.isNaN(d.getTime())) return "—";
+  return toBranchWallDate(d, branchOffsetMinutes).toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: "UTC",
+  });
 }

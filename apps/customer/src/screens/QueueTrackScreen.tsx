@@ -20,7 +20,15 @@ import { openLocationSettingsAlert, useLiveBranchDistance } from "../useLiveBran
 import { useCustomer } from "../context/CustomerContext";
 import type { QueueStackParamList } from "../navigation/navigationRef";
 import { theme } from "../theme";
-import { formatBookingDateMedium, formatSlotRange, defaultBranchOffsetMinutes } from "../utils/dateFormat";
+import {
+  bookingSlotStartYmdInBranchZone,
+  branchCalendarYmd,
+  compareIsoYmd,
+  defaultBranchOffsetMinutes,
+  formatBookingDateMedium,
+  formatMalaysiaTime,
+  formatSlotRange,
+} from "../utils/dateFormat";
 import { useBranchRealtime } from "../useBranchRealtime";
 
 const NativeMaps = Platform.OS !== "web" ? require("react-native-maps") : null;
@@ -177,17 +185,14 @@ export function QueueTrackScreen({ route, navigation }: Props) {
     if (status.state === "Missed") return "missed";
     if (status.state === "Called" || status.state === "Serving") return "serving";
 
-    // For waiting state, check if it's a future booking or today-await
+    // For waiting state, check if it's a future booking or today-await.
+    // Compare in Malaysia wall time (fixed offset), not device-local time.
     if (status.state === "Waiting" && booking?.slotStart) {
-      const now = new Date();
-      const slotDate = new Date(booking.slotStart);
-      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-      const slotDay = new Date(slotDate.getFullYear(), slotDate.getMonth(), slotDate.getDate());
-
-      if (slotDay > today) return "future";
+      const slotYmd = bookingSlotStartYmdInBranchZone(booking.slotStart, branchOffset);
+      if (slotYmd && compareIsoYmd(slotYmd, branchCalendarYmd(branchOffset)) > 0) return "future";
 
       // Today but slot hasn't started yet
-      if (slotDate > now) return "today-await";
+      if (new Date(booking.slotStart) > new Date()) return "today-await";
     }
 
     if (status.state === "Waiting") {
@@ -202,7 +207,7 @@ export function QueueTrackScreen({ route, navigation }: Props) {
       return "waiting";
     }
     return "loading";
-  }, [status, booking]);
+  }, [status, booking, branchOffset]);
 
   const onCheckIn = useCallback(async () => {
     if (!appointmentBookingId || checkingIn) return;
@@ -509,7 +514,7 @@ export function QueueTrackScreen({ route, navigation }: Props) {
               <View style={styles.completedRow}>
                 <Text style={styles.completedLabel}>Completed at</Text>
                 <Text style={styles.completedValue}>
-                  {new Date(status.servedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                  {formatMalaysiaTime(status.servedAt, branchOffset)}
                 </Text>
               </View>
             )}

@@ -1,4 +1,5 @@
 import type { CustomerNotificationDto } from "./api";
+import { formatMalaysiaDateTime } from "./utils/dateFormat";
 import { theme } from "./theme";
 
 export type NotificationPresentation = {
@@ -36,5 +37,5 @@ export function formatNotificationTime(sentAt: string): string {
   if (mins < 60) return `${mins}m ago`;
   const hours = Math.floor(mins / 60);
   if (hours < 24) return `${hours}h ago`;
-  return d.toLocaleDateString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  return formatMalaysiaDateTime(d);
 }

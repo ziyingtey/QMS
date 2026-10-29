@@ -1,4 +1,5 @@
 import type { BranchDto } from "../api";
+import { branchNowParts, defaultBranchOffsetMinutes } from "./dateFormat";
 
 export type BranchOpenStatus = "Open" | "Closed";
 
@@ -19,14 +20,10 @@ export function getBranchOpenStatus(branch: BranchDto): BranchOpenStatus {
     return (branch.openingStatus as BranchOpenStatus) ?? "Open";
   }
 
-  // Get current time in branch timezone
-  const offsetMinutes = branch.serviceZoneOffsetMinutes ?? 480; // default UTC+8
-  const now = new Date();
-  const utcMs = now.getTime() + now.getTimezoneOffset() * 60000;
-  const branchNow = new Date(utcMs + offsetMinutes * 60000);
-
-  const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-  const todayName = dayNames[branchNow.getDay()];
+  // Current Malaysia weekday and time (fixed-offset shift, independent of device timezone)
+  const { weekday: todayName, minutesFromMidnight: currentMinutes } = branchNowParts(
+    branch.serviceZoneOffsetMinutes ?? defaultBranchOffsetMinutes,
+  );
 
   const todayHours = hours.find(
     (h) => h.dayOfWeek.toLowerCase() === todayName.toLowerCase(),
@@ -40,8 +37,6 @@ export function getBranchOpenStatus(branch: BranchDto): BranchOpenStatus {
     return "Open"; // no time bounds = open all day
   }
 
-  const currentMinutes = branchNow.getHours() * 60 + branchNow.getMinutes();
-
   if (currentMinutes >= todayHours.openMinutesFromMidnight && currentMinutes < todayHours.closeMinutesFromMidnight) {
     return "Open";
   }
@@ -54,13 +49,7 @@ export function getTodayHoursLabel(branch: BranchDto): string | null {
   const hours = branch.weeklyOperatingHours;
   if (!hours || hours.length === 0) return branch.operatingHours ?? null;
 
-  const offsetMinutes = branch.serviceZoneOffsetMinutes ?? 480;
-  const now = new Date();
-  const utcMs = now.getTime() + now.getTimezoneOffset() * 60000;
-  const branchNow = new Date(utcMs + offsetMinutes * 60000);
-
-  const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-  const todayName = dayNames[branchNow.getDay()];
+  const { weekday: todayName } = branchNowParts(branch.serviceZoneOffsetMinutes ?? defaultBranchOffsetMinutes);
 
   const todayRow = hours.find(
     (h) => h.dayOfWeek.toLowerCase() === todayName.toLowerCase(),
