@@ -1,4 +1,5 @@
 import type { BranchDto, BranchOperatingHourRow, BranchOperationalSettings } from "../api";
+import { malaysiaNowParts } from "../malaysiaTime";
 
 /** Whether the branch is within operating hours (matches customer app + API evaluator). */
 export function isBranchOpenForOperations(
@@ -15,19 +16,13 @@ export function isBranchOpenForOperations(
 
   if (!hours || hours.length === 0) return openingStatus === "Open";
 
-  const offsetMinutes = settings?.serviceZoneOffsetMinutes ?? branch.serviceZoneOffsetMinutes ?? 480;
-  const now = new Date();
-  const utcMs = now.getTime() + now.getTimezoneOffset() * 60000;
-  const branchNow = new Date(utcMs + offsetMinutes * 60000);
-
-  const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-  const todayName = dayNames[branchNow.getDay()];
+  // Branches run on Malaysia time regardless of the browser's timezone.
+  const { weekday: todayName, minutesFromMidnight: currentMinutes } = malaysiaNowParts();
 
   const todayHours = hours.find((h) => h.dayOfWeek.toLowerCase() === todayName.toLowerCase());
   if (!todayHours || todayHours.isClosed) return false;
   if (todayHours.openMinutesFromMidnight == null || todayHours.closeMinutesFromMidnight == null) return true;
 
-  const currentMinutes = branchNow.getHours() * 60 + branchNow.getMinutes();
   return (
     currentMinutes >= todayHours.openMinutesFromMidnight && currentMinutes < todayHours.closeMinutesFromMidnight
   );

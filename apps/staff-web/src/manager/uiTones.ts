@@ -1,5 +1,6 @@
 /** Semantic tone helpers shared by manager pages (kept out of ui.tsx for react-refresh). */
 import type { BranchQueueDto, ManagerInsights } from "../api";
+import { formatMyTime } from "../malaysiaTime";
 import { counterModeKey } from "./managerUtils";
 
 export type Tone = "neutral" | "success" | "warning" | "danger" | "info" | "violet";
@@ -30,11 +31,9 @@ export function initialsOf(nameOrEmail: string | null | undefined): string {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
-/** "12:05" style clock (24h) for a Date / ISO string. */
+/** "12:05" style clock for a Date / ISO string (Malaysia timezone). */
 export function clockTime(iso: string | Date): string {
-  const d = typeof iso === "string" ? new Date(iso) : iso;
-  if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return formatMyTime(iso);
 }
 
 /** Compact slot window: "2:00 – 2:30 PM" (meridiem shown once when shared). */

@@ -10,6 +10,7 @@ import {
   type QueueStatus,
 } from "../walkInApi";
 import "../styles/walk-in.css";
+import { malaysiaTodayYmd } from "../malaysiaTime";
 
 /** Public page opened from the branch QR: /walk-in?branch={branchId}&t={dailyToken}. No login. */
 
@@ -18,7 +19,7 @@ const SCAN_MSG = "Please scan the QR code at the branch";
 const POLL_MS = 15000;
 
 const storeKey = (branchId: string) => `qms_walkin_tickets_${branchId}`;
-const today = () => new Date().toLocaleDateString("en-CA"); // local YYYY-MM-DD
+const today = () => malaysiaTodayYmd(); // Malaysia calendar yyyy-MM-dd, independent of device timezone
 
 function readStored(branchId: string): StoredTicket[] {
   try {

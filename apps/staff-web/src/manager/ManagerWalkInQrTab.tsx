@@ -6,6 +6,7 @@ import type { LiveDashboard } from "../api";
 import type { WalkInLink } from "../walkInApi";
 import { Badge, Card, EmptyBlock, PageHeader, Skeleton, StatCard } from "./ui";
 import type { ManagerTab } from "./managerNav";
+import { formatMyDateTime } from "../malaysiaTime";
 
 type Props = {
   branchId: string;
@@ -95,7 +96,7 @@ export function ManagerWalkInQrTab({ branchId, branchName, live, loadLink, onCop
             link ? (
               <span className="m-qr__foot">
                 <span>Code <b className="tabular">{link.token}</b></span>
-                <span>Until {validUntil ? validUntil.toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" }) : "—"}</span>
+                <span>Until {validUntil ? formatMyDateTime(validUntil, { weekday: "short", hour: "numeric", minute: "2-digit" }) : "—"}</span>
               </span>
             ) : undefined
           }

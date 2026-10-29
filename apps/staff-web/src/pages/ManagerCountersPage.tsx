@@ -61,6 +61,7 @@ import { ManagerWalkInQrTab } from "../manager/ManagerWalkInQrTab";
 import type { ManagerTab } from "../manager/managerNav";
 import { apiWalkInLink } from "../walkInApi";
 import { defaultWeeklyHours } from "../manager/managerUtils";
+import { malaysiaDayEndIso, malaysiaDayStartIso } from "../malaysiaTime";
 
 export function ManagerCountersPage() {
   const navigate = useNavigate();
@@ -475,8 +476,9 @@ export function ManagerCountersPage() {
     setBusy(true);
     try {
       await apiManagerCreateClosure(branchId, {
-        closedFrom: new Date(from).toISOString(),
-        closedTo: new Date(to).toISOString(),
+        // Date inputs are Malaysia calendar dates; the closure covers both days in full.
+        closedFrom: malaysiaDayStartIso(from),
+        closedTo: malaysiaDayEndIso(to),
         reason: reason || undefined,
       });
       toast("Closure added", "success");

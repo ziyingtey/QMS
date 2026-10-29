@@ -3,6 +3,7 @@ import type { Dispatch, SetStateAction } from "react";
 import type { BranchClosure, BranchDto, BranchOperatingHourRow, BranchOperationalSettings } from "../api";
 import { Badge, Card, EmptyBlock, PageHeader } from "./ui";
 import { minsToClock, minsToTimeInput, timeInputToMins } from "./managerUtils";
+import { formatMyDate, malaysiaNowParts, malaysiaTodayYmd } from "../malaysiaTime";
 
 const DAY_LABELS: Record<number, string> = {
   0: "Sunday", 1: "Monday", 2: "Tuesday", 3: "Wednesday",
@@ -96,7 +97,7 @@ export function ManagerScheduleTab(props: Props) {
       formMaxSlotTotal !== (settings.maxSlotTotalCapacity != null ? String(settings.maxSlotTotalCapacity) : "") ||
       JSON.stringify(formWeekly) !== JSON.stringify(settings.weeklyOperatingHours ?? formWeekly));
 
-  const todayName = new Date().toLocaleDateString("en-US", { weekday: "long" });
+  const todayName = malaysiaNowParts().weekday;
   const today = formWeekly.find((r) => r.dayOfWeek === todayName);
   const todayLabel =
     !today || today.isClosed || today.openMinutesFromMidnight == null || today.closeMinutesFromMidnight == null
@@ -291,14 +292,14 @@ export function ManagerScheduleTab(props: Props) {
                   {upcoming.map((c) => (
                     <li key={c.id}>
                       <span className="m-closures__date">
-                        <b>{new Date(c.closedFrom).toLocaleDateString([], { day: "numeric" })}</b>
-                        {new Date(c.closedFrom).toLocaleDateString([], { month: "short" })}
+                        <b>{formatMyDate(c.closedFrom, { day: "numeric" })}</b>
+                        {formatMyDate(c.closedFrom, { month: "short" })}
                       </span>
                       <span className="m-list__main">
                         <span className="m-list__title">{c.reason || "Branch closed"}</span>
                         <span className="m-list__sub">
-                          {new Date(c.closedFrom).toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" })} to{" "}
-                          {new Date(c.closedTo).toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" })}
+                          {formatMyDate(c.closedFrom, { weekday: "short", day: "numeric", month: "short" })} to{" "}
+                          {formatMyDate(c.closedTo, { weekday: "short", day: "numeric", month: "short" })}
                         </span>
                       </span>
                       <button
@@ -325,7 +326,7 @@ export function ManagerScheduleTab(props: Props) {
 }
 
 function ClosureForm({ busy, onAdd }: { busy: boolean; onAdd: (from: string, to: string, reason: string) => void }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = malaysiaTodayYmd();
   return (
     <form
       className="m-closure-form"

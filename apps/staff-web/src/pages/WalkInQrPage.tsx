@@ -4,6 +4,7 @@ import { QRCodeSVG } from "qrcode.react";
 import { apiMyCounter, getStoredBranchId, getStoredRole } from "../api";
 import { apiWalkInLink, type WalkInLink } from "../walkInApi";
 import "../styles/walk-in.css";
+import { formatMyDateTime } from "../malaysiaTime";
 
 /** Branch display: shows today's walk-in QR. Token rotates at branch-local midnight; page re-fetches automatically. */
 export function WalkInQrPage() {
@@ -54,7 +55,7 @@ export function WalkInQrPage() {
                 <QRCodeSVG value={link.qrUrl} size={320} level="M" />
               </div>
               <p className="wi-muted">
-                Code <b>{link.token}</b> · valid for {link.branchLocalDate} (until {new Date(link.validUntil).toLocaleString()})
+                Code <b>{link.token}</b> · valid for {link.branchLocalDate} (until {formatMyDateTime(link.validUntil)})
               </p>
               <a className="wi-qr__url" href={link.qrUrl} target="_blank" rel="noreferrer">{link.qrUrl}</a>
             </>

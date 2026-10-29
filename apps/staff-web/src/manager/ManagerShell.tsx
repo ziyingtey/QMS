@@ -6,6 +6,7 @@ import type { LiveStatus } from "../components/AppTopBar";
 import { ManagerSidebar } from "./ManagerSidebar";
 import { managerTabMeta, type ManagerTab } from "./managerNav";
 import { initialsOf } from "./uiTones";
+import { formatMyTime } from "../malaysiaTime";
 
 type Props = {
   tab: ManagerTab;
@@ -47,7 +48,7 @@ export function ManagerShell({
   useEffect(() => {
     window.scrollTo({ top: 0 });
   }, [tab]);
-  const now = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const now = formatMyTime(new Date());
   return (
     <div className="mds">
       {banner}

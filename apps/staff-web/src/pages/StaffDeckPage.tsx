@@ -31,6 +31,7 @@ import { StatusPill } from "../components/StatusPill";
 import { useToast } from "../context/ToastContext";
 import { API_BASE } from "../config";
 import { useStaffLogout } from "../hooks/useStaffLogout";
+import { formatMyTime } from "../malaysiaTime";
 import {
   clearActiveTicketSession,
   readActiveTicketSession,
@@ -42,9 +43,8 @@ const ALL_LANES = "__all__";
 function formatSlotWindow(start?: string | null, end?: string | null): string | null {
   if (!start || !end) return null;
   const fmt = (iso: string) => {
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return null;
-    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
+    if (Number.isNaN(new Date(iso).getTime())) return null;
+    return formatMyTime(iso, { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
   };
   const a = fmt(start);
   const b = fmt(end);
